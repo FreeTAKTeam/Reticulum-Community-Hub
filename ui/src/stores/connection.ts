@@ -1,8 +1,9 @@
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { ref } from "vue";
 import { defineStore } from "pinia";
 import { loadJson } from "../utils/storage";
 import { saveJson } from "../utils/storage";
+import { isLoopbackHost, assertSecureTransport } from "../utils/transport-security";
 
 export type AuthMode = "none" | "bearer" | "apiKey" | "both";
 export type ConnectionStatus = "online" | "offline" | "unknown";
@@ -25,12 +26,7 @@ const isFileOrigin = (): boolean => {
   if (typeof window === "undefined") {
     return false;
   }
-  return window.location.protocol === "file:" || window.location.origin === "null";
-};
-
-const isLoopbackHost = (host: string): boolean => {
-  const normalizedHost = host.replace(/^\[(.*)\]$/, "$1").trim().toLowerCase();
-  return normalizedHost === "localhost" || normalizedHost === "127.0.0.1" || normalizedHost === "::1";
+  return window.location.protocol === "file:" || window.location.protocol === "tauri:" || window.location.hostname === "tauri.localhost" || window.location.origin === "null";
 };
 
 const parseHost = (value: string): string => {
@@ -143,19 +139,9 @@ export const useConnectionStore = defineStore("connection", () => {
   const authStatus = ref<AuthStatus>("unknown");
   const authMessage = ref<string>("");
   const isAuthenticated = ref<boolean>(false);
-  const authenticatedTargetOrigin = ref<string>("");
+  const authenticatedRequestIdentity = ref<string>("");
   const lastAuthCheckAt = ref<number | null>(null);
   const wsConnections = ref(0);
-
-  const currentTargetOrigin = computed(() => {
-    if (baseUrl.value) {
-      return normalizeOrigin(baseUrl.value);
-    }
-    if (isFileOrigin()) {
-      return DEFAULT_LOCAL_HTTP;
-    }
-    return normalizeOrigin(window.location.origin);
-  });
 
   const resolveUrl = (path: string): string => {
     const origin = baseUrl.value || (isFileOrigin() ? DEFAULT_LOCAL_HTTP : window.location.origin);
@@ -171,6 +157,20 @@ export const useConnectionStore = defineStore("connection", () => {
     const host = origin.replace(/^https?:\/\//, "");
     return `${scheme}://${host}${path}`;
   };
+
+  // Ephemeral identity only: never persist or log the included credentials.
+  const requestIdentity = computed(() => JSON.stringify([
+    resolveUrl(""), resolveWsUrl(""), authMode.value, token.value, apiKey.value
+  ]));
+  watch(requestIdentity, () => {
+    isAuthenticated.value = false;
+    authenticatedRequestIdentity.value = "";
+    status.value = "unknown";
+    statusMessage.value = "";
+    authStatus.value = "unknown";
+    authMessage.value = "";
+    lastAuthCheckAt.value = null;
+  }, { flush: "sync" });
 
   const authHeader = computed(() => {
     if (authMode.value === "bearer" || authMode.value === "both") {
@@ -220,7 +220,13 @@ export const useConnectionStore = defineStore("connection", () => {
   );
 
   const authValidationError = computed(() => {
-    if (isLocalTarget.value) {
+    try {
+      assertSecureTransport(resolveUrl(""), "http");
+      assertSecureTransport(resolveWsUrl(""), "websocket");
+    } catch (error) {
+      return error instanceof Error ? error.message : "Invalid backend URL.";
+    }
+    if (isLocalTarget.value && authMode.value === "none") {
       return "";
     }
     if (!remoteAuthModeValid.value) {
@@ -236,10 +242,10 @@ export const useConnectionStore = defineStore("connection", () => {
   });
 
   const hasActiveAuthSession = computed(
-    () => isAuthenticated.value && authenticatedTargetOrigin.value === currentTargetOrigin.value
+    () => isAuthenticated.value && authenticatedRequestIdentity.value === requestIdentity.value
   );
 
-  const requiresLogin = computed(() => isRemoteTarget.value && !hasActiveAuthSession.value && !authValidationError.value);
+  const requiresLogin = computed(() => !hasActiveAuthSession.value);
 
   const statusLabel = computed(() => {
     if (status.value === "online") {
@@ -281,16 +287,18 @@ export const useConnectionStore = defineStore("connection", () => {
     lastAuthCheckAt.value = Date.now();
     if (next === "unauthenticated" || next === "forbidden") {
       isAuthenticated.value = false;
-      authenticatedTargetOrigin.value = "";
+      authenticatedRequestIdentity.value = "";
     }
   };
 
-  const markAuthenticated = () => {
+  const markAuthenticated = (expectedIdentity = requestIdentity.value): boolean => {
+    if (expectedIdentity !== requestIdentity.value) { return false; }
     isAuthenticated.value = true;
-    authenticatedTargetOrigin.value = currentTargetOrigin.value;
+    authenticatedRequestIdentity.value = expectedIdentity;
     authStatus.value = "ok";
     authMessage.value = "";
     lastAuthCheckAt.value = Date.now();
+    return true;
   };
 
   const registerWsConnection = () => {
@@ -331,6 +339,7 @@ export const useConnectionStore = defineStore("connection", () => {
     authMessage,
     isAuthenticated,
     hasActiveAuthSession,
+    requestIdentity,
     lastAuthCheckAt,
     resolveUrl,
     resolveWsUrl,

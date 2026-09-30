@@ -218,7 +218,7 @@ const mapSettingsStore = useMapSettingsStore();
 const reticulumConfigStore = useReticulumConfigStore();
 const toastStore = useToastStore();
 const toolResponse = ref<unknown>(null);
-const toolResponseMode = ref<"auto" | "markdown" | "json" | "html">("auto");
+const toolResponseMode = ref<"auto" | "markdown" | "json">("auto");
 const activeTab = ref<"config" | "reticulum" | "tools">("config");
 const textEncoder = new TextEncoder();
 const markerLabelsEnabled = computed({
@@ -362,7 +362,7 @@ const rollbackConfig = async () => {
   }
 };
 
-const setResponse = (response: unknown, mode: "auto" | "markdown" | "json" | "html") => {
+const setResponse = (response: unknown, mode: "auto" | "markdown" | "json") => {
   toolResponse.value = response;
   toolResponseMode.value = mode;
 };

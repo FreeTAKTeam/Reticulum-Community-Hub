@@ -144,7 +144,13 @@ function Get-ReleaseBinary {
     if (Test-Windows) {
         $suffix = ".exe"
     }
-    return [System.IO.Path]::Combine((Get-Location).Path, "target", "release", "$Name$suffix")
+    $targetRoot = Join-Path (Get-Location).Path "target"
+    if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+        $targetRoot = [System.IO.Path]::GetFullPath(
+            [System.IO.Path]::Combine((Get-Location).Path, $env:CARGO_TARGET_DIR)
+        )
+    }
+    return [System.IO.Path]::Combine($targetRoot, "release", "$Name$suffix")
 }
 
 function Invoke-ServerSmoke {

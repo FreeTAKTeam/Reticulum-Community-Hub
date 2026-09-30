@@ -1,6 +1,7 @@
 import { computed } from "vue";
 import { ref } from "vue";
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import type { Router } from "vue-router";
 import { get } from "../api/client";
@@ -77,6 +78,7 @@ export const useMissionWorkspaceStore = defineStore("mission-workspace", () => {
   const error = ref("");
   const selectedMissionUid = ref("");
   const lastLoadedAt = ref("");
+  const backendScope = useBackendScope([missions, topics, checklists, templates, teams, members, assets, assignments, events, missionChanges, logEntries, zones, skills, teamMemberSkills, taskSkillRequirements, loading, error, selectedMissionUid, lastLoadedAt]);
 
   const selectedMission = computed(() => {
     const missionUid = selectedMissionUid.value;
@@ -270,6 +272,7 @@ export const useMissionWorkspaceStore = defineStore("mission-workspace", () => {
   };
 
   const loadWorkspace = async () => {
+    const assertCurrent = backendScope();
     loading.value = true;
     error.value = "";
     try {
@@ -307,6 +310,7 @@ export const useMissionWorkspaceStore = defineStore("mission-workspace", () => {
         get<TaskSkillRequirementRaw[]>(endpoints.r3aktTaskSkillRequirements)
       ]);
 
+      assertCurrent();
       missions.value = toArray<MissionRaw>(missionData);
       topics.value = toArray<TopicRaw>(topicData);
       checklists.value = toArray<ChecklistRaw>(checklistPayload.checklists);

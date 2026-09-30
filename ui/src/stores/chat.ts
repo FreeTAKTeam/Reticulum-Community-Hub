@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
@@ -62,6 +63,7 @@ const isStaleFailureDowngrade = (current: ChatMessage, incoming: ChatMessage): b
 export const useChatStore = defineStore("chat", () => {
   const messages = ref<ChatMessage[]>([]);
   const loading = ref(false);
+  useBackendScope([messages, loading]);
 
   const fetchMessages = async (limit = 200) => {
     loading.value = true;

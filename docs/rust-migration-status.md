@@ -79,6 +79,20 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 
 ## Local server
 
+Rust library dependencies resolve LXMF-rs `v0.12.0` at the immutable commit
+`20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755` from Git. A sibling checkout is
+needed for local daemon development and default desktop sidecar preparation.
+For a fresh development layout, run this from the RCH repository:
+
+```bash
+git clone --depth 1 --branch v0.12.0 https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
+```
+
+If that sibling already exists, preserve any local changes and use a clean
+checkout of the matching release for validation. CI and release packaging use
+the same immutable commit; the scheduled compatibility job checks upstream
+`main` separately.
+
 A local HTTP-only development process can be started with:
 
 ```bash
@@ -86,7 +100,8 @@ cargo run -p r3akt-rch-server -- \
   --bind 127.0.0.1:8080 \
   --db-path ./rch-runtime.db \
   --config-path ./config.ini \
-  --reticulum-config-path "$HOME/.reticulum/config"
+  --reticulum-config-path "$HOME/.reticulum/config" \
+  --api-key change-this-preview-key
 ```
 
 For outbound and inbound LXMF traffic, add the ZeroMQ command and response endpoints plus the local source destination:
@@ -99,10 +114,15 @@ cargo run -p r3akt-rch-server -- \
   --reticulum-config-path "$HOME/.reticulum/config" \
   --lxmf-zmq-command tcp://127.0.0.1:9100 \
   --lxmf-zmq-response tcp://127.0.0.1:9101 \
-  --reticulumd-source <local-destination>
+  --reticulumd-source '<local-destination>' \
+  --api-key change-this-preview-key
 ```
 
 The exact daemon and packaging commands may change during preview development. Prefer the release notes and committed scripts over copied commands in external documentation.
+
+The [README](../README.md#getting-started) owns current setup, UI bundle,
+managed-daemon and browser-origin launch examples. Replace sample credentials
+before deployment. HTTP-only smoke does not establish southbound delivery.
 
 ## Verification
 

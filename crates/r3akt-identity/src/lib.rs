@@ -109,6 +109,7 @@ impl std::fmt::Display for IdentityError {
 
 impl std::error::Error for IdentityError {}
 
+/// In-memory enrollment directory. Durable RCH trust is owned by its core store.
 #[derive(Debug, Default, Clone)]
 pub struct IdentityDirectory {
     identities: HashMap<NodeId, NodeIdentity>,
@@ -128,6 +129,13 @@ impl IdentityDirectory {
     ) -> Result<EnrollmentDecision, IdentityError> {
         validate_node_id(&request.identity.id)?;
         let node_id = request.identity.id.clone();
+        match self.enrollments.get(&node_id) {
+            Some(EnrollmentDecision::Rejected { .. }) => {
+                return Err(IdentityError::AlreadyRejected);
+            }
+            Some(decision @ EnrollmentDecision::Accepted { .. }) => return Ok(decision.clone()),
+            _ => {}
+        }
         self.identities.insert(node_id.clone(), request.identity);
         let decision = EnrollmentDecision::Pending;
         self.enrollments.insert(node_id, decision.clone());
@@ -168,9 +176,9 @@ impl IdentityDirectory {
         if !self.enrollments.contains_key(node_id) {
             return Err(IdentityError::EnrollmentNotFound);
         }
-        let decision = EnrollmentDecision::Rejected {
-            reason: reason.into(),
-        };
+        let reason = reason.into();
+        self.revoke(node_id, Some(reason.clone()))?;
+        let decision = EnrollmentDecision::Rejected { reason };
         self.enrollments.insert(node_id.clone(), decision.clone());
         Ok(decision)
     }
@@ -181,15 +189,20 @@ impl IdentityDirectory {
         reason: Option<String>,
     ) -> Result<(), IdentityError> {
         validate_node_id(node_id)?;
-        self.trust.insert(
-            node_id.clone(),
-            TrustRecord {
-                node_id: node_id.clone(),
-                level: TrustLevel::Revoked,
-                updated_at: Utc::now(),
-                reason,
-            },
-        );
+        let trust = TrustRecord {
+            node_id: node_id.clone(),
+            level: TrustLevel::Revoked,
+            updated_at: Utc::now(),
+            reason,
+        };
+        self.trust.insert(node_id.clone(), trust.clone());
+        if matches!(
+            self.enrollments.get(node_id),
+            Some(EnrollmentDecision::Accepted { .. })
+        ) {
+            self.enrollments
+                .insert(node_id.clone(), EnrollmentDecision::Accepted { trust });
+        }
         Ok(())
     }
 
@@ -281,6 +294,14 @@ mod tests {
             directory.accept_enrollment(&NodeId::new("node-a"), None),
             Err(IdentityError::AlreadyRejected)
         );
+        assert_eq!(
+            directory.submit_enrollment(EnrollmentRequest::new(identity("node-a"))),
+            Err(IdentityError::AlreadyRejected)
+        );
+        assert_eq!(
+            directory.enrollment(&NodeId::new("node-a")),
+            Some(&rejected)
+        );
     }
 
     #[test]
@@ -309,5 +330,54 @@ mod tests {
             directory.submit_enrollment(EnrollmentRequest::new(identity("   "))),
             Err(IdentityError::EmptyIdentity)
         );
+    }
+    #[test]
+    fn accepted_resubmission_reflects_current_revoked_trust() {
+        let mut directory = IdentityDirectory::new();
+        let node = NodeId::new("node-a");
+        directory
+            .submit_enrollment(EnrollmentRequest::new(identity("node-a")))
+            .expect("submit");
+        directory.accept_enrollment(&node, None).expect("accept");
+        directory
+            .revoke(&node, Some("compromised".to_string()))
+            .expect("revoke");
+        let EnrollmentDecision::Accepted { trust } = directory
+            .submit_enrollment(EnrollmentRequest::new(NodeIdentity::new(
+                node.clone(),
+                "Changed",
+                "different-key",
+            )))
+            .expect("resubmit")
+        else {
+            panic!("existing decision");
+        };
+        assert_eq!(trust, directory.trust_record(&node));
+        assert_eq!(trust.level, TrustLevel::Revoked);
+        assert_eq!(
+            directory
+                .identity(&node)
+                .expect("original identity")
+                .display_name,
+            "Field Node"
+        );
+    }
+
+    #[test]
+    fn rejecting_an_accepted_identity_revokes_its_trust() {
+        let mut directory = IdentityDirectory::new();
+        let node = NodeId::new("node-a");
+        directory
+            .submit_enrollment(EnrollmentRequest::new(identity("node-a")))
+            .expect("submit");
+        directory.accept_enrollment(&node, None).expect("accept");
+        directory
+            .reject_enrollment(&node, "operator rejected")
+            .expect("reject");
+        assert_eq!(directory.trust_record(&node).level, TrustLevel::Revoked);
+        assert!(matches!(
+            directory.enrollment(&node),
+            Some(EnrollmentDecision::Rejected { .. })
+        ));
     }
 }

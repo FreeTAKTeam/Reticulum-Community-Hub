@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del as delRequest, get } from "../api/client";
@@ -30,12 +31,16 @@ export const useFilesStore = defineStore("files", () => {
   const files = ref<FileEntry[]>([]);
   const images = ref<FileEntry[]>([]);
   const loading = ref(false);
+  const backendScope = useBackendScope([files, images, loading]);
 
   const fetchFiles = async () => {
+    const assertCurrent = backendScope();
     loading.value = true;
     try {
       const fileResponse = await get<FileApiPayload[]>(endpoints.files);
+      assertCurrent();
       const imageResponse = await get<FileApiPayload[]>(endpoints.images);
+      assertCurrent();
       files.value = fileResponse.map(fromApiFile);
       images.value = imageResponse.map(fromApiFile);
     } finally {

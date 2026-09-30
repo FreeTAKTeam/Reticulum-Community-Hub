@@ -6,7 +6,7 @@
         <div class="boot-screen__title">Initializing Reticulum Backend</div>
         <div class="boot-screen__status-row">
           <span class="boot-screen__pulse"></span>
-          <span class="boot-screen__status-text">Polling WebSocket API</span>
+          <span class="boot-screen__status-text">Connecting to Hub API</span>
           <span class="boot-screen__status-chip" :class="statusClass">[{{ statusText }}]</span>
         </div>
         <div class="boot-screen__detail">{{ detail }}</div>

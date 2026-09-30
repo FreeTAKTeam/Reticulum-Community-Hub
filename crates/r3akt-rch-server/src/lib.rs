@@ -37,9 +37,30 @@
     )
 )]
 
+mod attachment_io;
+mod attachment_persistence;
 mod auth;
+mod auth_throttle;
+mod browser_security;
+mod command_persistence;
+mod first_run_setup;
+mod marker_idempotency;
+mod message_persistence;
 mod rem_team_routing;
 mod reticulumd_inbound;
+mod runtime_exit;
+mod setup_files;
+pub use runtime_exit::{request_runtime_exit, shutdown_runtime_for_exit};
+mod runtime_delivery_workers;
+mod runtime_periodic_workers;
+pub use runtime_delivery_workers::{
+    spawn_outbound_delivery_worker, spawn_outbound_delivery_worker_with_interval,
+    spawn_reticulumd_inbound_worker, spawn_reticulumd_inbound_worker_with_interval,
+};
+pub use runtime_periodic_workers::{
+    spawn_local_telemetry_sampler, spawn_local_telemetry_sampler_with_interval,
+    spawn_rch_identity_announce_worker,
+};
 mod topic_diagnostics;
 
 use rem_team_routing::{
@@ -59,7 +80,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
-use axum::extract::Multipart;
+use axum::extract::DefaultBodyLimit;
 use axum::extract::Request;
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -101,24 +122,29 @@ use r3akt_transport_rns::{
     delivery_snapshot_receipt_status, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
     poll_reticulumd_events, reticulumd_message_to_envelope,
 };
+#[cfg(test)]
+mod lxmf_load_tests;
+
 use rand_core::OsRng;
 use rns_core::identity::{PRIVATE_KEY_LENGTH, PrivateIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use uuid::Uuid;
 
+use attachment_io::{retrieve_attachment_raw, upload_chat_attachment};
 #[cfg(test)]
 use auth::password_hash;
 use auth::{
-    AuthThrottleState, argon2id_hash, is_argon2id_phc, load_kill_switch_pin,
-    load_stored_remote_password, openapi_auth_validation_operation, require_kill_switch_pin,
-    save_kill_switch_pin, save_kill_switch_pin_secret, save_remote_access_password,
+    argon2id_hash, is_argon2id_phc, load_kill_switch_pin, load_stored_remote_password,
+    openapi_auth_validation_operation, require_kill_switch_pin, save_kill_switch_pin_secret,
     verify_versioned_secret,
 };
+
+use auth_throttle::AuthThrottleState;
+use first_run_setup::{first_run_setup_complete, first_run_setup_status};
 
 const CHAT_ATTACHMENT_MAX_BYTES: usize = 8 * 1024 * 1024;
 const OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS: i64 = 30_000;
@@ -253,6 +279,7 @@ pub struct AppState {
     identity_announce_update_error: Arc<RwLock<Option<String>>>,
     rch_source_assertion: Option<Arc<String>>,
     runtime_control: Arc<RwLock<RuntimeControlState>>,
+    runtime_exit: Arc<runtime_exit::RuntimeExit>,
     managed_reticulumd: Arc<RwLock<ManagedReticulumdState>>,
     managed_reticulumd_process: Arc<Mutex<Option<Child>>>,
     outbound_delivery_policy: Arc<RwLock<OutboundDeliveryPolicy>>,
@@ -271,6 +298,8 @@ pub struct AppState {
     ui_dist_path: Option<Arc<PathBuf>>,
     api_bind: Option<Arc<SocketAddr>>,
     api_key: Option<Arc<String>>,
+    allowed_browser_origins: Arc<HashSet<String>>,
+    setup_lock: Arc<Mutex<()>>,
     auth_throttle: Arc<Mutex<AuthThrottleState>>,
     system_status_fanout_mode: SystemStatusFanoutMode,
 }
@@ -462,7 +491,6 @@ struct KillSwitchRuntimeState {
     purge_started_at_ts_ms: Option<i64>,
     purge_completed_at_ts_ms: Option<i64>,
     failed_at_ts_ms: Option<i64>,
-    initial_pin_reveal: Option<String>,
     progress_percent: u8,
     message: String,
     targets: Vec<KillSwitchTargetStatus>,
@@ -529,6 +557,7 @@ impl Default for AppState {
             identity_announce_update_error: Arc::default(),
             rch_source_assertion: None,
             runtime_control: Arc::default(),
+            runtime_exit: Arc::default(),
             managed_reticulumd: Arc::default(),
             managed_reticulumd_process: Arc::default(),
             outbound_delivery_policy: Arc::default(),
@@ -547,6 +576,8 @@ impl Default for AppState {
             ui_dist_path: None,
             api_bind: None,
             api_key: None,
+            allowed_browser_origins: Arc::default(),
+            setup_lock: Arc::default(),
             auth_throttle: Arc::default(),
             system_status_fanout_mode: SystemStatusFanoutMode::EventOnly,
         }
@@ -1242,6 +1273,9 @@ impl AppState {
                     return Ok(existing.clone());
                 }
             }
+        }
+        let record = persist_telemetry_record_row(self, &record)?;
+        if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
             records.retain(|existing| {
                 telemetry_identity_key(&existing.peer_destination)
                     .is_none_or(|existing_key| existing_key != peer_key)
@@ -1249,7 +1283,6 @@ impl AppState {
         }
         records.push(record.clone());
         drop(records);
-        persist_telemetry_record_row(self, &record)?;
         broadcast_telemetry_event(self, &record);
         Ok(record)
     }
@@ -2366,7 +2399,9 @@ pub fn create_app() -> Router {
 
 #[must_use]
 pub fn create_app_with_state(state: AppState) -> Router {
-    create_app_router(state)
+    create_app_router(state).layer(middleware::from_fn(
+        browser_security::response_security_headers,
+    ))
 }
 
 #[must_use]
@@ -2393,6 +2428,9 @@ pub fn create_app_with_state_and_ui_dist_path(state: AppState, ui_dist_path: Pat
             let ui_dist_path = fallback_ui_dist_path.clone();
             async move { ui_index_response_from_path(&ui_dist_path) }
         })
+        .layer(middleware::from_fn(
+            browser_security::response_security_headers,
+        ))
 }
 
 fn create_app_router(state: AppState) -> Router {
@@ -2469,7 +2507,10 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route(
             "/Chat/Attachment",
-            get(method_not_allowed).post(upload_chat_attachment),
+            get(method_not_allowed)
+                .post(upload_chat_attachment)
+                .route_layer(middleware::from_fn(attachment_io::bound_upload_prefetch))
+                .layer(DefaultBodyLimit::max(attachment_io::MAX_REQUEST_BYTES)),
         )
         .route("/api/rem/peers", get(rem_peer_registry))
         .route(
@@ -2490,7 +2531,7 @@ fn create_app_router(state: AppState) -> Router {
                 .put(update_eam_message)
                 .delete(delete_eam_message),
         )
-        .route("/api/markers", get(list_markers).post(create_marker))
+        .route("/api/markers", get(list_markers).post(create_marker_route))
         .route("/api/markers/symbols", get(list_marker_symbols_route))
         .route(
             "/api/markers/{object_destination_hash}/position",
@@ -2789,7 +2830,7 @@ fn create_app_router(state: AppState) -> Router {
             require_http_auth,
         ));
 
-    Router::new()
+    let public_routes = Router::new()
         .route("/openapi.json", get(openapi_json))
         .route("/openapi.yaml", get(openapi_yaml))
         .route("/Help", get(help_text))
@@ -2799,7 +2840,9 @@ fn create_app_router(state: AppState) -> Router {
         .route(
             "/api/r3akt/setup/complete",
             get(method_not_allowed).post(first_run_setup_complete),
-        )
+        );
+
+    let internal_routes = Router::new()
         .route("/internal/topics", get(internal_list_topics))
         .route(
             "/internal/topics/{topic_id}/subscribers",
@@ -2843,445 +2886,23 @@ fn create_app_router(state: AppState) -> Router {
             get(method_not_allowed).post(internal_identity_announce),
         )
         .route("/internal/events/stream", get(internal_event_stream))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_http_auth,
+        ));
+
+    public_routes
+        .merge(internal_routes)
         .merge(protected_routes)
         .route("/events/system", get(system_stream))
         .route("/telemetry/stream", get(telemetry_stream))
         .route("/messages/stream", get(message_stream))
-        .with_state(state)
-        .layer(cors_layer())
-}
-
-pub fn spawn_outbound_delivery_worker(state: AppState) -> tokio::task::JoinHandle<()> {
-    spawn_outbound_delivery_worker_with_interval(
-        state,
-        Duration::from_millis(OUTBOUND_RETRY_WORKER_POLL_MS),
-    )
-}
-
-pub fn spawn_rch_identity_announce_worker(
-    state: AppState,
-    announce_interval: Duration,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        if announce_interval.is_zero() {
-            return;
-        }
-        let mut ticker = tokio::time::interval(announce_interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Registration performs the initial announce; the first periodic tick
-        // therefore starts after a complete configured interval.
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            if runtime_shutdown_requested(&state) {
-                return;
-            }
-            let Some(data_plane) = state.lxmf_zmq_data_plane.clone() else {
-                return;
-            };
-            match tokio::task::spawn_blocking(move || data_plane.announce_identity()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    record_system_event_best_effort(
-                        &state,
-                        "identity_announce_error",
-                        "Periodic RCH identity announce failed",
-                        json!({
-                            "operation": "sdk_identity_announce_now_v2",
-                            "exception_type": "TransportError",
-                            "exception_message": error.to_string(),
-                        }),
-                    );
-                }
-                Err(error) => {
-                    record_system_event_best_effort(
-                        &state,
-                        "identity_announce_error",
-                        "Periodic RCH identity announce task failed",
-                        json!({
-                            "operation": "sdk_identity_announce_now_v2",
-                            "exception_type": "JoinError",
-                            "exception_message": error.to_string(),
-                        }),
-                    );
-                }
-            }
-        }
-    })
-}
-
-pub fn spawn_outbound_delivery_worker_with_interval(
-    state: AppState,
-    poll_interval: Duration,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let poll_interval = poll_interval.max(Duration::from_millis(10));
-        set_outbound_retry_worker_running(&state, false, poll_interval);
-        loop {
-            if runtime_shutdown_requested(&state) {
-                set_outbound_retry_worker_running(&state, false, poll_interval);
-                tokio::time::sleep(poll_interval).await;
-                continue;
-            }
-            set_outbound_retry_worker_running(&state, true, poll_interval);
-            let worker_state = state.clone();
-            let worker_task = tokio::task::spawn_blocking(move || {
-                process_outbound_delivery_worker_tick(&worker_state)
-            });
-            match tokio::time::timeout(
-                Duration::from_millis(OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS),
-                worker_task,
-            )
-            .await
-            {
-                Ok(Ok(Ok(_report))) => {}
-                Ok(Ok(Err(error))) => {
-                    record_outbound_retry_worker_report(
-                        &state,
-                        OutboundRetryWorkerReport::default(),
-                        Some(error.to_string()),
-                    );
-                }
-                Ok(Err(error)) => {
-                    record_outbound_retry_worker_report(
-                        &state,
-                        OutboundRetryWorkerReport::default(),
-                        Some(error.to_string()),
-                    );
-                }
-                Err(_) => {
-                    record_outbound_retry_worker_report(
-                        &state,
-                        OutboundRetryWorkerReport::default(),
-                        Some("outbound retry worker tick timed out".to_string()),
-                    );
-                }
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    })
-}
-
-pub fn spawn_reticulumd_inbound_worker(state: AppState) -> tokio::task::JoinHandle<()> {
-    spawn_reticulumd_inbound_worker_with_interval(
-        state,
-        Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
-    )
-}
-
-pub fn spawn_local_telemetry_sampler(
-    state: AppState,
-    peer_destination: impl Into<String>,
-) -> tokio::task::JoinHandle<()> {
-    spawn_local_telemetry_sampler_with_interval(
-        state,
-        peer_destination,
-        Duration::from_millis(LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS),
-    )
-}
-
-pub fn spawn_local_telemetry_sampler_with_interval(
-    state: AppState,
-    peer_destination: impl Into<String>,
-    interval: Duration,
-) -> tokio::task::JoinHandle<()> {
-    let peer_destination = peer_destination.into();
-    tokio::spawn(async move {
-        if interval.is_zero() {
-            return;
-        }
-        let mut ticker = tokio::time::interval(interval.max(Duration::from_millis(10)));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            ticker.tick().await;
-            if let Err(error) = record_local_time_telemetry(&state, &peer_destination) {
-                record_system_event_best_effort(
-                    &state,
-                    "telemetry_error",
-                    "Local telemetry sampler failed to record a snapshot",
-                    json!({
-                        "operation": "local_sampler",
-                        "exception_type": "ApiError",
-                        "exception_message": error.to_string(),
-                    }),
-                );
-            }
-        }
-    })
-}
-
-fn record_local_time_telemetry(
-    state: &AppState,
-    peer_destination: &str,
-) -> Result<TelemetryRecord, ApiError> {
-    let now_ms = unix_now_ms();
-    let timestamp_s = now_ms / 1000;
-    state.record_telemetry(
-        peer_destination,
-        json!({
-            "time": {
-                "timestamp": timestamp_s,
-                "iso": iso8601_from_unix_ms(now_ms),
-            }
-        }),
-        timestamp_s,
-        None,
-    )
-}
-
-pub fn spawn_reticulumd_inbound_worker_with_interval(
-    state: AppState,
-    poll_interval: Duration,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let poll_interval = poll_interval.max(Duration::from_millis(50));
-        let announce_list_poll_interval = Duration::from_millis(RETICULUMD_ANNOUNCE_LIST_POLL_MS);
-        set_reticulumd_inbound_worker_running(&state, false, poll_interval);
-        let endpoint = state
-            .reticulumd_rpc_endpoint
-            .as_deref()
-            .map(ToOwned::to_owned);
-        let zmq_event_poll_enabled = lxmf_zmq_event_poll_enabled();
-        let zmq_command_endpoint = zmq_event_poll_enabled
-            .then(|| {
-                state
-                    .lxmf_zmq_command_endpoint
-                    .as_deref()
-                    .map(ToOwned::to_owned)
-            })
-            .flatten();
-        let zmq_response_endpoint = zmq_event_poll_enabled
-            .then(|| {
-                state
-                    .lxmf_zmq_response_endpoint
-                    .as_deref()
-                    .map(ToOwned::to_owned)
-            })
-            .flatten();
-        let event_poll_transport = select_reticulumd_event_poll_transport(
-            endpoint.as_deref(),
-            zmq_command_endpoint.as_deref(),
-            zmq_response_endpoint.as_deref(),
-            zmq_event_poll_enabled,
-        );
-        if event_poll_transport == ReticulumdEventPollTransport::None {
-            return;
-        }
-        let rpc_projection_fallback = event_poll_transport == ReticulumdEventPollTransport::Rpc;
-        let Some(source) = state.reticulumd_source.as_deref().map(ToOwned::to_owned) else {
-            return;
-        };
-        let mut cursor = load_reticulumd_event_cursor(&state);
-        let mut last_list_message_poll: Option<std::time::Instant> = None;
-        let mut last_announce_list_poll: Option<std::time::Instant> = None;
-        let mut last_cursor_stream_check: Option<std::time::Instant> = None;
-        let mut rate_limit_cooldown_until: Option<std::time::Instant> = None;
-        loop {
-            if runtime_shutdown_requested(&state) {
-                set_reticulumd_inbound_worker_running(&state, false, poll_interval);
-                tokio::time::sleep(poll_interval).await;
-                continue;
-            }
-            set_reticulumd_inbound_worker_running(&state, true, poll_interval);
-            if let Some(cooldown_until) = rate_limit_cooldown_until {
-                let now = std::time::Instant::now();
-                if cooldown_until > now {
-                    tokio::time::sleep((cooldown_until - now).min(poll_interval)).await;
-                    continue;
-                }
-                rate_limit_cooldown_until = None;
-            }
-            let worker_state = state.clone();
-            let worker_endpoint = endpoint.clone();
-            let worker_zmq_command_endpoint = zmq_command_endpoint.clone();
-            let worker_zmq_response_endpoint = zmq_response_endpoint.clone();
-            let worker_source = source.clone();
-            let worker_cursor = cursor.clone();
-            let worker_event_poll_transport = event_poll_transport;
-            let check_cursor_stream_position = worker_event_poll_transport
-                == ReticulumdEventPollTransport::Rpc
-                && cursor.is_some()
-                && last_cursor_stream_check.is_none_or(|last_check| {
-                    last_check.elapsed()
-                        >= Duration::from_millis(RETICULUMD_EVENT_CURSOR_STREAM_CHECK_MS)
-                });
-            if check_cursor_stream_position {
-                last_cursor_stream_check = Some(std::time::Instant::now());
-            }
-            let mut event_poll_ok = false;
-            match tokio::task::spawn_blocking(move || match worker_event_poll_transport {
-                ReticulumdEventPollTransport::Rpc => {
-                    let Some(worker_endpoint) = worker_endpoint else {
-                        return Ok(ReticulumdEventWorkerReport { next_cursor: None });
-                    };
-                    process_reticulumd_event_worker_tick_with_options(
-                        &worker_state,
-                        worker_endpoint.as_str(),
-                        worker_source.as_str(),
-                        worker_cursor,
-                        check_cursor_stream_position,
-                    )
-                }
-                ReticulumdEventPollTransport::Zmq => {
-                    let (Some(command_endpoint), Some(response_endpoint)) =
-                        (worker_zmq_command_endpoint, worker_zmq_response_endpoint)
-                    else {
-                        return Ok(ReticulumdEventWorkerReport { next_cursor: None });
-                    };
-                    process_lxmf_zmq_event_worker_tick(
-                        &worker_state,
-                        command_endpoint.as_str(),
-                        response_endpoint.as_str(),
-                        worker_source.as_str(),
-                        worker_cursor,
-                    )
-                }
-                ReticulumdEventPollTransport::None => {
-                    Ok(ReticulumdEventWorkerReport { next_cursor: None })
-                }
-            })
-            .await
-            {
-                Ok(Ok(report)) => {
-                    cursor = report.next_cursor;
-                    event_poll_ok = true;
-                }
-                Ok(Err(error)) => {
-                    let error = error.to_string();
-                    record_reticulumd_inbound_worker_event_error(&state, error.clone());
-                    if outbound_error_is_rate_limited(&error) {
-                        rate_limit_cooldown_until = Some(
-                            std::time::Instant::now()
-                                + Duration::from_millis(
-                                    OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS as u64,
-                                ),
-                        );
-                        tokio::time::sleep(poll_interval).await;
-                        continue;
-                    }
-                    if is_recoverable_reticulumd_event_cursor_error(&error) {
-                        cursor = None;
-                        let reset_reason = match clear_reticulumd_event_cursor(&state) {
-                            Ok(()) => error,
-                            Err(reset_error) => {
-                                format!("{error}; failed to clear persisted cursor: {reset_error}")
-                            }
-                        };
-                        record_reticulumd_inbound_worker_event_cursor_reset(&state, reset_reason);
-                    }
-                }
-                Err(error) => {
-                    record_reticulumd_inbound_worker_event_error(&state, error.to_string());
-                }
-            }
-            let should_poll_list_messages = last_list_message_poll.is_none_or(|last_poll| {
-                last_poll.elapsed() >= Duration::from_millis(RETICULUMD_LIST_MESSAGE_POLL_MS)
-            });
-            if should_poll_list_messages && endpoint.is_some() && rpc_projection_fallback {
-                last_list_message_poll = Some(std::time::Instant::now());
-                let worker_state = state.clone();
-                let worker_endpoint = endpoint.clone().unwrap_or_default();
-                let worker_source = source.clone();
-                match tokio::task::spawn_blocking(move || {
-                    process_reticulumd_list_message_worker_tick(
-                        &worker_state,
-                        worker_endpoint.as_str(),
-                        worker_source.as_str(),
-                    )
-                })
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => {
-                        let error = error.to_string();
-                        record_reticulumd_inbound_worker_event_error(&state, error.clone());
-                        if outbound_error_is_rate_limited(&error) {
-                            rate_limit_cooldown_until = Some(
-                                std::time::Instant::now()
-                                    + Duration::from_millis(
-                                        OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS as u64,
-                                    ),
-                            );
-                            tokio::time::sleep(poll_interval).await;
-                            continue;
-                        }
-                    }
-                    Err(error) => {
-                        let error = error.to_string();
-                        record_reticulumd_inbound_worker_event_error(&state, error.clone());
-                        if outbound_error_is_rate_limited(&error) {
-                            rate_limit_cooldown_until = Some(
-                                std::time::Instant::now()
-                                    + Duration::from_millis(
-                                        OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS as u64,
-                                    ),
-                            );
-                            tokio::time::sleep(poll_interval).await;
-                            continue;
-                        }
-                    }
-                }
-            }
-            let should_poll_announces = event_poll_ok
-                && last_announce_list_poll
-                    .is_none_or(|last_poll| last_poll.elapsed() >= announce_list_poll_interval);
-            if should_poll_announces && endpoint.is_some() && rpc_projection_fallback {
-                last_announce_list_poll = Some(std::time::Instant::now());
-                let worker_state = state.clone();
-                let worker_endpoint = endpoint.clone().unwrap_or_default();
-                match tokio::task::spawn_blocking(move || {
-                    import_reticulumd_announces_with_options(
-                        &worker_state,
-                        worker_endpoint.as_str(),
-                        RETICULUMD_ANNOUNCE_IMPORT_LIMIT,
-                        false,
-                    )
-                })
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => {
-                        let error = error.to_string();
-                        record_system_event_best_effort(
-                            &state,
-                            "reticulumd_announce_import_error",
-                            "Reticulumd announce list import failed",
-                            json!({
-                                "operation": "list_announces",
-                                "exception_type": "ApiError",
-                                "exception_message": error,
-                            }),
-                        );
-                        if outbound_error_is_rate_limited(&error) {
-                            rate_limit_cooldown_until = Some(
-                                std::time::Instant::now()
-                                    + Duration::from_millis(
-                                        OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS as u64,
-                                    ),
-                            );
-                            tokio::time::sleep(poll_interval).await;
-                            continue;
-                        }
-                    }
-                    Err(error) => {
-                        let error = error.to_string();
-                        record_reticulumd_inbound_worker_announce_error(&state, error.clone());
-                        if outbound_error_is_rate_limited(&error) {
-                            rate_limit_cooldown_until = Some(
-                                std::time::Instant::now()
-                                    + Duration::from_millis(
-                                        OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS as u64,
-                                    ),
-                            );
-                            tokio::time::sleep(poll_interval).await;
-                            continue;
-                        }
-                    }
-                }
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    })
+        .with_state(state.clone())
+        .layer(browser_security::cors_layer(&state))
+        .layer(middleware::from_fn_with_state(
+            state,
+            browser_security::enforce_browser_origin,
+        ))
 }
 
 fn lxmf_zmq_event_poll_enabled() -> bool {
@@ -3340,33 +2961,6 @@ fn select_reticulumd_event_poll_transport(
             ReticulumdEventPollTransport::None
         }
     }
-}
-
-pub fn shutdown_runtime_for_exit(state: &AppState) -> Result<(), String> {
-    {
-        let mut control = state
-            .runtime_control
-            .write()
-            .map_err(|error| error.to_string())?;
-        control.status = "stopping".to_string();
-        control.shutdown_requested = true;
-        control.last_stop_ts_ms = Some(unix_now_ms());
-    }
-    set_outbound_retry_worker_running(
-        state,
-        false,
-        Duration::from_millis(OUTBOUND_RETRY_WORKER_POLL_MS),
-    );
-    set_reticulumd_inbound_worker_running(
-        state,
-        false,
-        Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
-    );
-    if let Some(data_plane) = &state.lxmf_zmq_data_plane {
-        data_plane.shutdown().map_err(|error| error.to_string())?;
-    }
-    state.stop_managed_reticulumd()?;
-    Ok(())
 }
 
 fn set_outbound_retry_worker_running(state: &AppState, running: bool, poll_interval: Duration) {
@@ -4035,10 +3629,7 @@ fn import_reticulumd_announce_batch(
     records_to_touch.extend(updated_records);
     if !records_to_touch.is_empty() {
         persist_identity_announce_records(state, &records_to_touch)?;
-        for record in &records_to_touch {
-            record_announce_identity_state_inner(state, record, false)?;
-        }
-        persist_identity_state_records(state, &records_to_touch)?;
+        record_announce_identity_states(state, &records_to_touch)?;
     }
     Ok((imported, last_id))
 }
@@ -4095,98 +3686,67 @@ fn persist_identity_announce_records(
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
-fn persist_identity_state_records(
-    state: &AppState,
-    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
-) -> Result<(), ApiError> {
-    let Some(path) = &state.sqlite_path else {
-        return Ok(());
-    };
-    let identities = announces
-        .iter()
-        .filter_map(|announce| {
-            announce
-                .announced_identity_hash
-                .as_deref()
-                .and_then(normalize_identity_key)
-                .or_else(|| normalize_identity_key(&announce.destination_hash))
-        })
-        .collect::<HashSet<_>>();
-    if identities.is_empty() {
-        return Ok(());
-    }
-    let records = state
-        .identity_states
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .filter(|record| identities.contains(&record.identity))
-        .cloned()
-        .map(CoreIdentityStateRecord::from)
-        .collect::<Vec<_>>();
-    if records.is_empty() {
-        return Ok(());
-    }
-    let mut store = RchSqliteStore::open(path.as_ref())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    store
-        .upsert_identity_states(&records)
-        .map_err(|error| ApiError::Internal(error.to_string()))
-}
-
 fn record_announce_identity_state(
     state: &AppState,
     announce: &r3akt_rch_core::IdentityAnnounceRecord,
 ) -> Result<(), ApiError> {
-    record_announce_identity_state_inner(state, announce, true)
+    record_announce_identity_states(state, std::slice::from_ref(announce))
 }
 
-fn record_announce_identity_state_inner(
+fn record_announce_identity_states(
     state: &AppState,
-    announce: &r3akt_rch_core::IdentityAnnounceRecord,
-    persist: bool,
+    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
 ) -> Result<(), ApiError> {
-    let primary_identity = announce
-        .announced_identity_hash
-        .as_deref()
-        .and_then(normalize_identity_key)
-        .or_else(|| normalize_identity_key(&announce.destination_hash))
-        .ok_or_else(|| ApiError::Internal("identity announce key was not recorded".to_string()))?;
-    {
-        let mut identity_states = state
-            .identity_states
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        identity_states
-            .entry(primary_identity.clone())
-            .or_insert_with(|| IdentityStatusRecord {
-                identity: primary_identity.clone(),
-                is_banned: false,
-                is_blackholed: false,
-                updated_ts_ms: announce.last_seen_ts_ms,
-            });
-    }
-    {
-        let mut policy = state
-            .outbound_delivery_policy
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        policy.mark_presence(&announce.destination_hash, announce.last_seen_ts_ms);
-        if primary_identity != announce.destination_hash {
-            policy.mark_presence(&primary_identity, announce.last_seen_ts_ms);
-        }
-    }
-    if persist {
-        let record = state
-            .identity_states
-            .read()
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-            .get(&primary_identity)
-            .cloned()
+    let mut identity_states = state
+        .identity_states
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut candidates = HashMap::new();
+    for announce in announces {
+        let identity = announce
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+            .or_else(|| normalize_identity_key(&announce.destination_hash))
             .ok_or_else(|| {
-                ApiError::Internal("identity announce state was not recorded".to_string())
+                ApiError::Internal("identity announce key was not recorded".to_string())
             })?;
-        persist_identity_status_row(state, &record)?;
+        let candidate =
+            identity_states
+                .get(&identity)
+                .cloned()
+                .unwrap_or_else(|| IdentityStatusRecord {
+                    identity: identity.clone(),
+                    is_banned: false,
+                    is_blackholed: false,
+                    updated_ts_ms: announce.last_seen_ts_ms,
+                });
+        candidates.insert(identity, CoreIdentityStateRecord::from(candidate));
+    }
+    let candidates = candidates.into_values().collect::<Vec<_>>();
+    let committed = if state.sqlite_path.is_some() {
+        with_required_core_store_write(state, |store| store.ensure_identity_states(&candidates))?
+    } else {
+        candidates
+    };
+    for record in committed {
+        let record = IdentityStatusRecord::from(record);
+        identity_states.insert(record.identity_key(), record);
+    }
+    drop(identity_states);
+    let mut policy = state
+        .outbound_delivery_policy
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    for announce in announces {
+        policy.mark_presence(&announce.destination_hash, announce.last_seen_ts_ms);
+        if let Some(identity) = announce
+            .announced_identity_hash
+            .as_deref()
+            .and_then(normalize_identity_key)
+        {
+            policy.mark_presence(&identity, announce.last_seen_ts_ms);
+        }
     }
     Ok(())
 }
@@ -4410,13 +3970,13 @@ fn record_inbound_topic_message(
         .messages
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    persist_outbound_message_row(state, &record)?;
     messages.push(record.clone());
     if messages.len() > 500 {
         let overflow = messages.len() - 500;
         messages.drain(0..overflow);
     }
     drop(messages);
-    persist_outbound_message_row(state, &record)?;
     broadcast_message_event(state, &record);
     Ok(record)
 }
@@ -4939,17 +4499,16 @@ fn process_reticulumd_inbound_command(
                     &["topic_description", "TopicDescription", "description"],
                 ),
             })?;
-            let topic = {
+            {
                 let mut topics = state
                     .topics
                     .write()
                     .map_err(|error| ApiError::Internal(error.to_string()))?;
-                topics
-                    .entry(topic.topic_id.clone())
-                    .or_insert(topic)
-                    .clone()
-            };
-            persist_topic_row(state, &topic)
+                let topic = topics.get(&topic.topic_id).cloned().unwrap_or(topic);
+                persist_topic_row(state, &topic)?;
+                topics.insert(topic.topic_id.clone(), topic);
+            }
+            Ok(())
         }
         command_name if is_supported_mission_command(command_name) => {
             process_reticulumd_inbound_mission_sync_command(state, envelope, command, false)
@@ -5065,50 +4624,25 @@ fn process_reticulumd_inbound_mission_sync_command(
     checklist: bool,
 ) -> Result<(), ApiError> {
     let mission_command = mission_sync_command_from_reticulumd(envelope, command);
-    let path = state
-        .sqlite_path
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("RCH SQLite state unavailable".to_string()))?;
-    let started = Instant::now();
-    let mut store = RchSqliteStore::open(path.as_ref())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let snapshot = if checklist {
-        store
-            .load_checklist_command_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    } else {
-        store
-            .load_r3akt_read_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    };
-    let mut core = RchCore::from_snapshot(snapshot.clone())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let team_uid = command
-        .args
-        .get("_rem_team_uid")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let team_destinations = team_uid.as_deref().map(|team_uid| {
-        core.rem_team_routing_destinations(envelope.source.to_string().as_str(), team_uid)
-    });
-    let responses = if checklist {
-        core.handle_checklist_sync_command(&mission_command)
-    } else {
-        core.handle_mission_sync_command(&mission_command)
-    };
-    let after = core.snapshot();
-    if checklist {
-        store
-            .save_checklist_command_delta(&snapshot, &after)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-    } else {
-        store
-            .save_r3akt_command_delta(&snapshot, &after)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-    record_sqlite_latency(state, started.elapsed());
+    let (responses, team_uid, team_destinations) =
+        command_persistence::mutate(state, checklist, |core| {
+            let team_uid = command
+                .args
+                .get("_rem_team_uid")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            let team_destinations = team_uid.as_deref().map(|team_uid| {
+                core.rem_team_routing_destinations(envelope.source.to_string().as_str(), team_uid)
+            });
+            let responses = if checklist {
+                core.handle_checklist_sync_command(&mission_command)
+            } else {
+                core.handle_mission_sync_command(&mission_command)
+            };
+            Ok(((responses, team_uid, team_destinations), true))
+        })?;
 
     for response in responses {
         send_mission_sync_response_to_source(
@@ -5199,43 +4733,15 @@ fn touch_reticulumd_inbound_client(
     source: &str,
     chat_activity: bool,
 ) -> Result<(), ApiError> {
-    if source.trim().is_empty() {
+    if source.trim().is_empty() || inbound_identity_blocked(state, source)? {
         return Ok(());
     }
-    if inbound_identity_blocked(state, source)? {
-        return Ok(());
-    }
-    let now_ms = unix_now_ms();
-    let client = {
-        let mut clients = state
-            .clients
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        clients
-            .entry(source.to_string())
-            .and_modify(|client| {
-                client.last_seen = iso8601_from_unix_ms(now_ms);
-                if chat_activity {
-                    client.last_chat_ts_ms = Some(now_ms);
-                }
-            })
-            .or_insert_with(|| {
-                let mut client = ClientRecord::new(source.to_string(), now_ms);
-                if chat_activity {
-                    client.last_chat_ts_ms = Some(now_ms);
-                }
-                client
-            })
-            .clone()
-    };
-    {
-        let mut policy = state
-            .outbound_delivery_policy
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        policy.mark_presence(source, now_ms);
-    }
-    persist_client_row(state, &client)
+    update_roster_client(state, source, |client| {
+        if chat_activity {
+            client.last_chat_ts_ms = Some(unix_now_ms());
+        }
+    })
+    .map(|_| ())
 }
 
 fn upsert_roster_client<F>(
@@ -5251,42 +4757,53 @@ where
             "identity is banned or blackholed".to_string(),
         ));
     }
+    update_roster_client(state, source, update)
+}
+
+fn update_roster_client<F>(
+    state: &AppState,
+    source: &str,
+    update: F,
+) -> Result<ClientRecord, ApiError>
+where
+    F: FnOnce(&mut ClientRecord),
+{
     let key = normalize_identity_key(source)
         .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
     let now_ms = unix_now_ms();
-    let client = {
-        let mut clients = state
-            .clients
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let client = clients
-            .entry(key)
-            .or_insert_with(|| ClientRecord::new(source.to_string(), now_ms));
-        client.identity = source.to_string();
-        client.last_seen = iso8601_from_unix_ms(now_ms);
-        update(client);
-        client.clone()
-    };
+    let mut clients = state
+        .clients
+        .write()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut client = clients
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| ClientRecord::new(source.to_string(), now_ms));
+    client.identity = source.to_string();
+    client.last_seen = iso8601_from_unix_ms(now_ms);
+    update(&mut client);
+    persist_client_row(state, &client)?;
+    clients.insert(key, client.clone());
+    drop(clients);
     state
         .outbound_delivery_policy
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .mark_presence(source, now_ms);
-    persist_client_row(state, &client)?;
     Ok(client)
 }
 
 fn remove_roster_client(state: &AppState, source: &str) -> Result<bool, ApiError> {
     let key = normalize_identity_key(source)
         .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
-    let removed = state
+    let mut clients = state
         .clients
         .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .remove(&key)
-        .is_some();
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let removed = clients.contains_key(&key);
     if removed {
         delete_client_row(state, &key)?;
+        clients.remove(&key);
     }
     Ok(removed)
 }
@@ -5505,14 +5022,6 @@ fn runtime_shutdown_requested(state: &AppState) -> bool {
         .read()
         .map(|control| control.shutdown_requested)
         .unwrap_or(true)
-}
-
-fn cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .max_age(Duration::from_secs(86_400))
 }
 
 async fn require_http_auth(
@@ -11546,13 +11055,14 @@ fn mark_reticulumd_receipt_poll_attempt(
     }) else {
         return Ok(());
     };
+    let mut pending_update = message_persistence::Update::new(&state, message);
+    let message = &mut *pending_update;
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({ "receipt_last_poll_ts_ms": now_ms }),
     );
-    let message = message.clone();
-    drop(messages);
-    persist_outbound_message_row(state, &message)
+    pending_update.commit()?;
+    Ok(())
 }
 
 fn mark_reticulumd_receipt_poll_reconciliation_error(
@@ -11570,6 +11080,8 @@ fn mark_reticulumd_receipt_poll_reconciliation_error(
     }) else {
         return Ok(());
     };
+    let mut pending_update = message_persistence::Update::new(&state, message);
+    let message = &mut *pending_update;
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({
@@ -11578,9 +11090,8 @@ fn mark_reticulumd_receipt_poll_reconciliation_error(
             "sdk_reconciliation_error_ts_ms": now_ms,
         }),
     );
-    let message = message.clone();
-    drop(messages);
-    persist_outbound_message_row(state, &message)
+    pending_update.commit()?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -11671,6 +11182,8 @@ fn update_reticulumd_receipt_target_statuses(
     }) else {
         return Ok(());
     };
+    let mut pending_update = message_persistence::Update::new(&state, message);
+    let message = &mut *pending_update;
     let mut targets = reticulumd_receipt_targets_for_message(message);
     let normalize_peer_not_announced = propagated_multi_recipient_allows_partial_success(message);
     for status in statuses {
@@ -11704,9 +11217,8 @@ fn update_reticulumd_receipt_target_statuses(
         object.remove("sdk_reconciliation_error");
         object.remove("sdk_reconciliation_error_ts_ms");
     }
-    let message = message.clone();
-    drop(messages);
-    persist_outbound_message_row(state, &message)
+    pending_update.commit()?;
+    Ok(())
 }
 
 fn reticulumd_receipt_targets_json(targets: &[ReticulumdReceiptTarget]) -> Value {
@@ -11993,6 +11505,8 @@ fn mark_reticulumd_status_delivery_receipt(
         }) else {
             return Ok(());
         };
+        let mut pending_update = message_persistence::Update::new(&state, message);
+        let message = &mut *pending_update;
         let is_propagated = message.delivery_method == "propagated";
         let delivered_state = if is_propagated {
             "propagated"
@@ -12018,9 +11532,8 @@ fn mark_reticulumd_status_delivery_receipt(
                 "receipt_timeout": false,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(state, &message)?;
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
     let is_propagated = message.delivery_method == "propagated";
@@ -12071,6 +11584,8 @@ fn mark_reticulumd_status_sent(
         }) else {
             return Ok(());
         };
+        let mut pending_update = message_persistence::Update::new(&state, message);
+        let message = &mut *pending_update;
         message.delivery_state = delivery_success_state(message).to_string();
         clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
         let mut metadata = json!({
@@ -12086,9 +11601,8 @@ fn mark_reticulumd_status_sent(
             propagated_fanout_partial_success_metadata(message),
         );
         merge_delivery_metadata(&mut message.delivery_metadata, metadata);
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     Ok(())
 }
@@ -12166,6 +11680,8 @@ fn mark_reticulumd_status_delivery_failure(
         }) else {
             return Ok(());
         };
+        let mut pending_update = message_persistence::Update::new(&state, message);
+        let message = &mut *pending_update;
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
             &mut message.delivery_metadata,
@@ -12180,9 +11696,8 @@ fn mark_reticulumd_status_delivery_failure(
                 "retry_owner": "reticulumd",
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(state, &message)?;
     broadcast_message_event(&state, &message);
     if message.delivery_method == "direct" {
         if let Some(destination) = message.destination.as_deref() {
@@ -12225,10 +11740,12 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
         .messages
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    for message in messages.iter_mut() {
+    for message in messages.iter() {
         if !dispatch_pending(message) || !dispatch_deadline_expired(message, now_ms) {
             continue;
         }
+        let mut candidate = message.clone();
+        let message = &mut candidate;
         if message.delivery_method == "direct" {
             if let Some(destination) = message.destination.clone() {
                 direct_failure_destinations.push(destination);
@@ -12337,15 +11854,13 @@ fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
             outbound_delivery_failure_metadata(message, "send_timeout"),
         ));
     }
+    message_persistence::commit_batch(state, &mut messages, &changed_messages)?;
     drop(messages);
     for destination in direct_failure_destinations {
         mark_direct_delivery_failure(state, destination.as_str())?;
     }
     if changed_messages.is_empty() {
         return Ok(());
-    }
-    for message in &changed_messages {
-        persist_outbound_message_row(state, message)?;
     }
     for message in changed_messages {
         broadcast_message_event(state, &message);
@@ -12364,10 +11879,12 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
         .messages
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    for message in messages.iter_mut() {
+    for message in messages.iter() {
         if !delivery_receipt_pending(message) || !receipt_deadline_expired(message, now_ms) {
             continue;
         }
+        let mut candidate = message.clone();
+        let message = &mut candidate;
         let attempts = outbound_attempts(message).saturating_add(1);
         let active_reticulumd_status = reticulumd_receipt_targets_for_message(message)
             .iter()
@@ -12424,10 +11941,8 @@ fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> 
         ));
         changed_messages.push(message.clone());
     }
+    message_persistence::commit_batch(state, &mut messages, &changed_messages)?;
     drop(messages);
-    for message in &changed_messages {
-        persist_outbound_message_row(state, message)?;
-    }
     for (destination, metadata) in timeout_events {
         let _ = record_system_event(
             state,
@@ -13019,8 +12534,24 @@ fn push_command_section(lines: &mut Vec<String>, title: &str, commands: &[&str])
     lines.push(String::new());
 }
 
-async fn app_info(State(state): State<AppState>) -> Json<Value> {
-    Json(app_info_payload(&state))
+async fn app_info(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Json<Value>, ApiError> {
+    let mut payload = app_info_payload(&state);
+    if !state.validate_http_headers(request.headers(), request_client_addr(&request))? {
+        for field in [
+            "reticulum_config_path",
+            "database_path",
+            "storage_path",
+            "file_storage_path",
+            "image_storage_path",
+            "storage_paths",
+        ] {
+            payload[field] = Value::Null;
+        }
+    }
+    Ok(Json(payload))
 }
 
 fn app_info_payload(state: &AppState) -> Value {
@@ -13274,6 +12805,17 @@ async fn internal_delivery_receipt(
                     })
             })
             .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
+        let current = message.clone();
+        let Some(mut pending_update) =
+            message_persistence::Update::for_receipt(&state, message, is_propagated)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         message.delivery_state = delivered_state.to_string();
         merge_delivery_metadata(
             &mut message.delivery_metadata,
@@ -13285,9 +12827,8 @@ async fn internal_delivery_receipt(
                 "receipt_timeout": false,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
     let event_type = if is_propagated {
@@ -13369,6 +12910,7 @@ async fn internal_delivery_failure(
         }
     }
     let target_message_id = message.message_id.clone();
+    let expected = message;
     let message = {
         let mut messages = state
             .messages
@@ -13378,6 +12920,17 @@ async fn internal_delivery_failure(
             .iter_mut()
             .find(|message| message.message_id == target_message_id)
             .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
+        let current = message.clone();
+        let Some(mut pending_update) =
+            message_persistence::Update::for_attempt(&state, message, &expected)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
             &mut message.delivery_metadata,
@@ -13389,9 +12942,8 @@ async fn internal_delivery_failure(
                 "delivery_failed_ts_ms": now_ms,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
     let event = record_system_event(
@@ -13439,6 +12991,16 @@ async fn internal_delivery_retry(
                     })
             })
             .ok_or_else(|| ApiError::NotFound("Pending delivery retry not found".to_string()))?;
+        let current = message.clone();
+        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         let attempts = payload.attempts.unwrap_or_else(|| {
             message
                 .delivery_metadata
@@ -13463,9 +13025,8 @@ async fn internal_delivery_retry(
                 "next_attempt_at_ts_ms": payload.next_attempt_at_ts_ms,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
     let event = record_system_event(
@@ -13509,11 +13070,22 @@ async fn internal_delivery_propagation(
                     .is_some_and(|message_id| message.message_id == message_id)
                     || payload.destination.as_deref().is_some_and(|destination| {
                         message.destination.as_deref() == Some(destination)
+                            && message_persistence::dispatch_update_allowed(message)
                     })
             })
             .ok_or_else(|| {
                 ApiError::NotFound("Pending propagation fallback not found".to_string())
             })?;
+        let current = message.clone();
+        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         let attempts = payload.attempts.unwrap_or_else(|| {
             message
                 .delivery_metadata
@@ -13537,9 +13109,8 @@ async fn internal_delivery_propagation(
                 "retry_scheduled": false,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
     let event_message = if local_propagation_fallback {
@@ -13595,9 +13166,20 @@ async fn internal_delivery_drop(
                     .is_some_and(|message_id| message.message_id == message_id)
                     || payload.destination.as_deref().is_some_and(|destination| {
                         message.destination.as_deref() == Some(destination)
+                            && message_persistence::dispatch_update_allowed(message)
                     })
             })
             .ok_or_else(|| ApiError::NotFound("Pending delivery drop not found".to_string()))?;
+        let current = message.clone();
+        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         message.delivery_state = "failed".to_string();
         merge_delivery_metadata(
             &mut message.delivery_metadata,
@@ -13609,9 +13191,8 @@ async fn internal_delivery_drop(
                 "retry_scheduled": false,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     let event = record_system_event(
         &state,
@@ -13648,9 +13229,20 @@ async fn internal_delivery_attempt(
                     .is_some_and(|message_id| message.message_id == message_id)
                     || payload.destination.as_deref().is_some_and(|destination| {
                         message.destination.as_deref() == Some(destination)
+                            && message_persistence::dispatch_update_allowed(message)
                     })
             })
             .ok_or_else(|| ApiError::NotFound("Pending delivery attempt not found".to_string()))?;
+        let current = message.clone();
+        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
+        else {
+            return Ok(Json(json!({
+                "status": current.delivery_state,
+                "message": current,
+                "event": Value::Null,
+            })));
+        };
+        let message = &mut *pending_update;
         let attempts = payload.attempts.unwrap_or_else(|| {
             message
                 .delivery_metadata
@@ -13671,9 +13263,8 @@ async fn internal_delivery_attempt(
                 "retry_scheduled": false,
             }),
         );
-        message.clone()
+        pending_update.commit()?
     };
-    persist_outbound_message_row(&state, &message)?;
     broadcast_message_event(&state, &message);
     Ok(Json(json!({
         "status": "attempt_started",
@@ -14157,7 +13748,6 @@ async fn kill_switch_authorize(
         }
         runtime.mode = KillSwitchRuntimeMode::Authorized;
         runtime.authorized_at_ts_ms = Some(now_ms);
-        runtime.initial_pin_reveal = None;
         runtime.message =
             "PIN accepted. Final purge command is authorized for this session.".to_string();
         runtime.updated_at_ts_ms = now_ms;
@@ -14208,101 +13798,6 @@ async fn kill_switch_purge(State(state): State<AppState>) -> Result<Json<Value>,
     let _purge_worker =
         tokio::task::spawn_blocking(move || run_kill_switch_purge_worker(purge_state));
     Ok(Json(kill_switch_status_payload(&state)?))
-}
-
-async fn first_run_setup_status(
-    State(state): State<AppState>,
-    request: Request,
-) -> Result<Json<Value>, ApiError> {
-    let client_addr = request_client_addr(&request);
-    let include_sensitive_paths = state.validate_http_headers(request.headers(), client_addr)?;
-    Ok(Json(first_run_setup_status_payload(
-        &state,
-        include_sensitive_paths,
-    )?))
-}
-
-async fn first_run_setup_complete(
-    State(state): State<AppState>,
-    Json(payload): Json<FirstRunSetupPayload>,
-) -> Result<Json<Value>, ApiError> {
-    if load_kill_switch_pin(&state)?.is_some() {
-        return Err(ApiError::Conflict(
-            "First-run setup has already enrolled a kill switch PIN".to_string(),
-        ));
-    }
-
-    let hub_name = payload.hub_name.trim();
-    if hub_name.is_empty() {
-        return Err(ApiError::BadRequest("Hub name is required".to_string()));
-    }
-    if hub_name.chars().count() > 80 {
-        return Err(ApiError::BadRequest(
-            "Hub name must be 80 characters or fewer".to_string(),
-        ));
-    }
-
-    let remote_password = payload.remote_password.trim();
-    if remote_password.len() < 8 {
-        return Err(ApiError::BadRequest(
-            "Remote access password must contain at least eight characters".to_string(),
-        ));
-    }
-
-    let kill_switch_pin = payload.kill_switch_pin.trim();
-    if kill_switch_pin.len() != 6 || !kill_switch_pin.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(ApiError::BadRequest(
-            "Kill switch PIN must contain exactly six digits".to_string(),
-        ));
-    }
-
-    if let Some(reticulum_config_text) = payload.reticulum_config_text.as_deref() {
-        let errors = validate_ini_text(reticulum_config_text);
-        if !errors.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid Reticulum configuration payload: {}",
-                errors.join("; ")
-            )));
-        }
-        if !reticulum_config_text.trim().is_empty() && state.reticulum_config_path.is_none() {
-            return Err(ApiError::BadRequest(
-                "Reticulum configuration path is required before setup can save TCP interfaces"
-                    .to_string(),
-            ));
-        }
-    }
-
-    if let Some(path) = state.config_path.as_deref() {
-        let current = read_config_file(Some(path))?;
-        let updated = upsert_ini_setting(&current, "hub", "name", hub_name);
-        write_config_file_for_setup(path, updated)?;
-    }
-
-    if let (Some(path), Some(reticulum_config_text)) = (
-        state.reticulum_config_path.as_deref(),
-        payload.reticulum_config_text.as_deref(),
-    ) {
-        write_config_file_for_setup(path, reticulum_config_text.to_string())?;
-    }
-
-    with_required_core_store_write(&state, |store| {
-        store.set_setting_value(HUB_NAME_SETTING, hub_name)?;
-        Ok(())
-    })?;
-    save_remote_access_password(&state, remote_password)?;
-    save_kill_switch_pin(&state, kill_switch_pin)?;
-
-    {
-        let mut runtime = state
-            .kill_switch
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        runtime.initial_pin_reveal = None;
-        runtime.message = "Kill switch PIN enrolled by first-run setup.".to_string();
-        runtime.updated_at_ts_ms = unix_now_ms();
-    }
-
-    Ok(Json(first_run_setup_status_payload(&state, true)?))
 }
 
 async fn validate_auth(State(state): State<AppState>, request: Request) -> Json<Value> {
@@ -14660,9 +14155,9 @@ fn record_outbound_message_with_metadata_mode(
         .messages
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    persist_outbound_message_row(state, &message)?;
     messages.push(message.clone());
     drop(messages);
-    persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
     if effective_dispatch_mode == OutboundDispatchMode::Deferred {
         record_system_event_best_effort(
@@ -14735,9 +14230,9 @@ fn record_outbound_message_with_metadata_mode(
                 &mut delivery_update,
                 shared_fanout_delivery_metadata(&message, dispatch_count),
             );
-            update_outbound_delivery_state(
+            if update_dispatch_delivery_state(
                 state,
-                message.message_id.as_str(),
+                &message,
                 delivery_state,
                 outbound_delivery_metadata(
                     &message,
@@ -14745,7 +14240,11 @@ fn record_outbound_message_with_metadata_mode(
                     delivery_state == "propagated" || delivery_state == "delivered",
                     delivery_update,
                 ),
-            )?;
+            )?
+            .is_none()
+            {
+                return message_persistence::current(state, &message.message_id);
+            }
             dispatch_report
         }
         Err(error) => {
@@ -14773,15 +14272,11 @@ fn record_outbound_message_with_metadata_mode(
                     "receipt_pending": false,
                 }),
             );
-            update_outbound_delivery_state(
-                state,
-                message.message_id.as_str(),
-                "failed",
-                failure_metadata.clone(),
-            )?;
-            let mut failed_message = message.clone();
-            failed_message.delivery_state = "failed".to_string();
-            merge_delivery_metadata(&mut failed_message.delivery_metadata, failure_metadata);
+            let Some(failed_message) =
+                update_dispatch_delivery_state(state, &message, "failed", failure_metadata)?
+            else {
+                return message_persistence::current(state, &message.message_id);
+            };
             let destination = failed_message
                 .destination
                 .as_deref()
@@ -15269,9 +14764,12 @@ fn is_rem_command_message(message: &OutboundMessageRecord) -> bool {
 fn process_outbound_delivery_worker_tick(
     state: &AppState,
 ) -> Result<OutboundRetryWorkerReport, ApiError> {
+    if state.runtime_exit.is_requested() || runtime_shutdown_requested(state) {
+        return Ok(OutboundRetryWorkerReport::default());
+    }
     finalize_stale_pending_dispatches(state)?;
     let report = process_due_outbound_retry_messages(state)?;
-    if report.processed == 0 {
+    if report.processed == 0 && !state.runtime_exit.is_requested() {
         poll_reticulumd_delivery_receipts(state)?;
         finalize_expired_delivery_receipts(state)?;
     }
@@ -15299,9 +14797,15 @@ fn process_due_outbound_retry_messages(
         failed: 0,
     };
     for message in due_messages {
+        if state.runtime_exit.is_requested() || runtime_shutdown_requested(state) {
+            break;
+        }
         report.processed += 1;
         if failed_direct_timeout_retry_due(&message, now_ms) {
             let repair_message = queue_direct_timeout_for_propagation(state, &message, now_ms)?;
+            if normalized_delivery_state(&repair_message) != "queued" {
+                continue;
+            }
             let _ = record_system_event(
                 state,
                 "message_propagation_queued",
@@ -15316,7 +14820,11 @@ fn process_due_outbound_retry_messages(
             )?;
             continue;
         }
-        mark_outbound_attempt_started(state, &message.message_id, now_ms)?;
+        let Some(message) =
+            claim_outbound_attempt(state, &message.message_id, Some(&message), now_ms)?
+        else {
+            continue;
+        };
         let dispatch_report = match dispatch_outbound_message(state, &message) {
             Ok(dispatch_report) => dispatch_report,
             Err(error) => {
@@ -15339,6 +14847,9 @@ fn process_due_outbound_retry_messages(
                     continue;
                 }
                 let failed_message = mark_outbound_dispatch_failed(state, &message, error_text)?;
+                if normalized_delivery_state(&failed_message) != "failed" {
+                    continue;
+                }
                 let destination = failed_message.destination.as_deref().unwrap_or("unknown");
                 let _ = record_system_event(
                     state,
@@ -15378,6 +14889,9 @@ fn process_due_outbound_retry_messages(
                     dispatch_report.rejected.len()
                 ),
             )?;
+            if normalized_delivery_state(&failed_message) != "failed" {
+                continue;
+            }
             let _ = record_system_event(
                 state,
                 "message_delivery_failed",
@@ -15458,12 +14972,16 @@ fn process_due_outbound_retry_messages(
             delivery_state == "propagated" || delivery_state == "delivered",
             delivery_update,
         );
-        update_outbound_delivery_state(
+        if update_dispatch_delivery_state(
             state,
-            message.message_id.as_str(),
+            &message,
             delivery_state,
             success_metadata.clone(),
-        )?;
+        )?
+        .is_none()
+        {
+            continue;
+        }
         let mut recovered_message = message.clone();
         recovered_message.delivery_state = delivery_state.to_string();
         clear_success_superseded_delivery_metadata(&mut recovered_message.delivery_metadata);
@@ -15666,6 +15184,11 @@ fn schedule_outbound_retry_after_failure(
     else {
         return Ok(None);
     };
+    let Some(mut pending_update) = message_persistence::Update::for_attempt(state, stored, message)
+    else {
+        return Ok(None);
+    };
+    let stored = &mut *pending_update;
     stored.delivery_state = "queued".to_string();
     merge_delivery_metadata(
         &mut stored.delivery_metadata,
@@ -15681,9 +15204,8 @@ fn schedule_outbound_retry_after_failure(
             "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
         }),
     );
-    let retry_message = stored.clone();
+    let retry_message = pending_update.commit()?;
     drop(messages);
-    persist_outbound_message_row(state, &retry_message)?;
     broadcast_message_event(state, &retry_message);
     Ok(Some(retry_message))
 }
@@ -15726,6 +15248,11 @@ fn schedule_zmq_pre_admission_retry(
     else {
         return Ok(None);
     };
+    let Some(mut pending_update) = message_persistence::Update::for_attempt(state, stored, message)
+    else {
+        return Ok(None);
+    };
+    let stored = &mut *pending_update;
     stored.delivery_state = "queued".to_string();
     merge_delivery_metadata(
         &mut stored.delivery_metadata,
@@ -15746,9 +15273,8 @@ fn schedule_zmq_pre_admission_retry(
             "zmq_rejections": dispatch_report.rejected,
         }),
     );
-    let retry_message = stored.clone();
+    let retry_message = pending_update.commit()?;
     drop(messages);
-    persist_outbound_message_row(state, &retry_message)?;
     broadcast_message_event(state, &retry_message);
     Ok(Some(retry_message))
 }
@@ -15915,6 +15441,16 @@ fn queue_direct_timeout_for_propagation(
     else {
         return Err(ApiError::NotFound("Outbound message not found".to_string()));
     };
+    if matches!(
+        normalized_delivery_state(stored).as_str(),
+        "delivered" | "propagated" | "expired" | "dropped"
+    ) || stored.delivery_method != message.delivery_method
+        || stored.delivery_policy_reason != message.delivery_policy_reason
+    {
+        return Ok(stored.clone());
+    }
+    let mut pending_update = message_persistence::Update::new(&state, stored);
+    let stored = &mut *pending_update;
     let attempts = outbound_attempts(stored).saturating_add(1);
     stored.delivery_state = "queued".to_string();
     stored.delivery_method = "propagated".to_string();
@@ -15939,9 +15475,8 @@ fn queue_direct_timeout_for_propagation(
             "next_attempt_at_ts_ms": now_ms,
         }),
     );
-    let repaired_message = stored.clone();
+    let repaired_message = pending_update.commit()?;
     drop(messages);
-    persist_outbound_message_row(state, &repaired_message)?;
     broadcast_message_event(state, &repaired_message);
     Ok(repaired_message)
 }
@@ -15955,11 +15490,21 @@ fn outbound_backoff_ms(message: &OutboundMessageRecord) -> i64 {
         .max(1)
 }
 
+#[cfg(test)]
 fn mark_outbound_attempt_started(
     state: &AppState,
     message_id: &str,
     started_at_ts_ms: i64,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
+    claim_outbound_attempt(state, message_id, None, started_at_ts_ms).map(|record| record.is_some())
+}
+
+fn claim_outbound_attempt(
+    state: &AppState,
+    message_id: &str,
+    expected: Option<&OutboundMessageRecord>,
+    started_at_ts_ms: i64,
+) -> Result<Option<OutboundMessageRecord>, ApiError> {
     let mut messages = state
         .messages
         .write()
@@ -15968,8 +15513,16 @@ fn mark_outbound_attempt_started(
         .iter_mut()
         .find(|message| message.message_id == message_id)
     else {
-        return Ok(());
+        return Ok(None);
     };
+    if state.runtime_exit.is_requested()
+        || !outbound_retry_due(message, started_at_ts_ms)
+        || expected.is_some_and(|expected| expected != message)
+    {
+        return Ok(None);
+    }
+    let mut pending_update = message_persistence::Update::new(&state, message);
+    let message = &mut *pending_update;
     message.delivery_state = "queued".to_string();
     clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
     merge_delivery_metadata(
@@ -15983,11 +15536,10 @@ fn mark_outbound_attempt_started(
             "retry_scheduled": false,
         }),
     );
-    let message = message.clone();
+    let message = pending_update.commit()?;
     drop(messages);
-    persist_outbound_message_row(state, &message)?;
     broadcast_message_event(state, &message);
-    Ok(())
+    Ok(Some(message))
 }
 
 fn outbound_dispatch_attempt_still_current(
@@ -16036,16 +15588,12 @@ fn mark_outbound_dispatch_failed(
             "retry_scheduled": false,
         }),
     );
-    update_outbound_delivery_state(
-        state,
-        message.message_id.as_str(),
-        "failed",
-        failure_metadata.clone(),
-    )?;
-    let mut failed_message = message.clone();
-    failed_message.delivery_state = "failed".to_string();
-    merge_delivery_metadata(&mut failed_message.delivery_metadata, failure_metadata);
-    Ok(failed_message)
+    if let Some(failed) =
+        update_dispatch_delivery_state(state, message, "failed", failure_metadata)?
+    {
+        return Ok(failed);
+    }
+    message_persistence::current(state, &message.message_id)
 }
 
 fn delivery_success_state(message: &OutboundMessageRecord) -> &'static str {
@@ -16113,30 +15661,30 @@ fn delivery_route_type(delivery_mode: DeliveryMode) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn update_outbound_delivery_state(
     state: &AppState,
     message_id: &str,
     delivery_state: &str,
     delivery_metadata: Value,
 ) -> Result<(), ApiError> {
-    let mut messages = state
-        .messages
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let Some(message) = messages
-        .iter_mut()
-        .find(|message| message.message_id == message_id)
-    else {
-        return Ok(());
-    };
-    message.delivery_state = delivery_state.to_string();
-    if delivery_state_clears_error_metadata(delivery_state) {
-        clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
-    }
-    merge_delivery_metadata(&mut message.delivery_metadata, delivery_metadata);
-    let message = message.clone();
-    drop(messages);
-    persist_outbound_message_row(state, &message)
+    message_persistence::transition(state, message_id, None, delivery_state, delivery_metadata)
+        .map(|_| ())
+}
+
+fn update_dispatch_delivery_state(
+    state: &AppState,
+    expected: &OutboundMessageRecord,
+    delivery_state: &str,
+    delivery_metadata: Value,
+) -> Result<Option<OutboundMessageRecord>, ApiError> {
+    message_persistence::transition(
+        state,
+        &expected.message_id,
+        Some(expected),
+        delivery_state,
+        delivery_metadata,
+    )
 }
 
 fn merge_delivery_metadata(target: &mut Value, update: Value) {
@@ -17738,49 +17286,6 @@ fn ensure_reticulum_identity_status(
     }
 }
 
-fn first_run_setup_status_payload(
-    state: &AppState,
-    include_sensitive_paths: bool,
-) -> Result<Value, ApiError> {
-    let pin = load_kill_switch_pin(state)?;
-    let setup_required = pin.is_none();
-    let expose_paths = setup_required || include_sensitive_paths;
-    let remote_password = load_stored_remote_password(state)?;
-    let hub_name =
-        with_required_core_store_write(state, |store| store.setting_value(HUB_NAME_SETTING))?;
-    let reticulum_identity = ensure_reticulum_identity_status(state)?;
-    Ok(json!({
-        "setup_required": setup_required,
-        "pin_enrolled": pin.is_some(),
-        "pin_created_at": pin.as_ref().map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
-        "hub_name": hub_name,
-        "remote_password_configured": remote_password.is_some(),
-        "remote_password_created_at": remote_password
-            .as_ref()
-            .map(|secret| iso8601_from_unix_ms(secret.created_at_ts_ms)),
-        "config_path": expose_paths
-            .then(|| state.config_path.as_deref().map(|path| path.display().to_string()))
-            .flatten(),
-        "reticulum_config_path": expose_paths
-            .then(|| {
-                state
-                    .reticulum_config_path
-                    .as_deref()
-                    .map(|path| path.display().to_string())
-            })
-            .flatten(),
-        "reticulum_identity_hash": reticulum_identity.as_ref().map(|identity| identity.hash.clone()),
-        "reticulum_identity_path": expose_paths
-            .then(|| {
-                reticulum_identity
-                    .as_ref()
-                    .map(|identity| identity.path.display().to_string())
-            })
-            .flatten(),
-        "reticulum_identity_created": reticulum_identity.as_ref().map(|identity| identity.created),
-    }))
-}
-
 fn kill_switch_auth_active(runtime: &KillSwitchRuntimeState, now_ms: i64) -> bool {
     runtime.authorized_at_ts_ms.is_some_and(|authorized_at| {
         now_ms.saturating_sub(authorized_at) <= KILL_SWITCH_AUTHORIZATION_TTL_MS
@@ -18208,7 +17713,6 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
         runtime.arm_b = false;
         runtime.authorized_at_ts_ms = None;
         runtime.mode = KillSwitchRuntimeMode::Idle;
-        runtime.initial_pin_reveal = None;
         if runtime.message.is_empty() {
             runtime.message =
                 "First-run setup must configure a kill switch PIN before purge controls unlock."
@@ -18288,7 +17792,7 @@ fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
         "arm_b": runtime.arm_b,
         "pin_enrolled": true,
         "pin_created_at": iso8601_from_unix_ms(secret.created_at_ts_ms),
-        "initial_pin": runtime.initial_pin_reveal.clone(),
+        "initial_pin": Value::Null,
         "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
         "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
         "progress_percent": runtime.progress_percent,
@@ -18429,8 +17933,12 @@ fn persist_system_event_row(state: &AppState, event: &SystemEventRecord) -> Resu
 fn persist_telemetry_record_row(
     state: &AppState,
     record: &TelemetryRecord,
-) -> Result<(), ApiError> {
-    with_core_store_write(state, |store| store.insert_telemetry_record(record))
+) -> Result<TelemetryRecord, ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
+    if state.sqlite_path.is_none() {
+        return Ok(record.clone());
+    }
+    with_required_core_store_write(state, |store| store.upsert_latest_telemetry_record(record))
 }
 
 fn persist_client_row(state: &AppState, client: &ClientRecord) -> Result<(), ApiError> {
@@ -18440,14 +17948,6 @@ fn persist_client_row(state: &AppState, client: &ClientRecord) -> Result<(), Api
 
 fn delete_client_row(state: &AppState, identity: &str) -> Result<(), ApiError> {
     with_core_store_write(state, |store| store.delete_client(identity))
-}
-
-fn persist_identity_status_row(
-    state: &AppState,
-    record: &IdentityStatusRecord,
-) -> Result<(), ApiError> {
-    let record = CoreIdentityStateRecord::from(record.clone());
-    with_core_store_write(state, |store| store.upsert_identity_state(&record))
 }
 
 fn persist_topic_row(state: &AppState, topic: &TopicRecord) -> Result<(), ApiError> {
@@ -18462,6 +17962,16 @@ fn delete_topic_row(state: &AppState, topic_id: &str) -> Result<(), ApiError> {
 fn persist_subscriber_row(state: &AppState, subscriber: &SubscriberRecord) -> Result<(), ApiError> {
     let record = CoreSubscriberRecord::from(subscriber.clone());
     with_core_store_write(state, |store| store.upsert_subscriber(&record))
+}
+
+fn replace_subscriber_row(
+    state: &AppState,
+    previous: &SubscriberRecord,
+    next: &SubscriberRecord,
+) -> Result<(), ApiError> {
+    let previous = CoreSubscriberRecord::from(previous.clone());
+    let next = CoreSubscriberRecord::from(next.clone());
+    with_core_store_write(state, |store| store.replace_subscriber(&previous, &next))
 }
 
 fn delete_subscriber_row(state: &AppState, subscriber: &SubscriberRecord) -> Result<(), ApiError> {
@@ -18497,21 +18007,12 @@ fn insert_file_attachment_row(
     })
 }
 
+#[cfg(test)]
 fn persist_file_attachment_row(
     state: &AppState,
     record: &FileAttachmentRecord,
 ) -> Result<(), ApiError> {
     with_core_store_write(state, |store| store.upsert_file_attachment(record))
-}
-
-fn delete_file_attachment_row(
-    state: &AppState,
-    file_id: u64,
-    category: &str,
-) -> Result<(), ApiError> {
-    with_core_store_write(state, |store| {
-        store.delete_file_attachment(file_id, category)
-    })
 }
 
 fn record_system_event(
@@ -18531,13 +18032,13 @@ fn record_system_event(
         .system_events
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    persist_system_event_row(state, &event)?;
     events.push(event.clone());
     if events.len() > 200 {
         let overflow = events.len() - 200;
         events.drain(0..overflow);
     }
     drop(events);
-    persist_system_event_row(state, &event)?;
     broadcast_system_event(state, &event);
     Ok(event)
 }
@@ -18550,6 +18051,21 @@ fn record_system_event_best_effort(
 ) {
     if let Err(error) = record_system_event(state, event_type, message, metadata) {
         eprintln!("Failed to record system event {event_type}: {error}");
+    }
+}
+
+fn notify_mission_changes_after_commit(
+    state: &AppState,
+    before: HashMap<String, Value>,
+    after: HashMap<String, Value>,
+) {
+    if let Err(error) = spawn_mission_change_listener_events(state, before, after) {
+        record_system_event_best_effort(
+            state,
+            "mission_change_notification_failed",
+            "Mission change committed; listener notification failed",
+            json!({"error": error.to_string()}),
+        );
     }
 }
 
@@ -21778,147 +21294,6 @@ async fn send_chat_message(
     Ok(Json(response))
 }
 
-async fn upload_chat_attachment(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> Result<Json<Value>, ApiError> {
-    let mut category: Option<String> = None;
-    let mut sha256: Option<String> = None;
-    let mut topic_id: Option<String> = None;
-    let mut filename: Option<String> = None;
-    let mut media_type: Option<String> = None;
-    let mut content: Option<Vec<u8>> = None;
-
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?
-    {
-        let name = field.name().unwrap_or_default().to_string();
-        match name.as_str() {
-            "category" => {
-                category = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-                );
-            }
-            "sha256" => {
-                sha256 = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-                );
-            }
-            "topic_id" | "TopicID" | "topicId" => {
-                topic_id = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-                );
-            }
-            "file" => {
-                filename = Some(
-                    field
-                        .file_name()
-                        .filter(|value| !value.trim().is_empty())
-                        .unwrap_or("upload.bin")
-                        .to_string(),
-                );
-                media_type = field.content_type().map(ToString::to_string);
-                content = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|error| ApiError::BadRequest(error.to_string()))?
-                        .to_vec(),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    let category = category
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ApiError::BadRequest("Attachment category must be file or image".to_string())
-        })?;
-    if !matches!(category.as_str(), "file" | "image") {
-        return Err(ApiError::BadRequest(
-            "Attachment category must be file or image".to_string(),
-        ));
-    }
-    let content =
-        content.ok_or_else(|| ApiError::BadRequest("field `file` is required".to_string()))?;
-    if content.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Attachment content is empty".to_string(),
-        ));
-    }
-    if content.len() > CHAT_ATTACHMENT_MAX_BYTES {
-        return Err(ApiError::PayloadTooLarge(
-            "Attachment exceeds size limit".to_string(),
-        ));
-    }
-    if category == "image" {
-        let media_type_value = media_type.as_deref().unwrap_or_default();
-        if !media_type_value.starts_with("image/") {
-            return Err(ApiError::BadRequest(
-                "Image attachments must use an image content type".to_string(),
-            ));
-        }
-    }
-    if let Some(expected_hash) = sha256
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let digest = Sha256::digest(&content);
-        let actual_hash = digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        if actual_hash != expected_hash.to_ascii_lowercase() {
-            return Err(ApiError::BadRequest("Attachment hash mismatch".to_string()));
-        }
-    }
-
-    let safe_name = sanitize_attachment_filename(filename.as_deref().unwrap_or("upload.bin"));
-    let suffix = FsPath::new(&safe_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    let stored_name = format!("{}{}", Uuid::new_v4().simple(), suffix);
-    let base_path = state.attachment_storage_path(&category)?;
-    std::fs::create_dir_all(&base_path).map_err(|error| ApiError::Internal(error.to_string()))?;
-    let target_path = base_path.join(stored_name);
-    std::fs::write(&target_path, &content)
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-
-    let now = unix_now_ms();
-    let record = insert_file_attachment_row(
-        &state,
-        FileAttachmentRecord {
-            file_id: 0,
-            name: safe_name,
-            path: target_path.display().to_string(),
-            category,
-            size: content.len() as u64,
-            media_type,
-            topic_id: normalize_optional_text(topic_id),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        },
-    )?;
-
-    Ok(Json(attachment_to_python_value(&record)))
-}
-
 fn chat_message_payload(message: OutboundMessageRecord) -> Value {
     let direction = message_direction(&message).to_string();
     let scope = message_scope(&message);
@@ -22860,9 +22235,27 @@ async fn list_marker_symbols_route() -> Json<Value> {
     Json(default_marker_symbols())
 }
 
+async fn create_marker_route(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(input): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let key = marker_idempotency::key(&headers)?;
+    create_marker_with_key(state, input, key).await
+}
+
+#[cfg(test)]
 async fn create_marker(
     State(state): State<AppState>,
     Json(input): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    create_marker_with_key(state, input, None).await
+}
+
+async fn create_marker_with_key(
+    state: AppState,
+    input: Value,
+    key: Option<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let payload = parse_marker_create_payload(input)?;
     validate_lat_lon(payload.lat, payload.lon)?;
@@ -22900,18 +22293,15 @@ async fn create_marker(
         created_ts_ms: now_ms,
         updated_ts_ms: now_ms,
     };
-    state
-        .markers
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .insert(object_destination_hash.clone(), marker.clone());
-    persist_marker_row(&state, &marker)?;
-    record_marker_activity(&state, "marker.created", &marker)?;
+    let (marker, created) = marker_idempotency::persist(&state, marker, key.as_deref())?;
+    if created {
+        record_marker_activity_after_commit(&state, "marker.created", &marker);
+    }
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "object_destination_hash": object_destination_hash,
-            "created_at": iso8601_from_unix_ms(now_ms)
+            "object_destination_hash": marker.object_destination_hash,
+            "created_at": iso8601_from_unix_ms(marker.created_ts_ms)
         })),
     ))
 }
@@ -22969,16 +22359,30 @@ async fn patch_marker_position(
             .markers
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let marker = markers
-            .get_mut(&object_destination_hash)
-            .ok_or_else(|| marker_not_found(&object_destination_hash))?;
-        marker.lat = payload.lat;
-        marker.lon = payload.lon;
-        marker.updated_ts_ms = updated_at;
-        marker.clone()
+        let marker = if state.sqlite_path.is_some() {
+            with_required_core_store_write(&state, |store| {
+                store.update_marker(&object_destination_hash, |marker| {
+                    marker.lat = payload.lat;
+                    marker.lon = payload.lon;
+                    marker.updated_ts_ms = updated_at;
+                })
+            })?
+            .map(MarkerRecord::from)
+            .ok_or_else(|| marker_not_found(&object_destination_hash))?
+        } else {
+            let mut marker = markers
+                .get(&object_destination_hash)
+                .cloned()
+                .ok_or_else(|| marker_not_found(&object_destination_hash))?;
+            marker.lat = payload.lat;
+            marker.lon = payload.lon;
+            marker.updated_ts_ms = updated_at;
+            marker
+        };
+        markers.insert(object_destination_hash.clone(), marker.clone());
+        marker
     };
-    persist_marker_row(&state, &marker)?;
-    record_marker_activity(&state, "marker.updated", &marker)?;
+    record_marker_activity_after_commit(&state, "marker.updated", &marker);
     Ok(Json(json!({
         "status": "ok",
         "updated_at": iso8601_from_unix_ms(updated_at)
@@ -22997,15 +22401,28 @@ async fn patch_marker(
             .markers
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let marker = markers
-            .get_mut(&object_destination_hash)
-            .ok_or_else(|| marker_not_found(&object_destination_hash))?;
-        marker.name = name;
-        marker.updated_ts_ms = updated_at;
-        marker.clone()
+        let marker = if state.sqlite_path.is_some() {
+            with_required_core_store_write(&state, |store| {
+                store.update_marker(&object_destination_hash, |marker| {
+                    marker.name = name;
+                    marker.updated_ts_ms = updated_at;
+                })
+            })?
+            .map(MarkerRecord::from)
+            .ok_or_else(|| marker_not_found(&object_destination_hash))?
+        } else {
+            let mut marker = markers
+                .get(&object_destination_hash)
+                .cloned()
+                .ok_or_else(|| marker_not_found(&object_destination_hash))?;
+            marker.name = name;
+            marker.updated_ts_ms = updated_at;
+            marker
+        };
+        markers.insert(object_destination_hash.clone(), marker.clone());
+        marker
     };
-    persist_marker_row(&state, &marker)?;
-    record_marker_activity(&state, "marker.updated", &marker)?;
+    record_marker_activity_after_commit(&state, "marker.updated", &marker);
     Ok(Json(json!({
         "status": "ok",
         "updated_at": iso8601_from_unix_ms(updated_at)
@@ -23016,14 +22433,20 @@ async fn delete_marker(
     Path(object_destination_hash): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<Value>, ApiError> {
-    let removed = state
-        .markers
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .remove(&object_destination_hash);
-    let marker = removed.ok_or_else(|| marker_not_found(&object_destination_hash))?;
-    delete_marker_row(&state, &object_destination_hash)?;
-    record_marker_activity(&state, "marker.deleted", &marker)?;
+    let marker = {
+        let mut markers = state
+            .markers
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let marker = markers
+            .get(&object_destination_hash)
+            .cloned()
+            .ok_or_else(|| marker_not_found(&object_destination_hash))?;
+        delete_marker_row(&state, &object_destination_hash)?;
+        markers.remove(&object_destination_hash);
+        marker
+    };
+    record_marker_activity_after_commit(&state, "marker.deleted", &marker);
     Ok(Json(json!({
         "status": "ok",
         "deleted_at": iso8601_from_unix_ms(unix_now_ms())
@@ -23032,6 +22455,17 @@ async fn delete_marker(
 
 fn marker_not_found(object_destination_hash: &str) -> ApiError {
     ApiError::NotFound(format!("\"Marker '{object_destination_hash}' not found\""))
+}
+
+fn record_marker_activity_after_commit(state: &AppState, event_type: &str, marker: &MarkerRecord) {
+    if let Err(error) = record_marker_activity(state, event_type, marker) {
+        record_system_event_best_effort(
+            state,
+            "marker_notification_failed",
+            "Marker change committed; activity notification failed",
+            json!({"operation": event_type, "marker_id": marker.object_destination_hash, "error": error.to_string()}),
+        );
+    }
 }
 
 fn record_marker_activity(
@@ -23322,12 +22756,14 @@ async fn create_zone(
         created_ts_ms: now_ms,
         updated_ts_ms: now_ms,
     };
-    state
-        .zones
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .insert(zone_id.clone(), zone.clone());
-    persist_zone_row(&state, &zone)?;
+    {
+        let mut zones = state
+            .zones
+            .write()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        persist_zone_row(&state, &zone)?;
+        zones.insert(zone_id.clone(), zone.clone());
+    }
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -23351,24 +22787,35 @@ async fn patch_zone(
         .map(|value| validate_python_name_field(value, "name"))
         .transpose()?;
     let updated_at = unix_now_ms();
-    let zone = {
+    {
         let mut zones = state
             .zones
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let zone = zones
-            .get_mut(&zone_id)
-            .ok_or_else(|| zone_not_found(&zone_id))?;
-        if let Some(name) = name {
-            zone.name = name;
-        }
-        if let Some(points) = payload.points {
-            zone.points = points;
-        }
-        zone.updated_ts_ms = updated_at;
-        zone.clone()
+        let update = |zone: &mut CoreZoneRecord| {
+            if let Some(name) = name {
+                zone.name = name;
+            }
+            if let Some(points) = payload.points {
+                zone.points = points.into_iter().map(CoreZonePointRecord::from).collect();
+            }
+            zone.updated_ts_ms = updated_at;
+        };
+        let zone = if state.sqlite_path.is_some() {
+            with_required_core_store_write(&state, |store| store.update_zone(&zone_id, update))?
+                .map(ZoneRecord::from)
+                .ok_or_else(|| zone_not_found(&zone_id))?
+        } else {
+            let zone = zones
+                .get(&zone_id)
+                .cloned()
+                .ok_or_else(|| zone_not_found(&zone_id))?;
+            let mut zone = CoreZoneRecord::from(zone);
+            update(&mut zone);
+            ZoneRecord::from(zone)
+        };
+        zones.insert(zone_id.clone(), zone);
     };
-    persist_zone_row(&state, &zone)?;
     Ok(Json(json!({
         "status": "ok",
         "updated_at": iso8601_from_unix_ms(updated_at)
@@ -23456,15 +22903,15 @@ async fn delete_zone(
     Path(zone_id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<Value>, ApiError> {
-    let removed = state
+    let mut zones = state
         .zones
         .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .remove(&zone_id);
-    if removed.is_none() {
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if !zones.contains_key(&zone_id) {
         return Err(zone_not_found(&zone_id));
     }
     delete_zone_row(&state, &zone_id)?;
+    zones.remove(&zone_id);
     Ok(Json(json!({
         "status": "ok",
         "deleted_at": iso8601_from_unix_ms(unix_now_ms())
@@ -23916,32 +23363,20 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         record_sqlite_latency(state, started.elapsed());
         return checklist_command_outcome_value(outcome);
     }
-    let (outcome, mission_changes_after) = {
-        let mut store = RchSqliteStore::open(path.as_ref())
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let snapshot = store
-            .load_checklist_command_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::from_snapshot(snapshot.clone())
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mission_change_uids_before = mission_change_uid_set(&core);
+    let (outcome, mission_changes_after) = command_persistence::mutate(state, true, |core| {
+        let mission_change_uids_before = mission_change_uid_set(core);
         let outcome = core.handle_command(&command);
-        let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
-            let mission_changes_after =
-                mission_change_payload_map_excluding(&core, &mission_change_uids_before);
-            let after = core.snapshot();
-            store
-                .save_checklist_command_delta(&snapshot, &after)
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            mission_changes_after
+        let accepted = outcome.result.status == CommandResultStatus::Accepted;
+        let mission_changes_after = if accepted {
+            mission_change_payload_map_excluding(core, &mission_change_uids_before)
         } else {
             HashMap::new()
         };
-        (outcome, mission_changes_after)
-    };
+        Ok(((outcome, mission_changes_after), accepted))
+    })?;
     record_sqlite_latency(state, started.elapsed());
     if outcome.result.status == CommandResultStatus::Accepted {
-        spawn_mission_change_listener_events(state, HashMap::new(), mission_changes_after)?;
+        notify_mission_changes_after_commit(state, HashMap::new(), mission_changes_after);
         return Ok(outcome.result.result);
     }
     checklist_command_outcome_value(outcome)
@@ -24846,25 +24281,20 @@ fn with_r3akt_core<T>(
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("R3AKT HTTP writes unavailable".to_string()))?;
-    let started = Instant::now();
-    let mut store = if write {
-        RchSqliteStore::open(path.as_ref())
-    } else {
-        RchSqliteStore::open_read_only(path.as_ref())
+    if write {
+        return command_persistence::mutate(state, false, |core| {
+            f(core).map(|result| (result, true))
+        });
     }
-    .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let started = Instant::now();
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     let snapshot = store
         .load_r3akt_read_snapshot()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let mut core = RchCore::from_snapshot(snapshot.clone())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let result = f(&mut core)?;
-    if write {
-        let after = core.snapshot();
-        store
-            .save_r3akt_command_delta(&snapshot, &after)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
     record_sqlite_latency(state, started.elapsed());
     Ok(result)
 }
@@ -24897,31 +24327,24 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         record_sqlite_latency(state, started.elapsed());
         return r3akt_command_outcome_value(outcome);
     }
-    let (outcome, mission_changes_before, mission_changes_after) = {
-        let mut store = RchSqliteStore::open(path.as_ref())
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let snapshot = store
-            .load_r3akt_read_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mut core = RchCore::from_snapshot(snapshot.clone())
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let mission_changes_before = mission_change_payload_map(&core);
-        let outcome = core.handle_command(&command);
-        let mission_changes_after = if outcome.result.status == CommandResultStatus::Accepted {
-            let mission_changes_after = mission_change_payload_map(&core);
-            let after = core.snapshot();
-            store
-                .save_r3akt_command_delta(&snapshot, &after)
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            mission_changes_after
-        } else {
-            HashMap::new()
-        };
-        (outcome, mission_changes_before, mission_changes_after)
-    };
+    let (outcome, mission_changes_before, mission_changes_after) =
+        command_persistence::mutate(state, false, |core| {
+            let mission_changes_before = mission_change_payload_map(core);
+            let outcome = core.handle_command(&command);
+            let accepted = outcome.result.status == CommandResultStatus::Accepted;
+            let mission_changes_after = if accepted {
+                mission_change_payload_map(core)
+            } else {
+                HashMap::new()
+            };
+            Ok((
+                (outcome, mission_changes_before, mission_changes_after),
+                accepted,
+            ))
+        })?;
     record_sqlite_latency(state, started.elapsed());
     if outcome.result.status == CommandResultStatus::Accepted {
-        spawn_mission_change_listener_events(state, mission_changes_before, mission_changes_after)?;
+        notify_mission_changes_after_commit(state, mission_changes_before, mission_changes_after);
         return Ok(outcome.result.result);
     }
     r3akt_command_outcome_value(outcome)
@@ -26197,12 +25620,26 @@ fn apply_config_file(
     })))
 }
 
-fn write_config_file_for_setup(path: &PathBuf, body: String) -> Result<(), ApiError> {
-    ensure_parent_dir(path)?;
-    std::fs::write(path, body).map_err(|error| ApiError::Internal(error.to_string()))
-}
-
-fn upsert_ini_setting(config_text: &str, section: &str, key: &str, value: &str) -> String {
+fn upsert_ini_setting(
+    config_text: &str,
+    section: &str,
+    key: &str,
+    value: &str,
+) -> Result<String, ApiError> {
+    if section.is_empty()
+        || key.is_empty()
+        || section
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '[' | ']'))
+        || key
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '=' | ':' | '[' | ']'))
+        || value.chars().any(char::is_control)
+    {
+        return Err(ApiError::BadRequest(
+            "INI settings must be single-line values with valid section and key names".to_string(),
+        ));
+    }
     let section_header = format!("[{section}]");
     let normalized_section = section.trim().to_ascii_lowercase();
     let normalized_key = key.trim().to_ascii_lowercase();
@@ -26240,12 +25677,12 @@ fn upsert_ini_setting(config_text: &str, section: &str, key: &str, value: &str) 
                 let existing_key = trimmed[..index].trim().to_ascii_lowercase();
                 if existing_key == normalized_key {
                     line.clone_from(&rendered);
-                    return format!("{}\n", lines.join("\n"));
+                    return Ok(format!("{}\n", lines.join("\n")));
                 }
             }
         }
         lines.insert(start + 1, rendered);
-        return format!("{}\n", lines.join("\n"));
+        return Ok(format!("{}\n", lines.join("\n")));
     }
 
     if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
@@ -26253,7 +25690,7 @@ fn upsert_ini_setting(config_text: &str, section: &str, key: &str, value: &str) 
     }
     lines.push(section_header);
     lines.push(rendered);
-    format!("{}\n", lines.join("\n"))
+    Ok(format!("{}\n", lines.join("\n")))
 }
 
 async fn rollback_config_text(
@@ -26554,21 +25991,27 @@ async fn patch_file(
     Path(file_id): Path<u64>,
     Json(payload): Json<AttachmentTopicPayload>,
 ) -> Result<Json<Value>, ApiError> {
-    patch_attachment_topic(&state, file_id, "file", payload.topic_id).map(Json)
+    tokio::task::spawn_blocking(move || {
+        patch_attachment_topic(&state, file_id, "file", payload.topic_id).map(Json)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("attachment patch task: {error}")))?
 }
 
 async fn delete_file(
     State(state): State<AppState>,
     Path(file_id): Path<u64>,
 ) -> Result<Json<Value>, ApiError> {
-    delete_attachment_record(&state, file_id, "file").map(Json)
+    tokio::task::spawn_blocking(move || delete_attachment_record(&state, file_id, "file").map(Json))
+        .await
+        .map_err(|error| ApiError::Internal(format!("attachment deletion task: {error}")))?
 }
 
 async fn retrieve_file_raw(
     State(state): State<AppState>,
     Path(file_id): Path<u64>,
 ) -> Result<Response, ApiError> {
-    retrieve_attachment_raw(&state, file_id, "file")
+    retrieve_attachment_raw(&state, file_id, "file").await
 }
 
 async fn retrieve_image(
@@ -26584,21 +26027,29 @@ async fn patch_image(
     Path(file_id): Path<u64>,
     Json(payload): Json<AttachmentTopicPayload>,
 ) -> Result<Json<Value>, ApiError> {
-    patch_attachment_topic(&state, file_id, "image", payload.topic_id).map(Json)
+    tokio::task::spawn_blocking(move || {
+        patch_attachment_topic(&state, file_id, "image", payload.topic_id).map(Json)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("attachment patch task: {error}")))?
 }
 
 async fn delete_image(
     State(state): State<AppState>,
     Path(file_id): Path<u64>,
 ) -> Result<Json<Value>, ApiError> {
-    delete_attachment_record(&state, file_id, "image").map(Json)
+    tokio::task::spawn_blocking(move || {
+        delete_attachment_record(&state, file_id, "image").map(Json)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("attachment deletion task: {error}")))?
 }
 
 async fn retrieve_image_raw(
     State(state): State<AppState>,
     Path(file_id): Path<u64>,
 ) -> Result<Response, ApiError> {
-    retrieve_attachment_raw(&state, file_id, "image")
+    retrieve_attachment_raw(&state, file_id, "image").await
 }
 
 fn attachment_not_found(file_id: u64) -> ApiError {
@@ -26652,39 +26103,18 @@ fn patch_attachment_topic(
     category: &str,
     topic_id: Option<String>,
 ) -> Result<Value, ApiError> {
-    let mut attachment = get_attachment_record(state, file_id, category)?;
-    attachment.topic_id = topic_id.and_then(|value| {
+    if state.sqlite_path.is_none() {
+        return Err(attachment_not_found(file_id));
+    }
+    let topic_id = topic_id.and_then(|value| {
         let value = value.trim().to_string();
         (!value.is_empty()).then_some(value)
     });
-    attachment.updated_ts_ms = unix_now_ms();
-    persist_file_attachment_row(state, &attachment)?;
+    let attachment = with_required_core_store_write(state, |store| {
+        store.patch_file_attachment_topic(file_id, category, topic_id, unix_now_ms())
+    })?
+    .ok_or_else(|| attachment_not_found(file_id))?;
     Ok(attachment_to_python_value(&attachment))
-}
-
-fn clear_attachment_topic_links(state: &AppState, topic_id: &str) -> Result<(), ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(());
-    }
-    let Some(topic_id) = normalize_topic_id(Some(topic_id)) else {
-        return Ok(());
-    };
-    for category in ["file", "image"] {
-        for mut attachment in load_attachment_records(state, category)? {
-            if attachment
-                .topic_id
-                .as_deref()
-                .and_then(|value| normalize_topic_id(Some(value)))
-                .as_deref()
-                == Some(topic_id.as_str())
-            {
-                attachment.topic_id = None;
-                attachment.updated_ts_ms = unix_now_ms();
-                persist_file_attachment_row(state, &attachment)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn delete_attachment_record(
@@ -26692,38 +26122,28 @@ fn delete_attachment_record(
     file_id: u64,
     category: &str,
 ) -> Result<Value, ApiError> {
-    let attachment = get_attachment_record(state, file_id, category)?;
+    if state.sqlite_path.is_none() {
+        return Err(attachment_not_found(file_id));
+    }
+    let attachment = with_required_core_store_write(state, |store| {
+        store.take_file_attachment(file_id, category)
+    })?
+    .ok_or_else(|| attachment_not_found(file_id))?;
     if !attachment.path.trim().is_empty() {
         match std::fs::remove_file(&attachment.path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(ApiError::Internal(format!(
-                    "failed to delete attachment file {}: {error}",
-                    attachment.path
-                )));
+                record_system_event_best_effort(
+                    state,
+                    "attachment_cleanup_failed",
+                    "Attachment metadata deleted; file cleanup failed",
+                    json!({"file_id": file_id, "category": category, "path": attachment.path, "error": error.to_string()}),
+                );
             }
         }
     }
-    delete_file_attachment_row(state, file_id, category)?;
     Ok(attachment_to_python_value(&attachment))
-}
-
-fn retrieve_attachment_raw(
-    state: &AppState,
-    file_id: u64,
-    category: &str,
-) -> Result<Response, ApiError> {
-    let attachment = get_attachment_record(state, file_id, category)?;
-    let bytes = std::fs::read(&attachment.path)
-        .map_err(|_| ApiError::NotFound(format!("\"File '{file_id}' not found\"")))?;
-    let mut builder = Response::builder().status(StatusCode::OK);
-    if let Some(media_type) = attachment.media_type.as_deref() {
-        builder = builder.header(header::CONTENT_TYPE, media_type);
-    }
-    builder
-        .body(Body::from(bytes))
-        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 #[cfg(test)]
@@ -26877,30 +26297,7 @@ async fn join_client(
     State(state): State<AppState>,
     Query(query): Query<IdentityQuery>,
 ) -> Result<Json<bool>, ApiError> {
-    let identity = query.identity.trim().to_string();
-    let key = normalize_identity_key(&identity)
-        .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
-    let now = unix_now_ms();
-    let client = {
-        let mut clients = state
-            .clients
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        clients
-            .entry(key)
-            .and_modify(|client| {
-                client.identity.clone_from(&identity);
-                client.last_seen = iso8601_from_unix_ms(now);
-            })
-            .or_insert_with(|| ClientRecord::new(identity, now))
-            .clone()
-    };
-    state
-        .outbound_delivery_policy
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .mark_presence(&query.identity, now);
-    persist_client_row(&state, &client)?;
+    update_roster_client(&state, &query.identity, |_| {})?;
     Ok(Json(true))
 }
 
@@ -26908,18 +26305,7 @@ async fn leave_client(
     State(state): State<AppState>,
     Query(query): Query<IdentityQuery>,
 ) -> Result<Json<bool>, ApiError> {
-    let key = normalize_identity_key(&query.identity)
-        .ok_or_else(|| ApiError::BadRequest("identity is required".to_string()))?;
-    let mut clients = state
-        .clients
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let removed = clients.remove(&key).is_some();
-    drop(clients);
-    if removed {
-        delete_client_row(&state, &key)?;
-    }
-    Ok(Json(removed))
+    remove_roster_client(&state, &query.identity).map(Json)
 }
 
 async fn upsert_identity_status(
@@ -26934,27 +26320,41 @@ async fn upsert_identity_status(
         .identity_states
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let record = identity_states
-        .entry(key)
-        .and_modify(|record| {
-            if let Some(value) = is_banned {
-                record.is_banned = value;
-            }
-            if let Some(value) = is_blackholed {
-                record.is_blackholed = value;
-            }
-            record.updated_ts_ms = unix_now_ms();
-        })
-        .or_insert_with(|| IdentityStatusRecord {
+    let mut record = identity_states
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| IdentityStatusRecord {
             identity,
-            is_banned: is_banned.unwrap_or(false),
-            is_blackholed: is_blackholed.unwrap_or(false),
+            is_banned: false,
+            is_blackholed: false,
             updated_ts_ms: unix_now_ms(),
-        })
-        .clone();
+        });
+    if let Some(value) = is_banned {
+        record.is_banned = value;
+    }
+    if let Some(value) = is_blackholed {
+        record.is_blackholed = value;
+    }
+    record.updated_ts_ms = unix_now_ms();
+    if state.sqlite_path.is_some() {
+        record = IdentityStatusRecord::from(with_required_core_store_write(&state, |store| {
+            store.patch_identity_state(&key, is_banned, is_blackholed, record.updated_ts_ms)
+        })?);
+    }
+    identity_states.insert(key, record.clone());
     drop(identity_states);
-    persist_identity_status_row(&state, &record)?;
-    let annotations = rem_annotations_for_state(&state)?;
+    let annotations = match rem_annotations_for_state(&state) {
+        Ok(annotations) => annotations,
+        Err(error) => {
+            record_system_event_best_effort(
+                &state,
+                "identity_annotation_failed",
+                "Moderation committed but optional identity annotations could not be loaded",
+                json!({"identity": record.identity, "error": error.to_string()}),
+            );
+            HashMap::new()
+        }
+    };
     Ok(Json(
         record.to_python_value(annotations.get(&record.identity_key())),
     ))
@@ -27075,9 +26475,8 @@ async fn create_topic(
         .topics
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    topics.insert(topic.topic_id.clone(), topic.clone());
-    drop(topics);
     persist_topic_row(&state, &topic)?;
+    topics.insert(topic.topic_id.clone(), topic.clone());
     Ok(Json(topic))
 }
 
@@ -27092,19 +26491,19 @@ async fn delete_topic(
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let topic = topics
-        .remove(topic_id.as_str())
+        .get(topic_id.as_str())
+        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Topic not found: {topic_id}")))?;
-    drop(topics);
-    delete_topic_row(&state, &topic.topic_id)?;
     let mut subscribers = state
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    delete_topic_row(&state, &topic.topic_id)?;
+    topics.remove(topic_id.as_str());
     subscribers.retain(|_, subscriber| {
         normalize_topic_id(Some(&subscriber.topic_id)).as_deref() != Some(topic.topic_id.as_str())
     });
     drop(subscribers);
-    clear_attachment_topic_links(&state, &topic.topic_id)?;
     Ok(Json(topic))
 }
 
@@ -27129,17 +26528,15 @@ async fn subscribe_topic(
                 "Destination is required when authentication identity is unavailable".to_string(),
             )
         })?;
-    {
-        let topics = state
-            .topics
-            .read()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if !topics.contains_key(payload.topic_id.as_str()) {
-            return Err(ApiError::NotFound(format!(
-                "Topic not found: {}",
-                payload.topic_id
-            )));
-        }
+    let topics = state
+        .topics
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    if !topics.contains_key(payload.topic_id.as_str()) {
+        return Err(ApiError::NotFound(format!(
+            "Topic not found: {}",
+            payload.topic_id
+        )));
     }
     let subscriber = SubscriberRecord {
         subscriber_id: Uuid::new_v4().simple().to_string(),
@@ -27152,9 +26549,10 @@ async fn subscribe_topic(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
+    persist_subscriber_row(&state, &subscriber)?;
     subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
     drop(subscribers);
-    persist_subscriber_row(&state, &subscriber)?;
+    drop(topics);
     Ok(Json(subscriber))
 }
 
@@ -27291,9 +26689,8 @@ async fn create_subscriber_record(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
-    drop(subscribers);
     persist_subscriber_row(&state, &subscriber)?;
+    subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
     Ok(Json(subscriber))
 }
 
@@ -27310,8 +26707,9 @@ async fn patch_subscriber(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let subscriber = subscribers
-        .get_mut(subscriber_id.as_str())
+    let mut subscriber = subscribers
+        .get(subscriber_id.as_str())
+        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Subscriber not found: {subscriber_id}")))?;
     let previous = subscriber.clone();
     if let Some(destination) = payload.destination {
@@ -27326,12 +26724,8 @@ async fn patch_subscriber(
     if let Some(metadata) = payload.metadata {
         subscriber.metadata = metadata;
     }
-    let subscriber = subscriber.clone();
-    drop(subscribers);
-    if previous.destination != subscriber.destination || previous.topic_id != subscriber.topic_id {
-        delete_subscriber_row(&state, &previous)?;
-    }
-    persist_subscriber_row(&state, &subscriber)?;
+    replace_subscriber_row(&state, &previous, &subscriber)?;
+    subscribers.insert(subscriber_id, subscriber.clone());
     Ok(Json(subscriber))
 }
 
@@ -27344,12 +26738,13 @@ async fn delete_subscriber(
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let subscriber = subscribers
-        .remove(query.subscriber_id.as_str())
+        .get(query.subscriber_id.as_str())
+        .cloned()
         .ok_or_else(|| {
             ApiError::NotFound(format!("Subscriber not found: {}", query.subscriber_id))
         })?;
-    drop(subscribers);
     delete_subscriber_row(&state, &subscriber)?;
+    subscribers.remove(query.subscriber_id.as_str());
     Ok(Json(subscriber))
 }
 
@@ -27366,8 +26761,9 @@ async fn patch_topic(
         .topics
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let topic = topics
-        .get_mut(topic_id.as_str())
+    let mut topic = topics
+        .get(topic_id.as_str())
+        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Topic not found: {topic_id}")))?;
     if let Some(name) = payload.topic_name {
         topic.topic_name = name;
@@ -27378,9 +26774,8 @@ async fn patch_topic(
     if let Some(description) = payload.topic_description {
         topic.topic_description = description;
     }
-    let topic = topic.clone();
-    drop(topics);
     persist_topic_row(&state, &topic)?;
+    topics.insert(topic_id, topic.clone());
     Ok(Json(topic))
 }
 
@@ -27509,8 +26904,7 @@ fn unix_ms_from_iso8601(timestamp: &str) -> Option<i64> {
 }
 
 fn normalize_identity_key(identity: &str) -> Option<String> {
-    let value = identity.trim().to_ascii_lowercase();
-    if value.is_empty() { None } else { Some(value) }
+    r3akt_rch_core::normalize_hash(Some(identity))
 }
 
 fn telemetry_identity_key(identity: &str) -> Option<String> {
@@ -28326,16 +27720,18 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    mod attachment_security;
     mod auth;
     mod field_commands;
+    mod release_durability;
+    mod release_lifecycle;
+    mod release_receipt_callbacks;
+    mod release_security;
     mod rem_team_directory;
 
     use crate::BASE64_STANDARD;
-    use std::collections::HashSet;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpListener as StdTcpListener};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -28348,9 +27744,8 @@ mod tests {
     use r3akt_rch_bridge::{ReticulumdRpcError, ReticulumdRpcRequest, ReticulumdRpcResponse};
     use r3akt_rch_core::{FileAttachmentRecord, RchCore, RchSqliteStore};
     use r3akt_transport_rns::{
-        LxmfMessageHistoryListRequest, LxmfRsTransport, LxmfSdkOutboundBatch,
-        LxmfSdkOutboundBatchMessage, ReticulumdAnnounceRecord, ReticulumdEventBatch,
-        ReticulumdEventRecord, ReticulumdRpcLxmfRsAdapter, ReticulumdRpcTransport, ZmqDataPlane,
+        LxmfRsTransport, ReticulumdAnnounceRecord, ReticulumdRpcLxmfRsAdapter,
+        ReticulumdRpcTransport,
     };
     use rusqlite::Connection;
     use serde::Serialize;
@@ -28393,13 +27788,14 @@ mod tests {
         std::fs::write(assets_dir.join("app.css"), "body { color: black; }\n").expect("css asset");
 
         let app = crate::create_app_with_state_and_ui_dist_path(
-            crate::AppState::default(),
+            crate::AppState::default().with_api_key("secret"),
             ui_dir.clone(),
         );
         let index_response = app
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/")
                     .body(Body::empty())
@@ -28450,6 +27846,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::GET)
                         .uri(uri)
                         .body(Body::empty())
@@ -28474,6 +27871,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/assets/app.js")
                     .body(Body::empty())
@@ -28494,6 +27892,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/checklists")
                     .header(axum::http::header::ACCEPT, "text/html")
@@ -28517,6 +27916,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/checklists")
                     .body(Body::empty())
@@ -28543,6 +27943,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/checklists")
                     .header(axum::http::header::ACCEPT, "text/html")
@@ -28586,6 +27987,7 @@ mod tests {
         let status_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Status")
                     .body(Body::empty())
@@ -29730,6 +29132,7 @@ mod tests {
             std::env::temp_dir().join(format!("r3akt-reticulumd-inbound-{}.db", Uuid::new_v4()));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -29765,6 +29168,7 @@ mod tests {
         let chat_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Chat/Messages?direction=inbound")
                     .body(Body::empty())
@@ -29792,7 +29196,9 @@ mod tests {
             diagnostics["metrics"]["counters"]["reticulumd_inbound_received_total"],
             1
         );
-        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored = crate::AppState::from_sqlite_path(&db_path)
+            .expect("restored")
+            .with_api_key("secret");
         let restored_events = restored.system_events.read().expect("restored events");
         assert!(
             restored_events
@@ -29836,6 +29242,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -29859,6 +29266,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Chat/Messages?direction=inbound")
                     .body(Body::empty())
@@ -29886,6 +29294,7 @@ mod tests {
         let raw_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri(format!("/File/{file_id}/raw"))
                     .body(Body::empty())
@@ -29902,7 +29311,9 @@ mod tests {
             .to_bytes();
         assert_eq!(raw_body.as_ref(), b"file-content");
 
-        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored = crate::AppState::from_sqlite_path(&db_path)
+            .expect("restored")
+            .with_api_key("secret");
         let restored_attachments =
             crate::load_attachment_records(&restored, "file").expect("restored attachments");
         let attachment = restored_attachments
@@ -29939,6 +29350,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -29964,6 +29376,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Chat/Messages?direction=inbound")
                     .body(Body::empty())
@@ -29992,6 +29405,7 @@ mod tests {
         let raw_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri(format!("/File/{file_id}/raw"))
                     .body(Body::empty())
@@ -30007,7 +29421,9 @@ mod tests {
             .expect("raw body")
             .to_bytes();
         assert_eq!(raw_body.as_ref(), b"direct-file");
-        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored = crate::AppState::from_sqlite_path(&db_path)
+            .expect("restored")
+            .with_api_key("secret");
         let restored_attachments =
             crate::load_attachment_records(&restored, "file").expect("restored attachments");
         if let Some(attachment) = restored_attachments
@@ -30042,6 +29458,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -30068,6 +29485,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Chat/Messages?direction=inbound")
                     .body(Body::empty())
@@ -30100,6 +29518,7 @@ mod tests {
         let raw_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri(format!("/Image/{file_id}/raw"))
                     .body(Body::empty())
@@ -30123,7 +29542,9 @@ mod tests {
             .to_bytes();
         assert_eq!(raw_body.as_ref(), png_bytes);
 
-        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored = crate::AppState::from_sqlite_path(&db_path)
+            .expect("restored")
+            .with_api_key("secret");
         let restored_attachments =
             crate::load_attachment_records(&restored, "image").expect("restored attachments");
         let attachment = restored_attachments
@@ -30155,6 +29576,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -30179,6 +29601,7 @@ mod tests {
         let telemetry_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Telemetry?since=0")
                     .body(Body::empty())
@@ -30253,12 +29676,14 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let topic_response = app
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -30280,6 +29705,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::POST)
                         .uri("/Subscriber/Add")
                         .header("content-type", "application/json")
@@ -30351,6 +29777,7 @@ mod tests {
         let outbound_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Chat/Messages?direction=outbound")
                     .body(Body::empty())
@@ -30752,6 +30179,7 @@ mod tests {
             std::env::temp_dir().join(format!("r3akt-reticulumd-ws-{}.db", Uuid::new_v4()));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
@@ -30766,7 +30194,9 @@ mod tests {
             .expect("websocket connect");
         socket
             .send(Message::Text(
-                json!({"type":"auth","data":{}}).to_string().into(),
+                json!({"type":"auth","data":{"api_key":"secret"}})
+                    .to_string()
+                    .into(),
             ))
             .await
             .expect("send auth");
@@ -30866,6 +30296,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
@@ -30880,7 +30311,9 @@ mod tests {
             .expect("websocket connect");
         socket
             .send(Message::Text(
-                json!({"type":"auth","data":{}}).to_string().into(),
+                json!({"type":"auth","data":{"api_key":"secret"}})
+                    .to_string()
+                    .into(),
             ))
             .await
             .expect("send auth");
@@ -30985,12 +30418,14 @@ mod tests {
             std::env::temp_dir().join(format!("r3akt-reticulumd-command-{}.db", Uuid::new_v4()));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let topic_response = app
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -31029,6 +30464,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Subscriber")
                     .body(Body::empty())
@@ -31055,6 +30491,7 @@ mod tests {
         let client_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Client")
                     .body(Body::empty())
@@ -31109,6 +30546,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         let adapter = ReticulumdRpcLxmfRsAdapter::new(
@@ -31133,6 +30571,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic/field-ops")
                     .body(Body::empty())
@@ -31155,6 +30594,7 @@ mod tests {
         let client_response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Client")
                     .body(Body::empty())
@@ -31171,7 +30611,9 @@ mod tests {
             .to_bytes();
         let clients: serde_json::Value = serde_json::from_slice(&client_body).expect("client json");
         assert_eq!(clients[0]["identity"], "peer-create");
-        let restored = crate::AppState::from_sqlite_path(&db_path).expect("restored");
+        let restored = crate::AppState::from_sqlite_path(&db_path)
+            .expect("restored")
+            .with_api_key("secret");
         let topics = restored.topics.read().expect("topics");
         assert!(topics.contains_key("field-ops"));
         std::fs::remove_file(db_path).expect("cleanup db");
@@ -31219,6 +30661,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_reticulumd_rpc(endpoint.clone(), "local-destination");
         let app = crate::create_app_with_state(state.clone());
         for (method, uri, body) in [
@@ -31247,6 +30690,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(method)
                         .uri(uri)
                         .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -34286,7 +33730,12 @@ mod tests {
 
     #[tokio::test]
     async fn cors_preflight_matches_python_northbound_for_external_ui() {
-        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
+        let app = crate::create_app_with_state(
+            crate::AppState::default()
+                .with_api_key("secret")
+                .with_allowed_browser_origins(["http://127.0.0.1:5173".to_string()])
+                .expect("origins"),
+        );
 
         let response = app
             .oneshot(
@@ -34308,7 +33757,7 @@ mod tests {
                 .headers()
                 .get("access-control-allow-origin")
                 .and_then(|value| value.to_str().ok()),
-            Some("*")
+            Some("http://127.0.0.1:5173")
         );
         assert!(
             response
@@ -34383,12 +33832,12 @@ mod tests {
 
     #[tokio::test]
     async fn topic_routes_preserve_python_response_shape() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         let created = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -34416,6 +33865,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic")
                     .body(Body::empty())
@@ -34432,6 +33882,7 @@ mod tests {
         let retrieved = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic/ops")
                     .body(Body::empty())
@@ -34452,12 +33903,13 @@ mod tests {
 
     #[tokio::test]
     async fn topic_create_matches_python_required_name_path_and_generated_id() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         let missing_name = app
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -34479,6 +33931,7 @@ mod tests {
         let generated = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -34506,7 +33959,7 @@ mod tests {
 
     #[tokio::test]
     async fn topic_create_upserts_existing_topic_like_python_storage_merge() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         for body in [
             r#"{"TopicID":"ops","TopicName":"Ops","TopicPath":"ops","TopicDescription":"Original"}"#,
@@ -34516,6 +33969,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::POST)
                         .uri("/Topic")
                         .header("content-type", "application/json")
@@ -34530,6 +33984,7 @@ mod tests {
         let retrieved = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic/ops")
                     .body(Body::empty())
@@ -34553,13 +34008,14 @@ mod tests {
 
     #[tokio::test]
     async fn topic_list_uses_python_pagination_envelope_when_requested() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         for topic_id in ["alpha", "bravo"] {
             let response = app
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::POST)
                         .uri("/Topic")
                         .header("content-type", "application/json")
@@ -34583,6 +34039,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic?page=1&per_page=1")
                     .body(Body::empty())
@@ -34606,6 +34063,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic?page=2&per_page=10")
                     .body(Body::empty())
@@ -34628,6 +34086,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic?per_page=501")
                     .body(Body::empty())
@@ -34640,6 +34099,7 @@ mod tests {
         let negative_page = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic?page=-1")
                     .body(Body::empty())
@@ -34652,12 +34112,12 @@ mod tests {
 
     #[tokio::test]
     async fn topic_delete_associate_and_subscribe_match_python_shapes() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         let created = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -34674,6 +34134,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic/Associate")
                     .header("content-type", "application/json")
@@ -34695,7 +34156,7 @@ mod tests {
         let subscribed = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic/Subscribe")
                     .header("content-type", "application/json")
@@ -34724,6 +34185,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic/Subscribe")
                     .header("content-type", "application/json")
@@ -34747,6 +34209,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic/Subscribe")
                     .header("content-type", "application/json")
@@ -34776,6 +34239,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::DELETE)
                     .uri("/Topic?id=ops")
                     .body(Body::empty())
@@ -34796,6 +34260,7 @@ mod tests {
         let subscribers = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Subscriber")
                     .body(Body::empty())
@@ -34816,12 +34281,12 @@ mod tests {
 
     #[tokio::test]
     async fn subscriber_routes_match_python_shapes() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         let created = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Subscriber")
                     .header("content-type", "application/json")
@@ -34853,6 +34318,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Subscriber/Add")
                     .header("content-type", "application/json")
@@ -34869,6 +34335,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Subscriber?page=1&per_page=1")
                     .body(Body::empty())
@@ -34889,6 +34356,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Subscriber?per_page=501")
                     .body(Body::empty())
@@ -34902,6 +34370,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri(format!("/Subscriber/{subscriber_id}"))
                     .body(Body::empty())
@@ -34914,7 +34383,7 @@ mod tests {
         let patched = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::PATCH)
                     .uri("/Subscriber")
                     .header("content-type", "application/json")
@@ -34942,6 +34411,7 @@ mod tests {
         let deleted = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::DELETE)
                     .uri(format!("/Subscriber?id={subscriber_id}"))
                     .body(Body::empty())
@@ -34956,13 +34426,15 @@ mod tests {
     async fn sqlite_state_restores_topics_and_subscribers_after_restart() {
         let db_path = std::env::temp_dir().join(format!("r3akt-rch-server-{}.db", Uuid::new_v4()));
         let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path).expect("state"),
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("state")
+                .with_api_key("secret"),
         );
 
         let created = app
             .clone()
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic")
                     .header("content-type", "application/json")
@@ -34979,6 +34451,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/Topic/Subscribe")
                     .header("content-type", "application/json")
@@ -34990,11 +34463,14 @@ mod tests {
         assert_eq!(subscribed.status(), StatusCode::OK);
 
         let restarted = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path).expect("restart state"),
+            crate::AppState::from_sqlite_path(&db_path)
+                .expect("restart state")
+                .with_api_key("secret"),
         );
         let retrieved = restarted
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Topic/ops")
                     .body(Body::empty())
@@ -35440,6 +34916,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
+                .with_api_key("secret")
                 .with_api_key("secret"),
         );
 
@@ -35447,6 +34924,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/identity-announce")
                     .header("Content-Type", "application/json")
@@ -35533,6 +35011,7 @@ mod tests {
         let peers = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/api/rem/peers")
                     .header("Authorization", "Bearer secret")
@@ -35575,12 +35054,13 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
+                .with_api_key("secret")
                 .with_api_key("secret"),
         );
 
         let response = app
             .oneshot(
-                Request::builder()
+                Request::builder().header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/identity-announce")
                     .header("Content-Type", "application/json")
@@ -36524,6 +36004,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_status_reports_managed_reticulumd_process_inventory() {
         let state = crate::AppState::default()
+            .with_api_key("secret")
             .with_reticulumd_rpc("127.0.0.1:4242", "source-destination")
             .with_managed_reticulumd(
                 "reticulumd.exe",
@@ -36537,6 +36018,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/Control/Status")
                     .body(Body::empty())
@@ -44054,6 +43536,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::GET)
                         .uri(uri)
                         .body(Body::empty())
@@ -44076,6 +43559,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/message")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -44100,6 +43584,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::GET)
                     .uri("/internal/rch/announce-capabilities")
                     .body(Body::empty())
@@ -44142,6 +43627,7 @@ mod tests {
         let app = crate::create_app_with_state(
             crate::AppState::from_sqlite_path(&db_path)
                 .expect("state")
+                .with_api_key("secret")
                 .with_api_key("secret"),
         );
 
@@ -44220,6 +43706,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
+                        .header("X-API-Key", "secret")
                         .method(Method::GET)
                         .uri(uri)
                         .body(Body::empty())
@@ -44242,6 +43729,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/message")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -44284,7 +43772,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn internal_event_stream_accepts_without_api_key() {
+    async fn internal_event_stream_rejects_without_api_key() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let server = tokio::spawn(async move {
@@ -44296,18 +43784,14 @@ mod tests {
             .expect("server");
         });
 
-        let (mut socket, _) = connect_async(format!("ws://{addr}/internal/events/stream"))
+        let error = connect_async(format!("ws://{addr}/internal/events/stream"))
             .await
-            .expect("websocket connect");
-        socket
-            .send(Message::Text("client-ready".into()))
-            .await
-            .expect("send client probe");
-        let no_immediate_error =
-            tokio::time::timeout(std::time::Duration::from_millis(100), socket.next()).await;
-        assert!(no_immediate_error.is_err());
+            .expect_err("unauthenticated handshake rejected");
+        assert!(
+            matches!(error, tokio_tungstenite::tungstenite::Error::Http(response)
+            if response.status() == StatusCode::UNAUTHORIZED)
+        );
 
-        socket.close(None).await.expect("close websocket");
         server.abort();
     }
 
@@ -44321,15 +43805,21 @@ mod tests {
             axum::serve(listener, server_app).await.expect("server");
         });
 
-        let (mut socket, _) = connect_async(format!("ws://{addr}/internal/events/stream"))
-            .await
-            .expect("websocket connect");
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut request = format!("ws://{addr}/internal/events/stream")
+            .into_client_request()
+            .expect("upgrade request");
+        request
+            .headers_mut()
+            .insert("X-API-Key", "secret".parse().expect("key"));
+        let (mut socket, _) = connect_async(request).await.expect("websocket connect");
 
         let accepted = app
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
                     .uri("/internal/message")
+                    .header("X-API-Key", "secret")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         r#"{"destination":"mission.alpha","text":"hello event"}"#,
@@ -45305,7 +44795,7 @@ mod tests {
             raw.headers()
                 .get(axum::http::header::CONTENT_TYPE)
                 .expect("content type"),
-            "text/plain"
+            "application/octet-stream"
         );
         let body = raw.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(&body[..], b"report bytes");
@@ -45517,6 +45007,7 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/r3akt/setup/status")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -45560,16 +45051,7 @@ mod tests {
             )
             .await
             .expect("kill status");
-        assert_eq!(kill_status.status(), StatusCode::OK);
-        let body = kill_status
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["pin_enrolled"], false);
-        assert_eq!(payload["initial_pin"], serde_json::Value::Null);
+        assert_eq!(kill_status.status(), StatusCode::UNAUTHORIZED);
 
         let complete = app
             .clone()
@@ -45577,6 +45059,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/setup/complete")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
@@ -45650,6 +45133,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/kill-switch/arm")
+                    .header("X-API-Key", "remote-secret")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({"arm_a": true, "arm_b": true}).to_string(),
@@ -45666,6 +45150,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/kill-switch/authorize")
+                    .header("X-API-Key", "remote-secret")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(json!({"pin": "246802"}).to_string()))
                     .expect("request"),
@@ -45680,6 +45165,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/kill-switch/authorize")
+                    .header("X-API-Key", "remote-secret")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(json!({"pin": "135790"}).to_string()))
                     .expect("request"),
@@ -45777,6 +45263,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/setup/complete")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
@@ -45844,6 +45331,7 @@ mod tests {
                 Request::builder()
                     .method(Method::POST)
                     .uri("/api/r3akt/setup/complete")
+                    .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
                         json!({
@@ -45875,6 +45363,10 @@ mod tests {
         );
         assert!(store.setting_value("hub_name").expect("hub name").is_none());
 
+        assert_eq!(
+            std::fs::read_to_string(&config_path).expect("config"),
+            "[core]\napp_name = RCH\n"
+        );
         let _ = std::fs::remove_dir_all(test_dir);
     }
 
@@ -46099,7 +45591,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_auth_matches_python_local_and_remote_client_rules() {
+    async fn http_auth_requires_credentials_for_local_and_remote_clients() {
         let local_addr = SocketAddr::from(([127, 0, 0, 1], 50_000));
         let remote_addr = SocketAddr::from(([198, 51, 100, 10], 50_000));
 
@@ -46116,19 +45608,21 @@ mod tests {
             )
             .await
             .expect("local response");
-        assert_eq!(local_without_key.status(), StatusCode::OK);
+        assert_eq!(local_without_key.status(), StatusCode::UNAUTHORIZED);
 
-        let local_auth = crate::create_app_with_state(crate::AppState::default())
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/api/v1/auth/validate")
-                    .extension(ConnectInfo(local_addr))
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("local auth response");
+        let local_auth =
+            crate::create_app_with_state(crate::AppState::default().with_api_key("secret"))
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri("/api/v1/auth/validate")
+                        .header("X-API-Key", "secret")
+                        .extension(ConnectInfo(local_addr))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("local auth response");
         assert_eq!(local_auth.status(), StatusCode::OK);
         let body = local_auth
             .into_body()
@@ -46138,7 +45632,7 @@ mod tests {
             .to_bytes();
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["authenticated"], true);
-        assert_eq!(payload["auth_mode"], "local_only");
+        assert_eq!(payload["auth_mode"], "api_key");
         assert_eq!(payload["client"]["host"], "127.0.0.1");
         assert_eq!(payload["client"]["local"], true);
 
@@ -46168,18 +45662,18 @@ mod tests {
     }
 
     #[test]
-    fn websocket_auth_matches_python_local_and_remote_client_rules() {
+    fn websocket_auth_requires_credentials_for_all_peers() {
         let local_addr = Some(SocketAddr::from(([127, 0, 0, 1], 50_000)));
         let remote_addr = Some(SocketAddr::from(([198, 51, 100, 10], 50_000)));
 
         let open_state = crate::AppState::default();
         assert!(
-            open_state
+            !open_state
                 .validate_ws_credentials(None, None, None)
                 .expect("auth validation")
         );
         assert!(
-            open_state
+            !open_state
                 .validate_ws_credentials(None, None, local_addr)
                 .expect("auth validation")
         );
@@ -46197,7 +45691,7 @@ mod tests {
 
         let keyed_state = crate::AppState::default().with_api_key("secret");
         assert!(
-            keyed_state
+            !keyed_state
                 .validate_ws_credentials(None, None, local_addr)
                 .expect("auth validation")
         );
@@ -46883,13 +46377,14 @@ mod tests {
 
     #[tokio::test]
     async fn app_info_route_matches_python_metadata_shape() {
-        let app = crate::create_app();
+        let app = crate::create_app_with_state(crate::AppState::default().with_api_key("secret"));
 
         let response = app
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/v1/app/info")
+                    .header("X-API-Key", "secret")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -46939,6 +46434,7 @@ mod tests {
         std::fs::write(&reticulum_config_path, "# reticulum\n").expect("reticulum config");
         let app = crate::create_app_with_state(
             crate::AppState::default()
+                .with_api_key("secret")
                 .with_config_path(&config_path)
                 .with_reticulum_config_path(&reticulum_config_path)
                 .with_reticulumd_rpc("127.0.0.1:4242", "AABBCCDD"),
@@ -46949,6 +46445,7 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/v1/app/info")
+                    .header("X-API-Key", "secret")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -47056,9 +46553,12 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let server = tokio::spawn(async move {
-            axum::serve(listener, crate::create_app())
-                .await
-                .expect("server");
+            axum::serve(
+                listener,
+                crate::create_app_with_state(crate::AppState::default().with_api_key("secret")),
+            )
+            .await
+            .expect("server");
         });
 
         let (mut socket, _) = connect_async(format!("ws://{addr}/messages/stream"))
@@ -47067,7 +46567,7 @@ mod tests {
 
         socket
             .send(Message::Text(
-                json!({"type":"auth","data":{"api_key":"test"}})
+                json!({"type":"auth","data":{"api_key":"secret"}})
                     .to_string()
                     .into(),
             ))
@@ -49197,518 +48697,6 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[test]
-    #[ignore = "requires a local reticulumd mesh with ZeroMQ command endpoints"]
-    fn live_reticulumd_zmq_load_delivers_to_local_clients_when_configured() {
-        let command_endpoints = match live_env_list("R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS") {
-            Some(value) if value.len() >= 2 => value,
-            _ => {
-                eprintln!(
-                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_COMMAND_ENDPOINTS is unset"
-                );
-                return;
-            }
-        };
-        let destinations = match live_env_list("R3AKT_ZMQ_LOAD_DESTINATIONS") {
-            Some(value) if value.len() == command_endpoints.len() => value,
-            _ => {
-                eprintln!("skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_DESTINATIONS is unset");
-                return;
-            }
-        };
-        let sender_response_endpoints = match live_env_list(
-            "R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS",
-        ) {
-            Some(value) if !value.is_empty() => value,
-            _ => {
-                eprintln!(
-                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_SENDER_RESPONSE_ENDPOINTS is unset"
-                );
-                return;
-            }
-        };
-        let receiver_response_endpoints = match live_env_list(
-            "R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS",
-        ) {
-            Some(value) if !value.is_empty() => value,
-            _ => {
-                eprintln!(
-                    "skipping live ZeroMQ load test: R3AKT_ZMQ_LOAD_RECEIVER_RESPONSE_ENDPOINTS is unset"
-                );
-                return;
-            }
-        };
-
-        let requested_messages = live_env_usize("R3AKT_ZMQ_LOAD_MESSAGES", 1_000).max(1);
-        let sender_clients = live_env_usize("R3AKT_ZMQ_LOAD_SENDER_CLIENTS", 4)
-            .max(1)
-            .min(sender_response_endpoints.len());
-        let receiver_count = live_env_usize("R3AKT_ZMQ_LOAD_RECEIVER_COUNT", 2)
-            .max(1)
-            .min(command_endpoints.len().saturating_sub(1))
-            .min(receiver_response_endpoints.len());
-        assert!(
-            receiver_count > 0,
-            "load test requires at least one receiver"
-        );
-
-        let poll_attempts = live_env_usize("R3AKT_ZMQ_LOAD_POLL_ATTEMPTS", 240);
-        let poll_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_POLL_DELAY_MS", 250);
-        let run_id = Uuid::new_v4().to_string();
-        let expected_by_receiver =
-            load_expected_content_by_receiver(&run_id, requested_messages, receiver_count);
-        let received_progress = Arc::new(AtomicUsize::new(0));
-        let poll_started = Instant::now();
-        let mut receiver_threads = Vec::with_capacity(receiver_count);
-        for receiver_index in 0..receiver_count {
-            let command_endpoint = command_endpoints[receiver_index + 1].clone();
-            let response_endpoint = receiver_response_endpoints[receiver_index].clone();
-            let expected = expected_by_receiver[receiver_index].clone();
-            let received_progress = Arc::clone(&received_progress);
-            receiver_threads.push(thread::spawn(move || {
-                poll_zmq_load_receiver(
-                    receiver_index,
-                    command_endpoint,
-                    response_endpoint,
-                    expected,
-                    received_progress,
-                    poll_attempts,
-                    poll_delay_ms,
-                )
-            }));
-        }
-        thread::sleep(Duration::from_millis(250));
-
-        let send_started = Instant::now();
-        let mut accepted_count = 0usize;
-        let mut first_send_error = None;
-        let sender_data_planes = sender_response_endpoints
-            .iter()
-            .take(sender_clients)
-            .map(|response_endpoint| {
-                ZmqDataPlane::new(command_endpoints[0].clone(), response_endpoint.clone())
-                    .map(Arc::new)
-                    .expect("create persistent ZeroMQ load sender")
-            })
-            .collect::<Vec<_>>();
-        let wave_size = live_env_usize("R3AKT_ZMQ_LOAD_WAVE_SIZE", 800).clamp(1, 800);
-        let wave_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_WAVE_DELAY_MS", 0);
-        for wave_start in (0..requested_messages).step_by(wave_size) {
-            let wave_end = wave_start.saturating_add(wave_size).min(requested_messages);
-            let accepted_before_wave = accepted_count;
-            let mut sender_threads = Vec::with_capacity(sender_clients);
-            for (sender_index, data_plane) in sender_data_planes.iter().cloned().enumerate() {
-                let source = destinations[0].clone();
-                let destinations = destinations[1..=receiver_count].to_vec();
-                let run_id = run_id.clone();
-                sender_threads.push(thread::spawn(move || {
-                    send_zmq_load_messages(
-                        sender_index,
-                        sender_clients,
-                        wave_start,
-                        wave_end,
-                        receiver_count,
-                        data_plane,
-                        source,
-                        destinations,
-                        run_id,
-                    )
-                }));
-            }
-            for sender in sender_threads {
-                let result = sender.join().expect("join ZeroMQ load sender");
-                accepted_count = accepted_count.saturating_add(result.accepted);
-                first_send_error = first_send_error.or(result.first_error);
-            }
-            println!(
-                "live_zmq_load_wave phase=accepted range={wave_start}..{wave_end} accepted_total={accepted_count} received_total={}",
-                received_progress.load(Ordering::Relaxed)
-            );
-            let expected_wave_acceptance = wave_end.saturating_sub(wave_start);
-            let wave_acceptance = accepted_count.saturating_sub(accepted_before_wave);
-            if wave_acceptance != expected_wave_acceptance {
-                first_send_error.get_or_insert_with(|| {
-                    format!(
-                        "wave {wave_start}..{wave_end} accepted {wave_acceptance}/{expected_wave_acceptance}"
-                    )
-                });
-                break;
-            }
-            let wave_deadline = Instant::now() + Duration::from_secs(60);
-            while received_progress.load(Ordering::Relaxed) < accepted_count
-                && Instant::now() < wave_deadline
-            {
-                thread::sleep(Duration::from_millis(25));
-            }
-            if received_progress.load(Ordering::Relaxed) < accepted_count {
-                first_send_error.get_or_insert_with(|| {
-                    format!(
-                        "receiver projection did not catch up after wave {wave_start}..{wave_end}: accepted={accepted_count} received={}",
-                        received_progress.load(Ordering::Relaxed)
-                    )
-                });
-                break;
-            }
-            println!(
-                "live_zmq_load_wave phase=received range={wave_start}..{wave_end} accepted_total={accepted_count} received_total={}",
-                received_progress.load(Ordering::Relaxed)
-            );
-            if wave_delay_ms > 0 {
-                thread::sleep(Duration::from_millis(wave_delay_ms));
-            }
-        }
-        for data_plane in sender_data_planes {
-            let _ = data_plane.shutdown();
-        }
-        let send_elapsed = send_started.elapsed();
-
-        let mut receiver_results = Vec::with_capacity(receiver_count);
-        for receiver in receiver_threads {
-            receiver_results.push(receiver.join().expect("join ZeroMQ load receiver"));
-        }
-        let full_elapsed = poll_started.elapsed();
-        let received_total = receiver_results
-            .iter()
-            .map(|result| result.received)
-            .sum::<usize>();
-        let per_client = receiver_results
-            .iter()
-            .map(|result| format!("client{}={}", result.receiver_index + 1, result.received))
-            .collect::<Vec<_>>()
-            .join(",");
-        println!(
-            "live_zmq_load_result status={} requested={} accepted={} received={} per_client={} send_elapsed_ms={} full_elapsed_ms={} send_messages_per_sec={:.1} e2e_messages_per_sec={:.1}",
-            if accepted_count == requested_messages && received_total == requested_messages {
-                "completed"
-            } else {
-                "incomplete"
-            },
-            requested_messages,
-            accepted_count,
-            received_total,
-            per_client,
-            send_elapsed.as_millis(),
-            full_elapsed.as_millis(),
-            messages_per_second(requested_messages, send_elapsed),
-            messages_per_second(requested_messages, full_elapsed)
-        );
-
-        assert_eq!(
-            accepted_count, requested_messages,
-            "accepted send count mismatch; first error: {:?}",
-            first_send_error
-        );
-        for result in &receiver_results {
-            assert!(
-                result.remaining_samples.is_empty(),
-                "receiver {} missed {} messages; samples={:?}; last_error={:?}",
-                result.receiver_index + 1,
-                result.expected.saturating_sub(result.received),
-                result.remaining_samples,
-                result.last_error
-            );
-        }
-        assert_eq!(received_total, requested_messages);
-    }
-
-    #[derive(Debug)]
-    struct ZmqLoadSendResult {
-        accepted: usize,
-        first_error: Option<String>,
-    }
-
-    #[derive(Debug)]
-    struct ZmqLoadReceiverResult {
-        receiver_index: usize,
-        expected: usize,
-        received: usize,
-        remaining_samples: Vec<String>,
-        last_error: Option<String>,
-    }
-
-    fn live_env_list(name: &str) -> Option<Vec<String>> {
-        std::env::var(name).ok().map(|value| {
-            value
-                .split([',', ';', '\n', '\r', '\t'])
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        })
-    }
-
-    fn live_env_usize(name: &str, default: usize) -> usize {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .unwrap_or(default)
-    }
-
-    fn live_env_u64(name: &str, default: u64) -> u64 {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or(default)
-    }
-
-    fn messages_per_second(count: usize, elapsed: Duration) -> f64 {
-        f64::from(u32::try_from(count).expect("message count fits in u32")) / elapsed.as_secs_f64()
-    }
-
-    fn load_content(run_id: &str, sequence: usize, receiver_index: usize) -> String {
-        format!(
-            "load-{run_id}-{sequence:05}-to-{}",
-            receiver_index.saturating_add(1)
-        )
-    }
-
-    fn load_expected_content_by_receiver(
-        run_id: &str,
-        requested_messages: usize,
-        receiver_count: usize,
-    ) -> Vec<HashSet<String>> {
-        let mut expected = (0..receiver_count)
-            .map(|_| HashSet::new())
-            .collect::<Vec<_>>();
-        for sequence in 0..requested_messages {
-            let receiver_index = sequence % receiver_count;
-            expected[receiver_index].insert(load_content(run_id, sequence, receiver_index));
-        }
-        expected
-    }
-
-    const ZMQ_LOAD_BATCH_CHUNK_SIZE: usize = 64;
-
-    #[allow(clippy::too_many_arguments)]
-    fn send_zmq_load_messages(
-        sender_index: usize,
-        sender_clients: usize,
-        sequence_start: usize,
-        sequence_end: usize,
-        receiver_count: usize,
-        data_plane: Arc<ZmqDataPlane>,
-        source: String,
-        destinations: Vec<String>,
-        run_id: String,
-    ) -> ZmqLoadSendResult {
-        let mut accepted = 0usize;
-        let mut first_error = None;
-        let mut batch_index = sequence_start / ZMQ_LOAD_BATCH_CHUNK_SIZE;
-        let batch_delay_ms = live_env_u64("R3AKT_ZMQ_LOAD_BATCH_DELAY_MS", 250);
-        let mut pending = Vec::with_capacity(ZMQ_LOAD_BATCH_CHUNK_SIZE);
-        for sequence in
-            (sequence_start.saturating_add(sender_index)..sequence_end).step_by(sender_clients)
-        {
-            let receiver_index = sequence % receiver_count;
-            let content = load_content(&run_id, sequence, receiver_index);
-            pending.push(LxmfSdkOutboundBatchMessage {
-                destination: destinations[receiver_index].clone(),
-                title: "RCH load".to_string(),
-                content,
-                fields: json!({
-                    "load_run_id": run_id.clone(),
-                    "load_sequence": sequence,
-                    "load_receiver_index": receiver_index,
-                }),
-                delivery_method: Some("direct".to_string()),
-                stamp_cost: None,
-                include_ticket: None,
-                try_propagation_on_fail: false,
-                correlation_id: format!("load-{run_id}-{sequence:05}"),
-            });
-            if pending.len() >= ZMQ_LOAD_BATCH_CHUNK_SIZE {
-                accepted = accepted.saturating_add(send_zmq_load_batch(
-                    data_plane.as_ref(),
-                    &mut first_error,
-                    source.as_str(),
-                    run_id.as_str(),
-                    sender_index,
-                    batch_index,
-                    std::mem::take(&mut pending),
-                ));
-                batch_index = batch_index.saturating_add(1);
-                if batch_delay_ms > 0 {
-                    thread::sleep(Duration::from_millis(batch_delay_ms));
-                }
-            }
-        }
-        if !pending.is_empty() {
-            accepted = accepted.saturating_add(send_zmq_load_batch(
-                data_plane.as_ref(),
-                &mut first_error,
-                source.as_str(),
-                run_id.as_str(),
-                sender_index,
-                batch_index,
-                pending,
-            ));
-        }
-        ZmqLoadSendResult {
-            accepted,
-            first_error,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn send_zmq_load_batch(
-        data_plane: &ZmqDataPlane,
-        first_error: &mut Option<String>,
-        source: &str,
-        run_id: &str,
-        sender_index: usize,
-        batch_index: usize,
-        messages: Vec<LxmfSdkOutboundBatchMessage>,
-    ) -> usize {
-        let message_count = messages.len();
-        match data_plane.send_batch(LxmfSdkOutboundBatch {
-            batch_id: format!("load-{run_id}-sender-{sender_index}-batch-{batch_index}"),
-            source: source.to_string(),
-            messages,
-        }) {
-            Ok(results) => {
-                if let Some(rejected) = results.iter().find(|result| !result.accepted) {
-                    first_error.get_or_insert_with(|| {
-                        format!(
-                            "sender {sender_index} batch {batch_index} rejected id={} destination={} error={:?}",
-                            rejected.id, rejected.destination, rejected.error
-                        )
-                    });
-                }
-                results.iter().filter(|result| result.accepted).count()
-            }
-            Err(error) => {
-                first_error.get_or_insert_with(|| {
-                    format!(
-                        "sender {sender_index} batch {batch_index} ({message_count} messages): {error}"
-                    )
-                });
-                0
-            }
-        }
-    }
-
-    fn poll_zmq_load_receiver(
-        receiver_index: usize,
-        command_endpoint: String,
-        response_endpoint: String,
-        mut expected: HashSet<String>,
-        received_progress: Arc<AtomicUsize>,
-        poll_attempts: usize,
-        poll_delay_ms: u64,
-    ) -> ZmqLoadReceiverResult {
-        let expected_count = expected.len();
-        let mut cursor = None;
-        let mut last_error = None;
-        let data_plane = match ZmqDataPlane::new(command_endpoint, response_endpoint) {
-            Ok(data_plane) => data_plane,
-            Err(error) => {
-                return ZmqLoadReceiverResult {
-                    receiver_index,
-                    expected: expected_count,
-                    received: 0,
-                    remaining_samples: expected.into_iter().take(5).collect(),
-                    last_error: Some(error.to_string()),
-                };
-            }
-        };
-        for _ in 0..poll_attempts {
-            match data_plane.poll_events(cursor.clone(), crate::RETICULUMD_EVENT_POLL_MAX) {
-                Ok(batch) => {
-                    cursor = batch.next_cursor.clone();
-                    let received = remove_seen_load_messages(&mut expected, &batch);
-                    received_progress.fetch_add(received, Ordering::Relaxed);
-                    if received == 0 && !expected.is_empty() {
-                        match recover_zmq_load_messages_from_history(&data_plane, &mut expected) {
-                            Ok(recovered) => {
-                                received_progress.fetch_add(recovered, Ordering::Relaxed);
-                            }
-                            Err(error) => last_error = Some(error),
-                        }
-                    }
-                    if expected.is_empty() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let error = error.to_string();
-                    eprintln!(
-                        "live_zmq_load_receiver_error receiver={} cursor={:?} error={error}",
-                        receiver_index + 1,
-                        cursor
-                    );
-                    last_error = Some(error);
-                    // Re-negotiate from the daemon's current retained event window.
-                    // Expected-message de-duplication makes replay safe and lets the
-                    // gate prove stream-gap recovery instead of stalling forever on
-                    // an expired cursor.
-                    cursor = None;
-                }
-            }
-            thread::sleep(Duration::from_millis(poll_delay_ms));
-        }
-        let _ = data_plane.shutdown();
-        let received = expected_count.saturating_sub(expected.len());
-        let remaining_samples = expected.into_iter().take(5).collect::<Vec<_>>();
-        ZmqLoadReceiverResult {
-            receiver_index,
-            expected: expected_count,
-            received,
-            remaining_samples,
-            last_error,
-        }
-    }
-
-    fn remove_seen_load_messages(
-        expected: &mut HashSet<String>,
-        batch: &ReticulumdEventBatch,
-    ) -> usize {
-        let mut removed = 0;
-        for event in &batch.events {
-            if !matches!(
-                event.event_type.as_str(),
-                "inbound" | "InboundMessageReceived"
-            ) {
-                continue;
-            }
-            if let Some(content) = load_event_content(event) {
-                removed += usize::from(expected.remove(content));
-            }
-        }
-        removed
-    }
-
-    fn recover_zmq_load_messages_from_history(
-        data_plane: &ZmqDataPlane,
-        expected: &mut HashSet<String>,
-    ) -> Result<usize, String> {
-        let request: LxmfMessageHistoryListRequest = serde_json::from_value(json!({
-            "peer_id": null,
-            "conversation_id": null,
-            "include_receipts": false,
-            "limit": 1000,
-            "before_ts": null,
-            "cursor": null
-        }))
-        .map_err(|error| error.to_string())?;
-        let page = data_plane
-            .message_history(request)
-            .map_err(|error| error.to_string())?;
-        let before = expected.len();
-        for message in page.messages {
-            expected.remove(message.content.as_str());
-        }
-        Ok(before.saturating_sub(expected.len()))
-    }
-
-    fn load_event_content(event: &ReticulumdEventRecord) -> Option<&str> {
-        event
-            .payload
-            .get("message")
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str)
-            .or_else(|| event.payload.get("content").and_then(Value::as_str))
-    }
-
     #[tokio::test]
     async fn internal_delivery_failure_retries_propagated_broadcast_fallback_send_error() {
         let db_path = std::env::temp_dir().join(format!(
@@ -49717,6 +48705,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_api_key("secret");
         let message = crate::OutboundMessageRecord {
             message_id: "propagated-broadcast-failure-callback".to_string(),
@@ -49750,6 +48739,7 @@ mod tests {
         let failure = app
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-failure")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -49818,6 +48808,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
@@ -49855,6 +48846,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-retry")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -49949,6 +48941,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
@@ -49985,6 +48978,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-retry")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -50007,6 +49001,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-attempt")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -51778,6 +50773,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
@@ -51814,6 +50810,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-propagation")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -51927,6 +50924,7 @@ mod tests {
         ));
         let state = crate::AppState::from_sqlite_path(&db_path)
             .expect("state")
+            .with_api_key("secret")
             .with_api_key("secret");
         let app = crate::create_app_with_state(state.clone());
 
@@ -51963,6 +50961,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .header("X-API-Key", "secret")
                     .method(Method::POST)
                     .uri("/internal/delivery-drop")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -57899,9 +56898,12 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let server = tokio::spawn(async move {
-            axum::serve(listener, crate::create_app())
-                .await
-                .expect("server");
+            axum::serve(
+                listener,
+                crate::create_app_with_state(crate::AppState::default().with_api_key("secret")),
+            )
+            .await
+            .expect("server");
         });
 
         let (mut socket, _) = connect_async(format!("ws://{addr}/events/system"))
@@ -57909,7 +56911,7 @@ mod tests {
             .expect("websocket connect");
         socket
             .send(Message::Text(
-                json!({"type":"auth","data":{"api_key":"test"}})
+                json!({"type":"auth","data":{"api_key":"secret"}})
                     .to_string()
                     .into(),
             ))

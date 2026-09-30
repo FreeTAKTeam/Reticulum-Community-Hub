@@ -165,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
+import { computed, onMounted, watch } from "vue";
 import { ref } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import CosmicTopStatus from "../components/cosmic/CosmicTopStatus.vue";
@@ -173,6 +173,7 @@ import BaseModal from "../components/BaseModal.vue";
 import BasePagination from "../components/BasePagination.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
 import { getBlob } from "../api/client";
+import { useAttachmentPreviews } from "../composables/useAttachmentPreviews";
 import type { FileEntry } from "../api/types";
 import { useFilesStore } from "../stores/files";
 import { useToastStore } from "../stores/toasts";
@@ -183,9 +184,8 @@ const filesStore = useFilesStore();
 const toastStore = useToastStore();
 const activeTab = ref<"files" | "images">("files");
 const previewOpen = ref(false);
-const previewUrl = ref("");
+const previewId = ref("");
 const previewName = ref("");
-const previewLoading = ref(false);
 const filesPage = ref(1);
 const imagesPage = ref(1);
 const filesPageSize = 8;
@@ -214,6 +214,11 @@ const activeTabTitle = computed(() => (activeTab.value === "files" ? "Files" : "
 
 const filePath = (id: string) => filesStore.fileRawUrl(id);
 const imagePath = (id: string) => filesStore.imageRawUrl(id);
+const previews = useAttachmentPreviews(computed(() =>
+  previewOpen.value && previewId.value ? [imagePath(previewId.value)] : []));
+const previewUrl = computed(() => previews.urls.value[imagePath(previewId.value)] ?? "");
+const previewLoading = previews.loading;
+watch(previews.error, (error) => { if (error) { toastStore.push(error, "danger"); } });
 
 const triggerDownload = (blob: Blob, name?: string) => {
   const url = URL.createObjectURL(blob);
@@ -265,22 +270,13 @@ const removeAttachment = async (entry: FileEntry, type: "file" | "image") => {
   }
 };
 
-const openPreview = async (image: FileEntry) => {
+const openPreview = (image: FileEntry) => {
   if (!image.id) {
     return;
   }
+  previewId.value = image.id;
+  previewName.value = image.name ?? "";
   previewOpen.value = true;
-  previewLoading.value = true;
-  try {
-    const blob = await getBlob(imagePath(image.id));
-    clearPreviewUrl();
-    previewUrl.value = URL.createObjectURL(blob);
-    previewName.value = image.name ?? "";
-  } catch (error) {
-    toastStore.push("Preview failed", "danger");
-  } finally {
-    previewLoading.value = false;
-  }
 };
 
 const closePreview = () => {
@@ -297,14 +293,6 @@ const downloadPreview = async () => {
   } catch (error) {
     toastStore.push("Download failed", "danger");
   }
-};
-
-const clearPreviewUrl = () => {
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value);
-  }
-  previewUrl.value = "";
-  previewName.value = "";
 };
 
 const openUploadPicker = (category: "file" | "image") => {
@@ -373,12 +361,6 @@ const handleUploadSelection = async (event: Event, category: "file" | "image") =
   }
 };
 
-watch(previewOpen, (open) => {
-  if (!open) {
-    clearPreviewUrl();
-  }
-});
-
 watch(filePageCount, (count) => {
   if (filesPage.value > count) {
     filesPage.value = count;
@@ -403,9 +385,6 @@ onMounted(() => {
   filesStore.fetchFiles();
 });
 
-onBeforeUnmount(() => {
-  clearPreviewUrl();
-});
 </script>
 
 <style scoped src="./styles/FilesPage.css"></style>

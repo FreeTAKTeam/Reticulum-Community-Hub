@@ -1,20 +1,26 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "v0.9.9",
-  "sdk_version": "0.9.9",
+  "release_tag": "v0.12.0",
+  "sdk_version": "0.12.0",
   "daemon_package": "reticulumd",
   "daemon_features": ["zmq-pipeline-rpc"],
   "contract_version": 2,
-  "contract_release": "sdk-v2",
+  "contract_release": "v2.6",
   "data_plane": "zmq",
   "required_capabilities": [
     "sdk.capability.batch_send",
-    "sdk.capability.async_events"
+    "sdk.capability.async_events",
+    "sdk.capability.identity_multi",
+    "sdk.capability.identity_import_export",
+    "sdk.capability.identity_discovery"
   ],
   "required_operations": [
     "sdk_send_batch_v2",
     "sdk_status_v2",
     "sdk_poll_events_v2",
-    "sdk_identity_announce_now_v2"
+    "sdk_identity_announce_now_v2",
+    "sdk_identity_import_v2",
+    "sdk_identity_activate_v2",
+    "sdk_identity_announce_v2"
   ]
 }

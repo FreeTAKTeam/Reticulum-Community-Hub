@@ -1,5 +1,6 @@
 import { mockStatusPayload, mockSystemEvent, mockTelemetryEntry } from "./mock";
 import { useConnectionStore } from "../stores/connection";
+import { assertSecureTransport } from "../utils/transport-security";
 
 export interface WsMessage<T = unknown> {
   type: string;
@@ -12,7 +13,7 @@ export type WsHandler = (message: WsMessage) => void;
 export class WsClient {
   private socket: WebSocket | null = null;
   private readonly path: string;
-  private readonly url: string;
+  private url: string;
   private readonly handler: WsHandler;
   private readonly onOpen?: () => void;
   private retryCount = 0;
@@ -21,6 +22,7 @@ export class WsClient {
   private shouldReconnect = true;
   private mockInterval: number | undefined;
   private reconnectTimer: number | undefined;
+  private socketIdentity = "";
   private readonly useMock = import.meta.env.VITE_RTH_MOCK === "true";
 
   constructor(path: string, handler: WsHandler, onOpen?: () => void) {
@@ -41,10 +43,27 @@ export class WsClient {
     }
     this.clearReconnectTimer();
     this.shouldReconnect = true;
+    const connection = useConnectionStore();
+    this.url = connection.resolveWsUrl(this.path);
+    try {
+      assertSecureTransport(this.url, "websocket");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid WebSocket target.";
+      this.shouldReconnect = false;
+      connection.setAuthStatus("forbidden", message);
+      this.handler({ type: "error", ts: new Date().toISOString(), data: { code: "insecure_transport", message } });
+      return;
+    }
     const socket = new WebSocket(this.url);
+    this.socketIdentity = connection.requestIdentity;
+    const identity = this.socketIdentity;
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) {
+        return;
+      }
+      if (connection.requestIdentity !== identity) {
+        this.close();
         return;
       }
       this.retryCount = 0;
@@ -58,6 +77,7 @@ export class WsClient {
       if (this.socket !== socket) {
         return;
       }
+      if (connection.requestIdentity !== identity) { this.close(); return; }
       try {
         const payload = JSON.parse(event.data) as WsMessage;
         if (payload.type === "ping") {
@@ -92,6 +112,7 @@ export class WsClient {
       return;
     }
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      if (this.socketIdentity !== useConnectionStore().requestIdentity) { this.close(); return; }
       this.socket.send(JSON.stringify(message));
     }
   }
@@ -115,8 +136,8 @@ export class WsClient {
       type: "auth",
       ts: new Date().toISOString(),
       data: {
-        token: connectionStore.token || undefined,
-        api_key: connectionStore.apiKey || undefined
+        token: ["bearer", "both"].includes(connectionStore.authMode) ? connectionStore.token || undefined : undefined,
+        api_key: ["apiKey", "both"].includes(connectionStore.authMode) ? connectionStore.apiKey || undefined : undefined
       }
     });
   }

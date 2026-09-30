@@ -19,7 +19,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { onMounted } from "vue";
-import { ref } from "vue";
+import { ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { RouterView } from "vue-router";
 import AppShell from "./components/AppShell.vue";
 import BaseToast from "./components/BaseToast.vue";
@@ -35,6 +36,7 @@ type BootStatus = "pending" | "retrying" | "online";
 
 const appStore = useAppStore();
 const connectionStore = useConnectionStore();
+const router = useRouter();
 const bootReady = ref(false);
 const bootStatus = ref<BootStatus>("pending");
 const bootAttempt = ref(0);
@@ -65,7 +67,7 @@ const bootLogs = computed(() => {
   const statusToken = bootStatus.value === "online" ? "ok" : "pending";
   const lines = [
     "handshake protocol initialized... ok",
-    `websocket bridge handshake... ${statusToken}`,
+    "websocket endpoint configured... ok",
     `retrieving hub metadata... ${statusToken}`,
     `target ${connectionStore.resolveUrl(endpoints.appInfo)}`
   ];
@@ -92,7 +94,7 @@ const waitForBackend = async () => {
   if (import.meta.env.VITE_RTH_MOCK === "true") {
     await delay(800);
     const setupStatus = await fetchSetupStatus();
-    setupRequired.value = setupStatus.setup_required;
+    setupRequired.value = setupStatus.setup_required && (connectionStore.isLocalTarget || connectionStore.hasActiveAuthSession) && typeof setupStatus.pin_enrolled === "boolean";
     bootProgress.value = 100;
     bootStatus.value = "online";
     bootReady.value = true;
@@ -101,7 +103,7 @@ const waitForBackend = async () => {
   if (connectionStore.isRemoteTarget && !connectionStore.hasActiveAuthSession) {
     try {
       const setupStatus = await fetchSetupStatus();
-      setupRequired.value = setupStatus.setup_required;
+      setupRequired.value = setupStatus.setup_required && (connectionStore.isLocalTarget || connectionStore.hasActiveAuthSession) && typeof setupStatus.pin_enrolled === "boolean";
     } catch {
       setupRequired.value = false;
     }
@@ -119,7 +121,7 @@ const waitForBackend = async () => {
       await appStore.fetchAppInfo(true);
       try {
         const setupStatus = await fetchSetupStatus();
-        setupRequired.value = setupStatus.setup_required;
+        setupRequired.value = setupStatus.setup_required && (connectionStore.isLocalTarget || connectionStore.hasActiveAuthSession) && typeof setupStatus.pin_enrolled === "boolean";
       } catch {
         setupRequired.value = false;
       }
@@ -145,7 +147,21 @@ const handleSetupCompleted = (remotePassword: string) => {
   connectionStore.markAuthenticated();
   connectionStore.persist(false);
   setupRequired.value = false;
+  void router.replace("/");
 };
+
+watch(() => connectionStore.hasActiveAuthSession, async (authenticated) => {
+  if (!authenticated) { return; }
+  const target = connectionStore.resolveUrl("");
+  try {
+    const status = await fetchSetupStatus();
+    if (connectionStore.hasActiveAuthSession && target === connectionStore.resolveUrl("")) {
+      setupRequired.value = status.setup_required && typeof status.pin_enrolled === "boolean";
+    }
+  } catch (error) {
+    console.error("Unable to refresh setup status after authentication", error);
+  }
+});
 
 onMounted(() => {
   void waitForBackend();

@@ -8,18 +8,24 @@
     )
 )]
 
-use std::collections::HashSet;
 use std::env;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::thread;
 use std::time::Duration as StdDuration;
 
+mod service_bridge;
+mod service_http;
+use service_bridge::{BridgeState, bridge_rch_to_tak, bridge_tak_to_rch};
+#[cfg(test)]
+use service_bridge::{location_snapshot_from_entry, marker_payload_from_cot};
+#[cfg(test)]
+use service_http::HttpBase;
+use service_http::RchNorthboundClient;
+
 use chrono::{DateTime, Utc};
 use r3akt_tak_connector::{
-    ChatEventInput, CotPayload, CotPayloadKind, LocationSnapshot, TakClearSender,
-    TakConnectionConfig, TakConnector, TakCotReceiver, TakCotSender, TakInboundCotEvent,
-    TakInboundCotResult, TakInboundService, TakSocketReceiver,
+    ChatEventInput, LocationSnapshot, TakClearSender, TakConnectionConfig, TakCotReceiver,
+    TakCotSender, TakInboundCotEvent, TakInboundCotResult, TakInboundService, TakService,
+    TakSocketReceiver,
 };
 use serde_json::{Value, json};
 
@@ -42,14 +48,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn run_service(config: &ServiceConfig) -> Result<(), Box<dyn std::error::Error>> {
     let client =
         RchNorthboundClient::new(config.rch_base_url.as_str(), config.rch_api_key.clone())?;
-    client.get_json("/Status")?;
+    if let Err(error) = client.get_json("/Status") {
+        if config.once {
+            return Err(error);
+        }
+        eprintln!("RCH startup check failed; bridge will retry: {error}");
+    }
 
-    let connector = TakConnector::new(config.tak.clone());
     let sender = TakClearSender::from_config(&config.tak)?;
+    let mut service = TakService::new(config.tak.clone(), 256, sender);
+    service.start();
+    let status = service.status();
+    eprintln!(
+        "TAK bridge started; TLS enabled={}, certificate verification enabled={}",
+        status.tls_enabled, status.tls_verification_enabled
+    );
     let mut receiver = if config.mode.enable_tak_to_rch() {
         Some(TakInboundService::new(
-            TakSocketReceiver::from_config(&config.tak)?
-                .with_read_timeout(StdDuration::from_secs_f64(config.poll_interval_seconds)),
+            TakSocketReceiver::from_config(&config.tak)?.with_read_timeout(
+                StdDuration::from_secs_f64(config.poll_interval_seconds)
+                    .min(StdDuration::from_secs(5)),
+            ),
             true,
         ))
     } else {
@@ -61,13 +80,26 @@ fn run_service(config: &ServiceConfig) -> Result<(), Box<dyn std::error::Error>>
 
     let mut state = BridgeState::default();
     loop {
+        let mut failures = Vec::new();
         if config.mode.enable_rch_to_tak() {
-            bridge_rch_to_tak(&client, &sender, &connector, &mut state)?;
+            if let Err(error) = bridge_rch_to_tak(&client, &mut service, &mut state) {
+                eprintln!(
+                    "RCH to TAK bridge will retry; pending={}: {error}",
+                    service.status().queue.pending
+                );
+                failures.push(error.to_string());
+            }
         }
         if let Some(receiver) = receiver.as_mut() {
-            bridge_tak_to_rch(&client, receiver, &mut state)?;
+            if let Err(error) = bridge_tak_to_rch(&client, receiver, &mut state) {
+                eprintln!("TAK to RCH bridge will retry: {error}");
+                failures.push(error.to_string());
+            }
         }
         if config.once {
+            if !failures.is_empty() {
+                return Err(failures.join("; ").into());
+            }
             break;
         }
         thread::sleep(StdDuration::from_secs_f64(config.poll_interval_seconds));
@@ -114,11 +146,11 @@ impl BridgeMode {
 impl ServiceConfig {
     fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = Self {
-            rch_base_url: env_nonempty("R3AKT_TAK_RCH_BASE_URL")
-                .unwrap_or_else(|| "http://127.0.0.1:8080".to_string()),
-            rch_api_key: env_nonempty("R3AKT_TAK_RCH_API_KEY"),
-            tak: tak_config_from_env(),
-            poll_interval_seconds: env_f64("R3AKT_TAK_SERVICE_INTERVAL_SECONDS").unwrap_or(5.0),
+            rch_base_url: env_nonempty("R3AKT_TAK_RCH_BASE_URL")?
+                .unwrap_or_else(|| "http://127.0.0.1:8000".to_string()),
+            rch_api_key: env_nonempty("R3AKT_TAK_RCH_API_KEY")?,
+            tak: tak_config_from_env()?,
+            poll_interval_seconds: env_f64("R3AKT_TAK_SERVICE_INTERVAL_SECONDS")?.unwrap_or(5.0),
             mode: BridgeMode::Bidirectional,
             once: false,
             help: false,
@@ -144,7 +176,11 @@ impl ServiceConfig {
                 other => return Err(format!("unknown argument {other}").into()),
             }
         }
+        validate_interval(config.poll_interval_seconds, "service interval")?;
         config.poll_interval_seconds = config.poll_interval_seconds.max(0.25);
+        if config.tak.tak_proto > 1 || config.tak.fts_compat > 1 {
+            return Err("TAK_PROTO and FTS_COMPAT must be 0 or 1".into());
+        }
         Ok(config)
     }
 }
@@ -158,353 +194,110 @@ fn next_arg(
         .ok_or_else(|| format!("{name} requires a value").into())
 }
 
-fn tak_config_from_env() -> TakConnectionConfig {
+fn tak_config_from_env() -> Result<TakConnectionConfig, Box<dyn std::error::Error>> {
     let mut config = TakConnectionConfig::default();
-    if let Some(value) = env_nonempty("COT_URL") {
+    if let Some(value) = env_nonempty("COT_URL")? {
         config.cot_url = value;
     }
-    if let Some(value) = env_nonempty("TAK_CALLSIGN") {
+    if let Some(value) = env_nonempty("TAK_CALLSIGN")? {
         config.callsign = value;
     }
-    if let Some(value) = env_f64("PYTAK_SLEEP") {
+    if let Some(value) = env_f64("PYTAK_SLEEP")? {
         config.poll_interval_seconds = value;
     }
-    if let Some(value) = env_f64("RTH_TAK_KEEPALIVE_INTERVAL_SECONDS") {
+    if let Some(value) = env_f64("RTH_TAK_KEEPALIVE_INTERVAL_SECONDS")? {
         config.keepalive_interval_seconds = value;
     }
-    if let Some(value) = env_u8("TAK_PROTO") {
+    if let Some(value) = env_u8("TAK_PROTO")? {
         config.tak_proto = value;
     }
-    if let Some(value) = env_u8("FTS_COMPAT") {
+    if let Some(value) = env_u8("FTS_COMPAT")? {
         config.fts_compat = value;
     }
-    if let Some(value) = env_u8("PYTAK_TLS_DONT_VERIFY") {
+    if let Some(value) = env_u8("PYTAK_TLS_DONT_VERIFY")? {
         config.pytak_tls_dont_verify = value;
         config.tls_insecure = value != 0;
     }
-    config.tls_ca = env_nonempty("R3AKT_TAK_TLS_CA");
-    config.tls_client_cert = env_nonempty("R3AKT_TAK_TLS_CLIENT_CERT");
-    config.tls_client_key = env_nonempty("R3AKT_TAK_TLS_CLIENT_KEY");
-    config.tls_client_password = env_nonempty("R3AKT_TAK_TLS_CLIENT_PASSWORD");
-    if let Some(value) = env_bool("R3AKT_TAK_TLS_INSECURE") {
+    config.tls_ca = env_nonempty("R3AKT_TAK_TLS_CA")?;
+    config.tls_client_cert = env_nonempty("R3AKT_TAK_TLS_CLIENT_CERT")?;
+    config.tls_client_key = env_nonempty("R3AKT_TAK_TLS_CLIENT_KEY")?;
+    config.tls_client_password = env_nonempty("R3AKT_TAK_TLS_CLIENT_PASSWORD")?;
+    if let Some(value) = env_bool("R3AKT_TAK_TLS_INSECURE")? {
         config.tls_insecure = value;
+        config.pytak_tls_dont_verify = u8::from(value);
     }
-    config
+    Ok(config)
 }
 
-fn env_nonempty(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_f64(name: &str) -> Option<f64> {
-    env_nonempty(name)?.parse().ok()
-}
-
-fn env_u8(name: &str) -> Option<u8> {
-    env_nonempty(name)?.parse().ok()
-}
-
-fn env_bool(name: &str) -> Option<bool> {
-    let value = env_nonempty(name)?.to_ascii_lowercase();
-    Some(matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-}
-
-#[derive(Default)]
-struct BridgeState {
-    telemetry: HashSet<String>,
-    chat: HashSet<String>,
-    cot: HashSet<String>,
-}
-
-fn bridge_rch_to_tak(
-    client: &RchNorthboundClient,
-    sender: &TakClearSender,
-    connector: &TakConnector,
-    state: &mut BridgeState,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let telemetry = client.get_json("/Telemetry?since=0")?;
-    for entry in telemetry["entries"].as_array().into_iter().flatten() {
-        let Some((snapshot, label, key)) = location_snapshot_from_entry(entry) else {
-            continue;
-        };
-        if state.telemetry.insert(key) {
-            let payload = CotPayload {
-                kind: CotPayloadKind::Location,
-                xml: connector.build_location_xml(&snapshot, Utc::now(), label.as_deref()),
-            };
-            sender.send(&payload)?;
-        }
+fn env_nonempty(name: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value.trim().to_string()).filter(|value| !value.is_empty())),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must contain valid UTF-8").into()),
     }
+}
 
-    let messages = client.get_json("/Chat/Messages?limit=100")?;
-    for message in messages.as_array().into_iter().flatten() {
-        if message["Direction"].as_str() != Some("outbound") {
-            continue;
-        }
-        let Some(input) = chat_input_from_message(message) else {
-            continue;
-        };
-        let key = input
-            .message_uuid
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", input.timestamp.timestamp(), input.content));
-        if state.chat.insert(key) {
-            let payload = CotPayload {
-                kind: CotPayloadKind::Chat,
-                xml: connector.build_chat_xml(&input)?,
-            };
-            sender.send(&payload)?;
-        }
+fn env_f64(name: &str) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+    env_nonempty(name)?
+        .map(|value| {
+            let parsed = value
+                .parse::<f64>()
+                .map_err(|error| format!("Invalid {name}: {error}"))?;
+            validate_interval(parsed, name)?;
+            Ok(parsed)
+        })
+        .transpose()
+}
+
+fn validate_interval(value: f64, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !value.is_finite() || value <= 0.0 || StdDuration::try_from_secs_f64(value).is_err() {
+        return Err(format!("{name} must be a finite positive duration").into());
     }
     Ok(())
 }
 
-fn bridge_tak_to_rch<R: TakCotReceiver>(
-    client: &RchNorthboundClient,
-    receiver: &mut TakInboundService<R>,
-    state: &mut BridgeState,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let report = receiver.poll_once()?;
-    let Some(TakInboundCotResult::Parsed(event)) = report.result else {
-        return Ok(());
-    };
-    let key = format!("{}:{}:{}", event.uid, event.time, event.stale);
-    if state.cot.insert(key) {
-        client.post_json("/api/markers", marker_payload_from_cot(&event))?;
-    }
-    Ok(())
-}
-
-fn location_snapshot_from_entry(
-    entry: &Value,
-) -> Option<(LocationSnapshot, Option<String>, String)> {
-    let location = entry.get("telemetry")?.get("location")?;
-    let timestamp = entry.get("timestamp")?.as_i64()?;
-    let peer = entry.get("peer_destination")?.as_str()?.to_string();
-    let label = entry
-        .get("identity_label")
-        .and_then(Value::as_str)
-        .or_else(|| entry.get("display_name").and_then(Value::as_str))
-        .map(ToOwned::to_owned);
-    let key = format!("{peer}:{timestamp}");
-    Some((
-        LocationSnapshot {
-            latitude: json_f64(location, "latitude")?,
-            longitude: json_f64(location, "longitude")?,
-            altitude: json_f64(location, "altitude").unwrap_or(0.0),
-            speed: json_f64(location, "speed").unwrap_or(0.0),
-            bearing: json_f64(location, "bearing").unwrap_or(0.0),
-            accuracy: json_f64(location, "accuracy").unwrap_or(0.0),
-            updated_at: DateTime::from_timestamp(timestamp, 0)?,
-            peer_hash: Some(peer),
-        },
-        label,
-        key,
-    ))
-}
-
-fn chat_input_from_message(message: &Value) -> Option<ChatEventInput> {
-    let content = message.get("Content")?.as_str()?.trim();
-    if content.is_empty() {
-        return None;
-    }
-    let timestamp = message
-        .get("CreatedAt")
-        .and_then(Value::as_str)
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map_or_else(Utc::now, |value| value.with_timezone(&Utc));
-    Some(ChatEventInput {
-        content: content.to_string(),
-        sender_label: "RCH".to_string(),
-        topic_id: message
-            .get("TopicID")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        source_hash: None,
-        timestamp,
-        message_uuid: message
-            .get("MessageID")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-    })
-}
-
-fn marker_payload_from_cot(event: &TakInboundCotEvent) -> Value {
-    let symbol = marker_symbol_for_cot_type(event.event_type.as_str());
-    json!({
-        "type": symbol,
-        "symbol": symbol,
-        "name": event.uid,
-        "category": "tak",
-        "lat": event.point.lat,
-        "lon": event.point.lon,
-        "notes": format!(
-            "TAK CoT type={} how={} hae={} ce={} le={}",
-            event.event_type, event.how, event.point.hae, event.point.ce, event.point.le
-        )
-    })
-}
-
-fn marker_symbol_for_cot_type(event_type: &str) -> &'static str {
-    if event_type.contains("-h-") || event_type.starts_with("a-h") {
-        "hostile"
-    } else if event_type.contains("-n-") || event_type.starts_with("a-n") {
-        "neutral"
-    } else if event_type.contains("-u-") || event_type.starts_with("a-u") {
-        "unknown"
-    } else if event_type.contains("-f-") || event_type.starts_with("a-f") {
-        "friendly"
-    } else {
-        "marker"
-    }
-}
-
-fn json_f64(value: &Value, key: &str) -> Option<f64> {
-    match value.get(key)? {
-        Value::Number(number) => number.as_f64(),
-        Value::String(text) => text.parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RchNorthboundClient {
-    base: HttpBase,
-    api_key: Option<String>,
-}
-
-impl RchNorthboundClient {
-    fn new(base_url: &str, api_key: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
-            base: HttpBase::parse(base_url)?,
-            api_key,
+fn env_u8(name: &str) -> Result<Option<u8>, Box<dyn std::error::Error>> {
+    env_nonempty(name)?
+        .map(|value| {
+            value
+                .parse::<u8>()
+                .map_err(|error| format!("Invalid {name}: {error}").into())
         })
-    }
-
-    fn get_json(&self, path: &str) -> Result<Value, Box<dyn std::error::Error>> {
-        self.request_json("GET", path, None)
-    }
-
-    fn post_json(&self, path: &str, body: Value) -> Result<Value, Box<dyn std::error::Error>> {
-        self.request_json("POST", path, Some(body))
-    }
-
-    fn request_json(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<Value>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        let body_text = body.map(|value| value.to_string()).unwrap_or_default();
-        let request_path = self.base.path_for(path);
-        let mut request = format!(
-            "{method} {request_path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\n",
-            self.base.host_header
-        );
-        if let Some(api_key) = &self.api_key {
-            request.push_str(format!("X-API-Key: {api_key}\r\n").as_str());
-            request.push_str(format!("Authorization: Bearer {api_key}\r\n").as_str());
-        }
-        if body_text.is_empty() {
-            request.push_str("\r\n");
-        } else {
-            request.push_str("Content-Type: application/json\r\n");
-            request.push_str(format!("Content-Length: {}\r\n\r\n", body_text.len()).as_str());
-            request.push_str(body_text.as_str());
-        }
-
-        let mut stream = TcpStream::connect((self.base.host.as_str(), self.base.port))?;
-        stream.write_all(request.as_bytes())?;
-        stream.flush()?;
-        let mut response = String::new();
-        stream.read_to_string(&mut response)?;
-        parse_http_json_response(response.as_str())
-    }
+        .transpose()
 }
 
-#[derive(Debug, Clone)]
-struct HttpBase {
-    host: String,
-    port: u16,
-    host_header: String,
-    path_prefix: String,
-}
-
-impl HttpBase {
-    fn parse(base_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let without_scheme = base_url
-            .trim()
-            .strip_prefix("http://")
-            .ok_or("only http:// RCH northbound URLs are supported")?;
-        let (authority, path_prefix) = without_scheme
-            .split_once('/')
-            .map_or((without_scheme, ""), |(authority, path)| (authority, path));
-        let (host, port) = authority
-            .rsplit_once(':')
-            .map_or((authority.to_string(), 80), |(host, port)| {
-                (host.to_string(), port.parse::<u16>().unwrap_or(80))
-            });
-        if host.is_empty() {
-            return Err("RCH base URL host is required".into());
-        }
-        Ok(Self {
-            host: host.clone(),
-            port,
-            host_header: if port == 80 {
-                host
-            } else {
-                format!("{host}:{port}")
-            },
-            path_prefix: path_prefix.trim_matches('/').to_string(),
+fn env_bool(name: &str) -> Result<Option<bool>, Box<dyn std::error::Error>> {
+    env_nonempty(name)?
+        .map(|value| match value.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok(true),
+            "0" | "false" | "no" | "off" => Ok(false),
+            _ => Err(format!("{name} must be a boolean").into()),
         })
-    }
-
-    fn path_for(&self, path: &str) -> String {
-        let path = path.trim_start_matches('/');
-        if self.path_prefix.is_empty() {
-            format!("/{path}")
-        } else {
-            format!("/{}/{}", self.path_prefix, path)
-        }
-    }
-}
-
-fn parse_http_json_response(response: &str) -> Result<Value, Box<dyn std::error::Error>> {
-    let (head, body) = response
-        .split_once("\r\n\r\n")
-        .or_else(|| response.split_once("\n\n"))
-        .ok_or("invalid HTTP response")?;
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or("missing HTTP response status")?;
-    if !(200..300).contains(&status) {
-        return Err(format!("RCH northbound request failed with HTTP {status}: {body}").into());
-    }
-    if body.trim().is_empty() {
-        Ok(Value::Null)
-    } else {
-        Ok(serde_json::from_str(body)?)
-    }
+        .transpose()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::mpsc;
 
     use super::*;
 
     #[test]
+    fn service_rejects_non_finite_or_non_positive_intervals() {
+        for interval in ["NaN", "inf", "-inf", "0", "-1", "1e300"] {
+            assert!(
+                ServiceConfig::parse(["--interval-seconds".to_string(), interval.to_string()])
+                    .is_err(),
+                "{interval}"
+            );
+        }
+    }
+
+    #[test]
     fn http_base_builds_prefixed_paths() {
         let base = HttpBase::parse("http://127.0.0.1:8080/api").expect("base");
-        assert_eq!(base.host, "127.0.0.1");
-        assert_eq!(base.port, 8080);
         assert_eq!(base.path_for("/Status"), "/api/Status");
     }
 
@@ -564,7 +357,7 @@ mod tests {
     fn service_bridges_rch_telemetry_and_chat_to_tak_cot_socket() {
         let (tak_url, tak_rx, tak_handle) = spawn_tak_capture_server(2);
         let (rch_url, rch_handle) = spawn_rch_server(3, |request| {
-            assert!(request.contains("X-API-Key: secret"));
+            assert!(request.to_ascii_lowercase().contains("x-api-key: secret"));
             if request.starts_with("GET /Status ") {
                 json!({"status":"ok"}).to_string()
             } else if request.starts_with("GET /Telemetry?since=0 ") {
@@ -670,7 +463,7 @@ mod tests {
         tak_handle.join().expect("tak server");
     }
 
-    fn spawn_rch_server(
+    pub(super) fn spawn_rch_server(
         expected_requests: usize,
         respond: impl Fn(&str) -> String + Send + 'static,
     ) -> (String, thread::JoinHandle<()>) {
@@ -715,7 +508,7 @@ mod tests {
         (format!("tcp://{addr}"), handle)
     }
 
-    fn read_http_request(stream: &mut TcpStream) -> String {
+    pub(super) fn read_http_request(stream: &mut TcpStream) -> String {
         stream
             .set_read_timeout(Some(StdDuration::from_secs(2)))
             .expect("read timeout");
@@ -739,7 +532,11 @@ mod tests {
         let header = String::from_utf8_lossy(&bytes[..header_end]);
         let content_length = header
             .lines()
-            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, value)| value)
+            })
             .and_then(|value| value.trim().parse::<usize>().ok())
             .unwrap_or(0);
         bytes.len() >= header_end + 4 + content_length

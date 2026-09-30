@@ -1,7 +1,7 @@
 param(
-    [string] $InstallDir = "$PSScriptRoot\..",
+    [string] $InstallDir = "$PSScriptRoot\..\..",
     [string] $RchBaseUrl = "http://127.0.0.1:8000",
-    [string] $RchApiKey = "change-me",
+    [string] $RchApiKey = "",
     [string] $CotUrl = "tcp://127.0.0.1:8087",
     [double] $IntervalSeconds = 5,
     [switch] $RchToTakOnly,

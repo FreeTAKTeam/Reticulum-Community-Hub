@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 import { WsClient } from "./ws";
+import { useConnectionStore } from "../stores/connection";
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;
@@ -80,5 +81,48 @@ describe("WsClient reconnect lifecycle", () => {
     vi.advanceTimersByTime(2000);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("rejects a remote plaintext socket before sending credentials", () => {
+    const connection = useConnectionStore();
+    connection.baseUrl = "https://remote.example";
+    connection.wsBaseUrl = "ws://remote.example";
+    connection.apiKey = "fixture-key";
+    connection.authMode = "apiKey";
+    new WsClient("/events/system", vi.fn()).connect();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(connection.authMessage).toMatch(/WSS/);
+  });
+
+  it("does not send credentials to an old target after connection settings change", () => {
+    const connection = useConnectionStore();
+    connection.baseUrl = "https://first.example";
+    const client = new WsClient("/events/system", vi.fn());
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    connection.baseUrl = "https://second.example";
+    connection.apiKey = "new-target-key";
+    connection.authMode = "apiKey";
+    socket.emitOpen();
+    expect(socket.sent).toHaveLength(0);
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
+    client.close();
+  });
+
+  it("rejects traffic on an already open socket when the target changes", () => {
+    const connection = useConnectionStore();
+    connection.baseUrl = "https://first.example";
+    const handler = vi.fn();
+    const client = new WsClient("/events/system", handler);
+    client.connect();
+    const socket = FakeWebSocket.instances[0];
+    socket.emitOpen();
+    expect(socket.sent).toHaveLength(1);
+    connection.baseUrl = "https://second.example";
+    socket.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "message.receive", data: "old target" }) }));
+    client.send({ type: "command", ts: "fixture", data: "new target work" });
+    expect(socket.sent).toHaveLength(1);
+    expect(handler).not.toHaveBeenCalled();
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
   });
 });

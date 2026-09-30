@@ -99,6 +99,11 @@ if ($IncludeTakService) {
 }
 
 Copy-Item -LiteralPath "README.md" -Destination $resolvedStage -Force
+Copy-Item -LiteralPath "LICENSE" -Destination $resolvedStage -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $resolvedStage "docs") | Out-Null
+Get-ChildItem -LiteralPath "docs" -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $resolvedStage "docs") -Force
+}
 Copy-Item -LiteralPath "docs/rust-transition.md" -Destination $resolvedStage -Force
 Copy-Item -LiteralPath "docs/release-readiness-audit.md" -Destination $resolvedStage -Force
 Copy-Item -LiteralPath "packaging/README.md" -Destination (Join-Path $resolvedStage "packaging") -Force

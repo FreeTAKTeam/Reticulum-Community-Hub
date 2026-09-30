@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { computed, ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del } from "../api/client";
@@ -94,6 +95,7 @@ const fromApiMarker = (entry: MarkerEntry): Marker | null => {
 export const useMarkersStore = defineStore("markers", () => {
   const markers = ref<Marker[]>([]);
   const loading = ref(false);
+  useBackendScope([markers, loading]);
 
   const markerIndex = computed(() => {
     const index = new Map<string, Marker>();

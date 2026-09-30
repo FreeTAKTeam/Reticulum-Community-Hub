@@ -5,11 +5,59 @@ It is intentionally stricter than a green CI badge: the initial Rust alpha is
 not release-ready until every required local, CI, server-package, ZeroMQ, REM,
 and Reticulum gate is either passed or recorded as an explicit alpha risk.
 
-Audit date: 2026-06-22; preview.10 supplement: 2026-08-13
+Audit date: 2026-06-22; preview.10 supplement: 2026-08-13;
+LXMF dependency supplement: 2026-09-30
 
-The table retains historical evidence. Current preview.10 findings, validation,
+The table retains historical evidence. Current preview.11 findings, validation,
 limitations, and artifact identity are tracked in
-[`stabilization-v3.0.0-preview.10.md`](stabilization-v3.0.0-preview.10.md).
+[`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
+The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
+
+## LXMF-rs v0.12.0 Integration
+
+The current dependency, CI, and packaged-daemon baseline is LXMF-rs `v0.12.0`
+at commit `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`. The lockfile resolves
+`lxmf-reference`, `lxmf-wire`, `lxmf-sdk`, `reticulum-rs-core`, and
+`reticulum-rs-rpc` to `0.12.0`. The runtime manifest records SDK contract
+release `v2.6` and the identity import, activation, and discovery operations
+required by RCH's service identity registration.
+
+The initial dependency-only integration validation used a clean checkout of that immutable release while
+preserving the existing modified sibling checkout. Formatting, denied-warning
+workspace clippy, all 564 workspace tests, the four focused backend crate
+suites, the locked Rust 1.85 check, denied-warning Rust documentation, module
+size and documentation link checks, and `cargo audit --deny warnings` passed.
+The matching ZeroMQ-capable daemon also passed a locked Rust 1.88 check.
+The standard workspace run leaves the infrastructure-dependent load test
+ignored; the local harness ran it explicitly.
+
+The committed `scripts/release-readiness.ps1 -ServerOnlyAlpha` gate also passed,
+including the optimized server build and HTTP smoke for `/Status`,
+`/diagnostics/runtime`, OpenAPI, help, and application information.
+
+The Linux server archive and Tauri AppImage built successfully. The server
+archive checksum, embedded LXMF release/commit and SDK contract metadata, and
+daemon checksum were verified. The prepared desktop sidecar hash matches the
+clean-release build. AppImage bundling rewrites its loader search path to
+`$ORIGIN/../lib`; the extracted daemon's executable code and data sections match
+the clean-release binary, with differences confined to that loader metadata.
+
+Direct Cargo and desktop commands used the Linux OpenSSL multiarch include
+and library settings that the readiness runner discovers automatically.
+
+The local three-daemon harness passed direct receipts, two-recipient fanout,
+ZeroMQ event polling, and a 500-message batch run with 500 accepted and 500
+received, split 250/250 across two receivers. The
+[load test](../crates/r3akt-rch-server/src/lxmf_load_tests.rs) now imports and
+activates a service identity in each sender and receiver SDK session before
+using its delivery destination. This follows the session ownership checks in
+the new daemon; the production RCH path already registers its service identity.
+
+This supplement records the initial local software integration before the
+preview.11 hardening changes. The candidate report owns its fresh qualification.
+Hosted CI, other platform
+packages, and external or physical-device acceptance retain their separate
+release gates.
 
 ## Objective
 
@@ -29,7 +77,7 @@ server-package-only milestone, not the full stable 3.0 release.
 | Rust MSRV gate is valid for Rust 1.85 | `.github/workflows/rust-pr-quality.yml`, local `cargo +1.85.0` checks | PR quality control has a dedicated Rust 1.85 locked workspace check plus denied-warning rustdoc; Rust 1.88 remains the normal release toolchain. Historical `Rust workspace` run `26696071362` passed the committed gate on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Dedicated workflow defined; preview.9 run pending |
 | PR Rust quality control is explicit and branch-protectable | `.github/workflows/rust-pr-quality.yml` | Pull requests into `rust-next` or `main` get separate checks for `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, release builds for `r3akt-rch-server` and `r3akt-tak-service`, and `cargo audit --deny warnings`. The workflow is branch-protectable; current push evidence is provided by the stricter committed alpha gate in `Rust workspace` run `26696071362`. | Workflow defined; push gate passed |
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which runs Rust format, clippy, workspace tests, the server release build, and the ZeroMQ-configured release HTTP smoke. `Rust workspace` run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Passed in CI |
-| Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. The Rust workspace baseline now targets LXMF-rs `v0.9.5` commit `7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c`; on 2026-07-18, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and the focused release-critical crate tests passed against that baseline. Earlier release-build and local workflow-YAML checks passed before publishing `v3.0.0-preview.2` against the prior `v0.5.0` baseline. | Passed locally |
+| Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. The Rust workspace baseline on 2026-07-18 targeted LXMF-rs `v0.9.5` commit `7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c`; on 2026-07-18, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and the focused release-critical crate tests passed against that baseline. Earlier release-build and local workflow-YAML checks passed before publishing `v3.0.0-preview.2` against the prior `v0.5.0` baseline. | Passed locally |
 | Full Rust release packaging mirrors Python release artifact flow | `.github/workflows/rust-release.yml`, `scripts/build-rust-release-package.ps1`, `packaging/`, `apps/rch-desktop/` | Rust release packaging supports manual workflow artifacts and published-release asset attachment. `Build Rust Release Packages` run `26696071364` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`, producing Linux and Windows server archives plus Linux AppImage and Windows NSIS desktop artifacts. The workflow now also defines macOS x64, macOS arm64, and Linux Raspberry Pi 64 server archive jobs for the next release/manual run. | Passed in CI for prior matrix; expanded matrix needs next run |
 | Release packages carry traceable version metadata | `.github/workflows/rust-release.yml`, `scripts/build-rust-release-package.ps1`, `release-manifest.json` inside the server archive | Server archive names include the resolved release version from the GitHub release tag, pushed tag, manual workflow input, or branch ref. The green `rust-next` packaging run produced `rch-rust-full-windows-x64-rust-next.zip` and `rch-rust-full-linux-x64-rust-next.tar.gz`; both downloaded manifests record `release_version=rust-next`, `git_ref=rust-next`, `git_sha=8dc69773af38ced251138c007c6f0bdc9543ea02`, and inclusion of server, TAK service, and UI payloads. The expanded matrix keeps the same naming and manifest path for Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64 packages. | Passed in CI for prior matrix; expanded matrix needs next run |
 | ZeroMQ is the mandatory server-package southbound command transport | `crates/r3akt-transport-rns/src/lib.rs`, `crates/r3akt-rch-server/src/lib.rs`, live REM validation | RCH runs outbound REM fanout through the LXMF-rs ZeroMQ SDK envelope protocol when `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source` are configured. Optimized REM command channels use the ZeroMQ path without reintroducing RPC compatibility. The committed alpha verifier passed in CI on 2026-05-30, and the later live REM bridge fix maps `auto` to daemon params `method=direct` plus `try_propagation_on_fail=true` so current `reticulumd` receives the intended direct-with-propagation-fallback instruction. | Passed in CI and live validation |
