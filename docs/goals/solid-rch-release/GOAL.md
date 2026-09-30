@@ -13,5 +13,12 @@ Completion: all seven approved local candidate tasks and independent final revie
 passed on 2026-09-30. The locally audited `v3.0.0-preview.11` candidate uses LXMF-rs
 `v0.12.0` on current main `188e54f`. The [stabilization report](../../stabilization-v3.0.0-preview.11.md)
 records exact acceptance and limits. Native window, hosted/multi-platform/external
-acceptance and publication remain separately unperformed; no stable or public
-release claim is made.
+acceptance and publication were separately unperformed at that local checkpoint;
+no stable or public release claim follows from the local qualification alone.
+
+The user subsequently authorized PR creation, hosted CI, review/comment fixes,
+merge and publication. This follow-on requires all final-head checks and release
+package jobs to pass, and independently verified GitHub downloads. See
+[PR #239](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/239) for the
+reviewed source and hosted evidence; the local completion above is not completion
+of that publication goal.

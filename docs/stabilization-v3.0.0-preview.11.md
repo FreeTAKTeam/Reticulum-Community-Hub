@@ -6,11 +6,14 @@ candidate changes. LXMF-rs baseline: `v0.12.0`,
 `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`, SDK configuration version 2,
 contract release `v2.6`, and daemon feature `zmq-pipeline-rpc`.
 
-The candidate passes the required local Linux software gates, a real
-three-daemon delivery gate and extracted-package runtime qualification. No
-candidate commit, tag, push or public release has been created. This report
-qualifies a local prerelease candidate; it does not establish stable v3.0.0
-readiness or hosted multi-platform acceptance.
+This report records the local qualification completed before
+[PR #239](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/239).
+The candidate passed the required local Linux software gates, a real
+three-daemon delivery gate and extracted-package runtime qualification. At that
+checkpoint no candidate commit, tag, push or public release existed. Hosted
+checks, review follow-ups and published source/artifact identity are recorded in
+the PR and the versioned GitHub release. These local results do not establish
+stable v3.0.0 readiness or hosted multi-platform acceptance.
 
 ## Confirmed corrections
 
@@ -111,8 +114,9 @@ The local server archive is
 `target/solid-release/packages/`, with an adjacent `.sha256` file. The external
 `package-audit-final.json` records its final checksum. Its manifest records the
 LXMF release pin, SDK contract, daemon feature and verified daemon checksum.
-`git_ref` and `git_sha` are null because this is an uncommitted local candidate;
-they must refer to the actual released source in hosted assets. The external
+`git_ref` and `git_sha` are null in these historical local artifacts because they
+were assembled before the candidate commit; hosted assets must refer to the
+actual released source. The external
 `source-evidence.json` records the base and candidate source snapshot without
 including unrelated `design-qa.md`.
 
@@ -150,8 +154,9 @@ but unproven in this run**: an unrelated user service owns local port 8000, and 
 was preserved. Desktop build and bundle content were qualified separately from
 the extracted server/browser flow. Windows/macOS/ARM packages, external TAK, REM
 phone/deck hardware and Python-server integration were not exercised here.
-Hosted checks for this unpushed candidate and public release assets remain
-unperformed; baseline hosted checks do not qualify this diff.
+Hosted candidate checks and public assets were outside this local checkpoint;
+their final results and source identity must be verified separately on the PR
+and versioned release. Baseline hosted checks do not qualify the candidate diff.
 
 The TAK queue, recent-key history and identity component are process-local.
 Inbound TAK protobuf is unsupported. Socket DNS uses the platform resolver and

@@ -68,8 +68,11 @@ The [candidate stabilization report](stabilization-v3.0.0-preview.11.md) records
 current checks and package/runtime evidence: 682 workspace tests and 136 UI tests
 passed, the real three-daemon load delivered 500 of 500 messages, and the extracted
 package passed authenticated setup, daemon recovery and durable restart checks.
-Hosted candidate checks and public assets remain unperformed. Historical evidence
-in earlier reports does not qualify the new candidate.
+The report records the local checkpoint before PR creation. Hosted qualification,
+review follow-ups and published assets are recorded on
+[PR #239](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/239) and the
+versioned GitHub release; historical evidence in earlier reports does not qualify
+this version.
 
 The TAK service queue, recent-key history and identity-directory component are
 process-local. Socket DNS uses the platform resolver; the socket I/O deadline

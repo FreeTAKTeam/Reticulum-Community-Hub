@@ -106,7 +106,7 @@ All implementation is owned by the main agent and sequential. Independent read-o
 - The final documentation-only upstream alignment preserves the policy files byte-for-byte, all source changes, the clean index, the retained scoped stash and `design-qa.md` checksum. Backups are in ignored `target/solid-release/upstream-policy-alignment/`; the dirty sibling remains untouched.
 - Extracted-package qualification proves trusted setup, authentication, SDK0.12.0/contractv2.6 diagnostics, 400 concurrent successful reads, lost-201 marker retry without duplication, attachment/credential/roster persistence, daemon recovery and successful shutdown with an active telemetry subscriber. Browser screenshots and zero-subscriber diagnostics prove map disposal and final rendered package content.
 - The native desktop window is implemented but unproven in this run because an unrelated user service occupies port8000. Desktop build/content inspection is complete; Windows/macOS/ARM, external TAK/REM hardware and Python-server integration remain explicitly unperformed. No native/window or stable readiness claim is made.
-- Publication remains a separate lane under the approved plan. No candidate source was pushed, no hosted candidate result is asserted, and no public asset/tag was created. The local candidate is concrete and reviewable before any publication decision.
+- Publication remained a separate lane at the local qualification checkpoint: no source had been pushed and no public asset/tag existed then. The user subsequently authorized the publication follow-on below. The local evidence does not substitute for hosted qualification of the final source.
 
 ### Final review verdict
 
@@ -114,3 +114,24 @@ All implementation is owned by the main agent and sequential. Independent read-o
 - The verifier independently reconciled the 682 workspace / 136 UI counts, 500/500 delivery, packaged setup/restart/recovery and browser evidence. It bound the current source snapshot to base `188e54f`, verified the refreshed checksum and all149 extracted files/installer copies, and confirmed unchanged tested binaries and all106 UI files.
 - The native window and other explicitly unperformed acceptance limit qualification; they do not leave Task4's required build/inspection/browser gates incomplete. The candidate outcome is achieved without claiming the broader native, stable or public-release outcome.
 - Review closeout changes only this goal package and qualification wording. The final archive/snapshot refresh verifies current documentation while retaining the already qualified binaries and UI.
+
+### Authorized publication follow-on
+
+The user now requires a pushed PR, proper hosted CI, review and correction of
+actionable comments, publication, and verified downloadable RCH assets on GitHub.
+[PR #239](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/239) owns this
+follow-on. Preserve the same preview.11/LXMF0.12.0 scope and unrelated local work.
+
+1. Push the qualified source on `corvo/release-v3.0.0-preview.11` and create the PR.
+2. Wait for every final-head CI check and all five server/two desktop package jobs;
+   inspect failed logs, fix confirmed failures and rerun the affected gates.
+3. Obtain an independent GitHub review, inspect all actionable review threads,
+   fix findings and verify the final source has no outstanding important defect.
+4. Merge the reviewed green source through the PR, qualify the release commit,
+   and publish the selected prerelease through the existing release workflow.
+5. Independently download all public assets, verify adjacent checksums and
+   manifests/source/LXMF identity, and exercise the published Linux server.
+
+This publication goal is incomplete until the public versioned release and its
+downloads are verified. Other native/hardware acceptance remains explicitly
+limited; publication must not imply stable v3.0.0 readiness.
