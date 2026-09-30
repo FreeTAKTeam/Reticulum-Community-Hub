@@ -261,6 +261,10 @@ jobs:
         with:
           toolchain: "1.88"
 
+      - name: Verify existing setup file replacement and rollback on Windows
+        working-directory: rch
+        run: cargo test -p r3akt-rch-server setup_files::tests -- --test-threads=1
+
       - name: Enforce the batched ZMQ projection floor
         shell: pwsh
         working-directory: rch

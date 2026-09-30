@@ -94,6 +94,8 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ApiError> {
         file.write_all(contents)?;
         file.sync_all()?;
         drop(file);
+        // Rust's rename replaces an existing regular file on Windows as well
+        // as Unix. Keep the temporary sibling on the destination filesystem.
         std::fs::rename(&temporary, path)
     };
     if let Err(error) = operation() {
@@ -116,6 +118,65 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_configuration_files_install_and_restore_without_temporary_files() {
+        let directory =
+            std::env::temp_dir().join(format!("rch-setup-replace-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("directory");
+        let hub = directory.join("hub.ini");
+        let reticulum = directory.join("reticulum.ini");
+        let originals = [
+            (hub.as_path(), b"original hub configuration".as_slice()),
+            (
+                reticulum.as_path(),
+                b"original reticulum configuration".as_slice(),
+            ),
+        ];
+        for (path, contents) in originals {
+            std::fs::write(path, contents).expect("original configuration");
+        }
+        let mut files = SetupFiles::default();
+        files
+            .stage(&hub, "updated hub configuration".to_string())
+            .expect("stage hub");
+        files
+            .stage(&reticulum, "updated reticulum configuration".to_string())
+            .expect("stage reticulum");
+        files
+            .install()
+            .expect("replace both existing configurations");
+        assert_eq!(
+            std::fs::read(&hub).expect("installed hub"),
+            b"updated hub configuration"
+        );
+        assert_eq!(
+            std::fs::read(&reticulum).expect("installed reticulum"),
+            b"updated reticulum configuration"
+        );
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .expect("installed files")
+                .count(),
+            2
+        );
+        files
+            .restore()
+            .expect("replace installed files with original contents");
+        for (path, contents) in originals {
+            assert_eq!(
+                std::fs::read(path).expect("restored configuration"),
+                contents
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .expect("restored files")
+                .count(),
+            2
+        );
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
 
     #[test]
     fn second_install_failure_restores_the_first_configuration() {
