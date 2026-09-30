@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del } from "../api/client";
@@ -31,6 +32,7 @@ const fromApiTopic = (payload: TopicApiPayload): Topic => ({
 export const useTopicsStore = defineStore("topics", () => {
   const topics = ref<Topic[]>([]);
   const loading = ref(false);
+  useBackendScope([topics, loading]);
 
   const fetchTopics = async () => {
     loading.value = true;

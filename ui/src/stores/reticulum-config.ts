@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get, post, put } from "../api/client";
@@ -17,6 +18,7 @@ export const useReticulumConfigStore = defineStore("reticulum-config", () => {
   const rollbackResult = ref<unknown>(null);
   const error = ref<string>("");
   const loading = ref(false);
+  const backendScope = useBackendScope([config, validation, applyResult, rollbackResult, error, loading]);
 
   const loadConfig = async () => {
     loading.value = true;
@@ -52,9 +54,11 @@ export const useReticulumConfigStore = defineStore("reticulum-config", () => {
   };
 
   const rollbackConfig = async () => {
+    const assertCurrent = backendScope();
     error.value = "";
     try {
       rollbackResult.value = await post<unknown>(endpoints.reticulumConfigRollback);
+      assertCurrent();
       const text = await get<string>(endpoints.reticulumConfig);
       config.value = parseReticulumConfig(text);
     } catch (err) {

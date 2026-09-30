@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { get } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -35,6 +36,7 @@ export const useReticulumDiscoveryStore = defineStore("reticulum-discovery", () 
   const error = ref("");
   const polling = ref(false);
   const lastRefreshAt = ref<string | null>(null);
+  useBackendScope([capabilities, discovery, loading, error, lastRefreshAt]);
 
   let pollTimer: number | null = null;
 

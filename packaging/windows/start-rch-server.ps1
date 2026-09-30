@@ -2,7 +2,7 @@ param(
     [string] $InstallDir = "$PSScriptRoot\..\..",
     [string] $Bind = "127.0.0.1:8000",
     [string] $DataDir = "$env:LOCALAPPDATA\RCH",
-    [string] $ApiKey = "change-me",
+    [string] $ApiKey = "",
     [string] $LxmfZmqCommand = "tcp://localhost:9100",
     [string] $LxmfZmqResponse = "tcp://localhost:9101",
     [string] $ReticulumdSource = ""
@@ -14,7 +14,9 @@ $ui = Join-Path $InstallDir "ui"
 $db = Join-Path $DataDir "rch_state.sqlite3"
 
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$env:RTH_API_KEY = $ApiKey
+if ($ApiKey) {
+    $env:RTH_API_KEY = $ApiKey
+}
 
 $args = @(
     "--bind", $Bind,

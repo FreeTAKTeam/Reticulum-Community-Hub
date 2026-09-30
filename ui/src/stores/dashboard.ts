@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { computed, ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
@@ -196,6 +197,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
   const events = ref<EventEntry[]>([]);
   const teamMembers = ref<TeamMemberRecord[]>([]);
   const loading = ref(false);
+  const backendScope = useBackendScope([status, activeMissions, events, teamMembers, loading]);
   const eventCallsignLookup = computed(() =>
     buildEventCallsignLookup({
       teamMembers: teamMembers.value,
@@ -206,10 +208,12 @@ export const useDashboardStore = defineStore("dashboard", () => {
   );
 
   const refresh = async () => {
+    const assertCurrent = backendScope();
     loading.value = true;
     const connectionStore = useConnectionStore();
     try {
       const response = await get<StatusApiPayload>(endpoints.status);
+      assertCurrent();
       status.value = normalizeStatus(isRecord(response) ? response : {});
 
       const [missionResponse, teamMemberResponse, eventResponse] = await Promise.allSettled([
@@ -218,6 +222,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
         get<unknown>(`${endpoints.events}?limit=${EVENT_FEED_MAX_EVENTS}`),
         usersStore.fetchUsers()
       ]);
+      assertCurrent();
 
       if (missionResponse.status === "fulfilled") {
         activeMissions.value = unwrapApiList<MissionRaw>(missionResponse.value).filter(isActiveMission).length;

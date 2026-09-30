@@ -250,7 +250,7 @@ const fieldError = (name: FieldName) => {
   if (name === "hubName" && !hubName.value.trim()) {
     return "Hub name is required.";
   }
-  if (name === "remotePassword" && remotePassword.value.trim().length < 8) {
+  if (name === "remotePassword" && Array.from(remotePassword.value.trim()).length < 8) {
     return "Use at least eight characters.";
   }
   if (name === "remotePasswordConfirm") {

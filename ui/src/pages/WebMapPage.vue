@@ -589,7 +589,10 @@
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import defaultMapStyle from "../assets/map-style.json";
+import type * as GeoJSON from "geojson";
 import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
 import { get, put } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -724,10 +727,12 @@ const inspectorRef = ref<HTMLDivElement | null>(null);
 const dragging = ref(false);
 const dragOffset = ref({ x: 0, y: 0 });
 const wsClient = ref<WsClient | null>(null);
-const defaultStyleUrl = new URL("../assets/map-style.json", import.meta.url).toString();
-const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultStyleUrl;
+maplibregl.setWorkerUrl(mapWorkerUrl);
+const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultMapStyle as maplibregl.StyleSpecification;
 const defaultMapView = { lat: 0, lon: 0, zoom: 1 };
 let pollerId: number | undefined;
+let disposed = false;
+let polling = false;
 let telemetryInteractionReady = false;
 let telemetryIconInteractionReady = false;
 let markerInteractionReady = false;
@@ -2112,6 +2117,7 @@ const stopZoneVertexDrag = () => {
     return;
   }
   map.off("mousemove", handleZoneVertexDrag);
+  map.getCanvas().removeEventListener("mouseleave", stopZoneVertexDrag);
   map.dragPan.enable();
   map.getCanvas().style.cursor = "";
   zoneDraggingVertexIndex.value = null;
@@ -2144,7 +2150,7 @@ const startZoneVertexDrag = (event: maplibregl.MapLayerMouseEvent) => {
   map.getCanvas().style.cursor = "move";
   map.on("mousemove", handleZoneVertexDrag);
   map.once("mouseup", stopZoneVertexDrag);
-  map.once("mouseleave", stopZoneVertexDrag);
+  map.getCanvas().addEventListener("mouseleave", stopZoneVertexDrag, { once: true });
 };
 
 const handleZoneMidpointClick = (event: maplibregl.MapLayerMouseEvent) => {
@@ -2453,7 +2459,7 @@ const refreshMarkerCatalogIcons = async () => {
       return [symbol.id, svg ? svgToUiIconDataUrl(svg, symbol.color) : markerFallbackUrl] as const;
     })
   );
-  markerCatalogIconUrls.value = Object.fromEntries(entries);
+  if (!disposed) { markerCatalogIconUrls.value = Object.fromEntries(entries); }
 };
 
 const refreshSelectedMarkerIcon = async () => {
@@ -2469,6 +2475,7 @@ const refreshSelectedMarkerIcon = async () => {
   }
   const mdiName = symbol?.mdi ?? symbol?.id ?? markerCategory.value;
   const svg = await loadMdiSvg(mdiName);
+  if (disposed) { return; }
   selectedMarkerIconUrl.value = svg ? svgToUiIconDataUrl(svg, symbol?.color) : markerFallbackUrl;
 };
 
@@ -2496,11 +2503,13 @@ const rasterizeImage = async (url: string) => {
 };
 
 const loadMarkerImage = async (map: maplibregl.Map, id: string, url: string, sdf: boolean) => {
+  if (disposed || map !== mapInstance.value) { return; }
   if (map.hasImage(id)) {
     return;
   }
   try {
     const imageData = await rasterizeImage(url);
+    if (disposed || map !== mapInstance.value) { return; }
     map.addImage(id, imageData, { sdf });
   } catch (error) {
     console.warn(`Failed to load marker icon ${id} from ${url}.`, error);
@@ -2513,6 +2522,7 @@ const loadMarkerImages = async () => {
   }
   const map = mapInstance.value;
   await loadMarkerImage(map, "marker-fallback", markerFallbackUrl, true);
+  if (disposed) { return; }
   await Promise.all(
     markerSymbols.value.map(async (symbol) => {
       if (symbol.set === "napsg") {
@@ -2529,6 +2539,7 @@ const loadMarkerImages = async () => {
       await loadMarkerImage(map, buildTelemetryIconId(symbol.id), svgToDataUrl(svg), true);
     })
   );
+  if (disposed) { return; }
   markerImagesReady.value = true;
   telemetryIconsReady.value = true;
 };
@@ -3029,7 +3040,7 @@ const startMarkerDrag = (event: maplibregl.MapLayerMouseEvent) => {
   mapInstance.value.dragPan.disable();
   mapInstance.value.on("mousemove", handleMarkerDrag);
   mapInstance.value.once("mouseup", finishMarkerDrag);
-  mapInstance.value.once("mouseleave", finishMarkerDrag);
+  mapInstance.value.getCanvas().addEventListener("mouseleave", finishMarkerDrag, { once: true });
 };
 
 const handleMarkerDrag = (event: maplibregl.MapMouseEvent) => {
@@ -3057,6 +3068,7 @@ const finishMarkerDrag = () => {
   }
   markerMoveArmId.value = null;
   mapInstance.value.off("mousemove", handleMarkerDrag);
+  mapInstance.value.getCanvas().removeEventListener("mouseleave", finishMarkerDrag);
   mapInstance.value.dragPan.enable();
   mapInstance.value.getCanvas().style.cursor = "";
   renderOperatorMarkers();
@@ -3076,6 +3088,7 @@ const stopMarkerDrag = () => {
     return;
   }
   mapInstance.value.off("mousemove", handleMarkerDrag);
+  mapInstance.value.getCanvas().removeEventListener("mouseleave", finishMarkerDrag);
   mapInstance.value.dragPan.enable();
   mapInstance.value.getCanvas().style.cursor = "";
   draggingMarkerId.value = null;
@@ -3526,27 +3539,33 @@ const loadMarkerSymbols = async () => {
   } catch (error) {
     console.warn("Failed to load marker symbols.", error);
   } finally {
-    ensureMarkerSelection();
-    void refreshMarkerCatalogIcons();
-    void refreshSelectedMarkerIcon();
+    if (!disposed) {
+      ensureMarkerSelection();
+      void refreshMarkerCatalogIcons();
+      void refreshSelectedMarkerIcon();
+    }
   }
 };
 
 const handleMapLoaded = async (symbolsPromise: Promise<void>) => {
+  if (disposed) { return; }
   mapReady.value = true;
   await symbolsPromise;
+  if (disposed) { return; }
   await loadMarkerImages();
+  if (disposed) { return; }
   renderMarkers();
   mapInstance.value?.on("click", handleMapClick);
   mapInstance.value?.on("contextmenu", handleMapContextMenu);
   mapInstance.value?.on("dblclick", handleMapDoubleClick);
   mapInstance.value?.on("mousemove", handleMapPointerMove);
-  mapInstance.value?.on("mouseleave", handleMapPointerLeave);
+  mapInstance.value?.getCanvas().addEventListener("mouseleave", handleMapPointerLeave);
   mapInstance.value?.on("zoomend", handleClusterZoom);
   mapInstance.value?.on("moveend", persistMapView);
 };
 
 onMounted(async () => {
+  try {
   const symbolsPromise = loadMarkerSymbols();
   if (mapContainer.value) {
     const initialView = mapView.value ?? defaultMapView;
@@ -3558,12 +3577,17 @@ onMounted(async () => {
       zoom: initialView.zoom
     });
     mapInstance.value.on("load", () => {
-      void handleMapLoaded(symbolsPromise);
+      void handleMapLoaded(symbolsPromise).catch(error => {
+        if (!disposed) { console.warn("Unable to initialize map layers", error); }
+      });
     });
   }
   await telemetry.fetchTelemetry(sinceSeconds());
+  if (disposed) { return; }
   await symbolsPromise;
+  if (disposed) { return; }
   await Promise.all([markersStore.fetchMarkers(), zonesStore.fetchZones()]);
+  if (disposed) { return; }
   renderMarkers();
 
   const ws = new WsClient(
@@ -3586,17 +3610,29 @@ onMounted(async () => {
   wsClient.value = ws;
 
   pollerId = window.setInterval(async () => {
+    if (disposed || polling) { return; }
+    polling = true;
+    try {
     await telemetry.fetchTelemetry(sinceSeconds());
+    if (disposed) { return; }
     await Promise.all([markersStore.fetchMarkers(), zonesStore.fetchZones()]);
+    if (disposed) { return; }
     renderMarkers();
+    } catch (error) {
+      if (!disposed) { console.warn("Unable to refresh map data", error); }
+    } finally { polling = false; }
   }, 60000);
 
   window.addEventListener("resize", handleInspectorViewportChange);
   window.addEventListener("scroll", handleInspectorViewportChange);
   window.addEventListener("mousedown", handleDocumentPointerDown);
+  } catch (error) {
+    if (!disposed) { console.warn("Unable to initialize map", error); toastStore.push("Unable to load map data", "danger"); }
+  }
 });
 
 onUnmounted(() => {
+  disposed = true;
   if (wsClient.value) {
     wsClient.value.close();
   }
@@ -3611,7 +3647,7 @@ onUnmounted(() => {
     mapInstance.value.off("contextmenu", handleMapContextMenu);
     mapInstance.value.off("dblclick", handleMapDoubleClick);
     mapInstance.value.off("mousemove", handleMapPointerMove);
-    mapInstance.value.off("mouseleave", handleMapPointerLeave);
+    mapInstance.value.getCanvas().removeEventListener("mouseleave", handleMapPointerLeave);
     mapInstance.value.off("mousemove", handleZoneVertexDrag);
     mapInstance.value.doubleClickZoom.enable();
   }
@@ -3626,6 +3662,9 @@ onUnmounted(() => {
   clearHoveredOperatorMarker();
   stopDrag();
   stopMarkerDrag();
+  mapReady.value = false;
+  mapInstance.value?.remove();
+  mapInstance.value = null;
 });
 </script>
 <style scoped src="./styles/WebMapPage.css"></style>

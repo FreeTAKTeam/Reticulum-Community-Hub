@@ -1,7 +1,6 @@
 <template>
   <div v-if="hasContent" class="max-h-80 overflow-auto rounded border border-rth-border bg-rth-panel-muted p-3">
-    <div v-if="renderMode === 'html'" class="rth-markdown" v-html="stringValue"></div>
-    <div v-else-if="renderMode === 'markdown'" class="rth-markdown" v-html="markdownHtml"></div>
+    <div v-if="renderMode === 'markdown'" class="rth-markdown" v-html="markdownHtml"></div>
     <div v-else-if="showAccordion" class="cui-json-output">
       <div v-for="section in jsonSections" :key="section.key" class="cui-accordion">
         <details :open="section.open">
@@ -27,9 +26,9 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import MarkdownIt from "markdown-it";
+import { renderMarkdown } from "../utils/markdown";
 
-type RenderMode = "auto" | "markdown" | "json" | "html";
+type RenderMode = "auto" | "markdown" | "json";
 
 type JsonRow = {
   label: string;
@@ -56,12 +55,6 @@ const props = withDefaults(
   }
 );
 
-const md = new MarkdownIt({
-  html: false,
-  linkify: true,
-  breaks: true
-});
-
 const hasContent = computed(() => {
   if (props.value === undefined || props.value === null) {
     return false;
@@ -75,7 +68,7 @@ const hasContent = computed(() => {
 const stringValue = computed(() => (typeof props.value === "string" ? props.value : String(props.value ?? "")));
 
 const jsonCandidate = computed(() => {
-  if (props.mode === "markdown" || props.mode === "html") {
+  if (props.mode === "markdown") {
     return null;
   }
   if (props.mode === "json") {
@@ -95,10 +88,7 @@ const jsonCandidate = computed(() => {
   return props.value ?? null;
 });
 
-const renderMode = computed<"html" | "markdown" | "json">(() => {
-  if (props.mode === "html") {
-    return "html";
-  }
+const renderMode = computed<"markdown" | "json">(() => {
   if (props.mode === "markdown") {
     return "markdown";
   }
@@ -114,7 +104,7 @@ const renderMode = computed<"html" | "markdown" | "json">(() => {
   return "markdown";
 });
 
-const markdownHtml = computed(() => md.render(stringValue.value));
+const markdownHtml = computed(() => renderMarkdown(stringValue.value));
 
 const jsonText = computed(() => {
   const value = jsonCandidate.value;

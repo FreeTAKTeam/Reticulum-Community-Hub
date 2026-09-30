@@ -51,6 +51,16 @@ describe("connection store target and auth validation", () => {
     expect(connectionStore.hasValidAuthConfig()).toBe(true);
   });
 
+  it("invalidates a session when its credential changes on the same target", () => {
+    const connection = useConnectionStore();
+    connection.baseUrl = "https://hub.example";
+    connection.authMode = "apiKey";
+    connection.apiKey = "first-fixture";
+    connection.markAuthenticated();
+    connection.apiKey = "replacement-fixture";
+    expect(connection.hasActiveAuthSession).toBe(false);
+  });
+
   it("normalizes a redundant stored websocket base url to follow the base url", () => {
     window.localStorage.setItem(
       "rth-ui-connection",

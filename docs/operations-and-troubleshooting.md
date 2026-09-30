@@ -6,8 +6,13 @@ on `rch-python`; do not mix stores or packaging between release lines.
 ## Runtime contract
 
 - Bind the HTTP API to loopback unless remote access is explicitly required.
-- Loopback clients are trusted for Python compatibility. Remote clients require
-  the first-run password or `RTH_API_KEY` (`RCH_API_KEY` remains an alias).
+- Protected HTTP, internal adapters and WebSocket streams require the enrolled
+  password or `RTH_API_KEY`, including loopback (`RCH_API_KEY` remains an alias).
+  Credential-free first-run setup is limited to a trusted loopback client before
+  a credential exists; documentation and UI assets remain public.
+- Remote browser connections require HTTPS/WSS. Set exact comma-separated
+  `RCH_ALLOWED_ORIGINS` when using a TLS proxy or separately hosted UI. Wildcards,
+  paths and forwarded addresses do not grant browser authority.
 - Stored passwords and kill-switch PINs use Argon2id PHC records. A successful
   login transparently upgrades legacy salted SHA-256 preview records.
 - Five failures in five minutes cause a five-minute per-client, per-surface
@@ -15,14 +20,19 @@ on `rch-python`; do not mix stores or packaging between release lines.
 - ZeroMQ command/response sockets are mandatory for LXMF delivery. RPC is
   reserved for control operations.
 - TAK is a separate `r3akt-tak-service` process.
+- For UDP TAK, `COT_URL` identifies the outbound peer. The receiver listens on
+  that port on the local wildcard address in the peer's address family. Loopback
+  endpoints retain a loopback-only receiver. Multicast membership is not implied.
+- First-run passwords require at least eight Unicode characters and at most
+  1,024 UTF-8 bytes; the server enforces both limits before enrollment.
 
 ## Health checks
 
 Check all three layers instead of treating an HTTP listener as mesh readiness:
 
 ```bash
-curl http://127.0.0.1:8080/Status
-curl http://127.0.0.1:8080/diagnostics/runtime
+curl -H "X-API-Key: $RCH_KEY" http://127.0.0.1:8080/Status
+curl -H "X-API-Key: $RCH_KEY" http://127.0.0.1:8080/diagnostics/runtime
 ss -ltnp
 ps -ef | grep -E 'r3akt-rch-server|reticulumd|r3akt-tak-service'
 ```
@@ -50,8 +60,8 @@ credentials in a client-facing 500.
 
 ### `429 Too Many Requests`
 
-Wait for the `Retry-After` interval or authenticate successfully from a client
-that is not locked. Check for a stale API key in the UI connection settings,
+Wait for the `Retry-After` interval or use a valid configured API key to recover
+the client. Check for a stale API key in the UI connection settings,
 reverse proxy, or integration. Do not restart the server to bypass lockouts.
 
 ### Authentication returns 500
@@ -101,7 +111,8 @@ configured RPC endpoint alone does not satisfy the delivery contract.
 The Tauri shell logs stdout, stderr, termination status, startup timeout, lock
 poisoning, and shutdown failures. It no longer embeds a desktop API key. Fix
 the reported port, binary, data-directory, or sidecar error and restart the
-desktop application; loopback trust remains the local authentication boundary.
+desktop application. Complete local setup and authenticate; the loopback bind
+does not bypass credentials.
 
 When the sibling LXMF checkout contains unrelated in-progress work, prepare a
 desktop package from a previously validated `reticulumd` binary without
@@ -112,7 +123,7 @@ RCH_RETICULUMD_BINARY=/absolute/path/to/reticulumd \
 npm --prefix apps/rch-desktop run build
 ```
 
-The path must name a trusted LXMF 0.9.9 binary built with
+The path must name a trusted LXMF 0.12.0 binary built with
 `zmq-pipeline-rpc`. Hosted release jobs do not use this override: they build
 the pinned LXMF commit in a clean checkout.
 

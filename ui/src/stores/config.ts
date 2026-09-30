@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
@@ -13,6 +14,7 @@ export const useConfigStore = defineStore("config", () => {
   const rollbackResult = ref<unknown>(null);
   const error = ref<string>("");
   const loading = ref(false);
+  const backendScope = useBackendScope([configText, validation, applyResult, rollbackResult, error, loading]);
 
   const loadConfig = async () => {
     loading.value = true;
@@ -44,9 +46,11 @@ export const useConfigStore = defineStore("config", () => {
   };
 
   const rollbackConfig = async () => {
+    const assertCurrent = backendScope();
     error.value = "";
     try {
       rollbackResult.value = await post<unknown>(endpoints.configRollback);
+      assertCurrent();
       configText.value = await get<string>(endpoints.config);
     } catch (err) {
       error.value = formatApiError(err);

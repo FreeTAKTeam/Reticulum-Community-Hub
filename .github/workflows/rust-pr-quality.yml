@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LXMF_REF: 51fd3beebdace78d6c7f38748c6bcfe452032559
+  LXMF_REF: 20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755
 
 jobs:
   msrv-docs:
@@ -260,6 +260,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
+
+      - name: Verify existing setup file replacement and rollback on Windows
+        working-directory: rch
+        run: cargo test -p r3akt-rch-server setup_files::tests -- --test-threads=1
 
       - name: Enforce the batched ZMQ projection floor
         shell: pwsh

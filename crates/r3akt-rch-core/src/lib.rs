@@ -15,6 +15,14 @@
 
 mod text;
 
+mod sqlite_commands;
+mod sqlite_marker_idempotency;
+mod sqlite_record_updates;
+mod sqlite_roster;
+mod sqlite_settings;
+pub use sqlite_commands::RchCommandTransaction;
+pub use sqlite_marker_idempotency::MarkerCreation;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
@@ -1717,38 +1725,7 @@ impl RchSqliteStore {
     }
 
     pub fn upsert_message(&mut self, record: &MessageRecord) -> Result<(), RchCoreError> {
-        let projection = message_queue_projection(record);
-        let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM rch_messages WHERE message_id = ?1",
-            params![record.message_id],
-        )?;
-        transaction.execute(
-            "INSERT INTO rch_messages (
-                message_id,
-                payload,
-                delivery_state,
-                dispatch_status,
-                next_attempt_at_ts_ms,
-                attempts,
-                priority,
-                batch_id,
-                created_ts_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                record.message_id,
-                encode_msgpack(record)?,
-                projection.delivery_state,
-                projection.dispatch_status,
-                projection.next_attempt_at_ts_ms,
-                projection.attempts,
-                projection.priority,
-                projection.batch_id,
-                projection.created_ts_ms,
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
+        self.upsert_messages(std::slice::from_ref(record))
     }
 
     pub fn upsert_system_event(&mut self, record: &SystemEventRecord) -> Result<(), RchCoreError> {
@@ -1776,22 +1753,7 @@ impl RchSqliteStore {
         &mut self,
         record: &TelemetryRecord,
     ) -> Result<(), RchCoreError> {
-        let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM rch_telemetry_records WHERE lower(peer_destination) = lower(?1)",
-            params![record.peer_destination],
-        )?;
-        transaction.execute(
-            "INSERT INTO rch_telemetry_records (peer_destination, timestamp_s, payload)
-             VALUES (?1, ?2, ?3)",
-            params![
-                record.peer_destination,
-                record.timestamp_s,
-                encode_msgpack(record)?
-            ],
-        )?;
-        transaction.commit()?;
-        Ok(())
+        self.upsert_latest_telemetry_record(record).map(|_| ())
     }
 
     pub fn prune_telemetry_records(
@@ -2043,22 +2005,6 @@ impl RchSqliteStore {
         Ok(())
     }
 
-    pub fn upsert_client(&mut self, record: &ClientRecord) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "INSERT OR REPLACE INTO rch_clients (identity, payload) VALUES (?1, ?2)",
-            params![record.identity, encode_msgpack(record)?],
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_client(&mut self, identity: &str) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "DELETE FROM rch_clients WHERE identity = ?1",
-            params![identity],
-        )?;
-        Ok(())
-    }
-
     pub fn upsert_identity_state(
         &mut self,
         record: &IdentityStateRecord,
@@ -2088,6 +2034,7 @@ impl RchSqliteStore {
             "DELETE FROM rch_subscribers WHERE topic_id = ?1",
             params![topic_id],
         )?;
+        sqlite_commands::detach_topic_attachments(&transaction, topic_id)?;
         transaction.commit()?;
         Ok(())
     }
@@ -2145,7 +2092,7 @@ impl RchSqliteStore {
     }
 
     pub fn load_snapshot(&self) -> Result<Option<RchCoreSnapshot>, RchCoreError> {
-        let snapshot = self.load_snapshot_rows(true)?;
+        let snapshot = self.consistent_read(|store| store.load_snapshot_rows(true))?;
         if snapshot.is_empty() {
             Ok(None)
         } else {
@@ -2156,7 +2103,7 @@ impl RchSqliteStore {
     pub fn load_snapshot_without_identity_announces(
         &self,
     ) -> Result<Option<RchCoreSnapshot>, RchCoreError> {
-        let snapshot = self.load_snapshot_rows(false)?;
+        let snapshot = self.consistent_read(|store| store.load_snapshot_rows(false))?;
         if snapshot.is_empty() {
             Ok(None)
         } else {
@@ -2165,6 +2112,10 @@ impl RchSqliteStore {
     }
 
     pub fn load_checklist_command_snapshot(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+        self.consistent_read(Self::load_checklist_command_snapshot_rows)
+    }
+
+    fn load_checklist_command_snapshot_rows(&self) -> Result<RchCoreSnapshot, RchCoreError> {
         let mut snapshot = RchCore::new().snapshot();
         let (
             checklists,
@@ -2226,6 +2177,10 @@ impl RchSqliteStore {
 
     #[allow(clippy::too_many_lines)]
     pub fn load_r3akt_read_snapshot(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+        self.consistent_read(Self::load_r3akt_read_snapshot_rows)
+    }
+
+    fn load_r3akt_read_snapshot_rows(&self) -> Result<RchCoreSnapshot, RchCoreError> {
         let topics = self
             .load_payload_rows::<TopicRecord>("SELECT payload FROM rch_topics ORDER BY topic_id")?;
         let subscribers = self.load_payload_rows::<SubscriberRecord>(
@@ -2407,11 +2362,9 @@ impl RchSqliteStore {
         let log_entries = self.load_payload_rows::<LogEntryRecord>(
             "SELECT payload FROM rch_log_entries ORDER BY entry_uid",
         )?;
-        let file_attachments = self
-            .load_payload_rows::<FileAttachmentRecord>(
-                "SELECT payload FROM rch_file_attachments ORDER BY file_id",
-            )
-            .unwrap_or_default();
+        let file_attachments = self.load_payload_rows::<FileAttachmentRecord>(
+            "SELECT payload FROM rch_file_attachments ORDER BY file_id",
+        )?;
         let eam_snapshots = self.load_payload_rows::<EamSnapshotRecord>(
             "SELECT payload FROM rch_eam_snapshots ORDER BY callsign",
         )?;
@@ -2997,39 +2950,6 @@ impl RchSqliteStore {
              )
              ORDER BY lower(keep.peer_destination), keep.timestamp_s",
         )
-    }
-
-    pub fn setting_value(&self, key: &str) -> Result<Option<String>, RchCoreError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT setting_value FROM rch_settings WHERE setting_key = ?1")?;
-        let mut rows = statement.query([key])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
-        };
-        Ok(Some(row.get(0)?))
-    }
-
-    pub fn set_setting_value(&self, key: &str, value: &str) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value)
-             VALUES (?1, ?2)",
-            params![key, value],
-        )?;
-        Ok(())
-    }
-
-    fn settings_with_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>, RchCoreError> {
-        let pattern = format!("{prefix}%");
-        let mut statement = self.connection.prepare(
-            "SELECT setting_key, setting_value FROM rch_settings WHERE setting_key LIKE ?1",
-        )?;
-        let rows = statement.query_map([pattern], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        let mut settings = Vec::new();
-        for row in rows {
-            settings.push(row?);
-        }
-        Ok(settings)
     }
 }
 

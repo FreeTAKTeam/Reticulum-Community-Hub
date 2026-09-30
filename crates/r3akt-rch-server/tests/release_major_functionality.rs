@@ -111,7 +111,7 @@ async fn user_topic_chat_identity_flow_persists_across_restart() {
             "SourceInterface": "tcp_server",
             "AnnounceCapabilities": ["commands", "telephony"],
         }),
-        false,
+        true,
     )
     .await;
 

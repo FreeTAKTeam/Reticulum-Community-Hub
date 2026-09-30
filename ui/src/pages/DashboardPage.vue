@@ -325,6 +325,9 @@ const dashboard = useDashboardStore();
 const toastStore = useToastStore();
 const connectionStore = useConnectionStore();
 let pollerId: number | undefined;
+let disposed = false;
+let refreshing = false;
+let telemetrySubscribeTimer: number | undefined;
 const wsClient = ref<WsClient | null>(null);
 const telemetryWsClient = ref<WsClient | null>(null);
 const controlStatus = ref<ControlStatus | null>(null);
@@ -881,8 +884,11 @@ const syncBackend = async () => {
 };
 
 onMounted(async () => {
+  try {
   await dashboard.refresh();
+  if (disposed) { return; }
   await refreshControlStatus();
+  if (disposed) { return; }
   resetBuckets(Date.now());
   const ws = new WsClient(
     "/events/system",
@@ -930,8 +936,8 @@ onMounted(async () => {
       }
     },
     () => {
-      window.setTimeout(() => {
-        sendTelemetrySubscribe();
+      telemetrySubscribeTimer = window.setTimeout(() => {
+        if (!disposed) { sendTelemetrySubscribe(); }
       }, 250);
     }
   );
@@ -945,7 +951,11 @@ onMounted(async () => {
   }
 
   pollerId = window.setInterval(() => {
-    dashboard.refresh();
+    if (disposed || refreshing) { return; }
+    refreshing = true;
+    void dashboard.refresh().catch(error => {
+      if (!disposed) { console.warn("Unable to refresh dashboard", error); }
+    }).finally(() => { refreshing = false; });
   }, 30000);
 
   sparklineTickId = window.setInterval(() => {
@@ -957,9 +967,13 @@ onMounted(async () => {
     nowMs.value = now;
     shiftWindow(now);
   }, 60000);
+  } catch (error) {
+    if (!disposed) { console.warn("Unable to initialize dashboard", error); toastStore.push("Unable to load dashboard", "danger"); }
+  }
 });
 
 onUnmounted(() => {
+  disposed = true;
   wsClient.value?.close();
   telemetryWsClient.value?.close();
   if (pollerId) {
@@ -971,6 +985,7 @@ onUnmounted(() => {
   if (sparklineTickId) {
     window.clearInterval(sparklineTickId);
   }
+  if (telemetrySubscribeTimer) { window.clearTimeout(telemetrySubscribeTimer); }
   if (brandTraceFrameId) {
     window.cancelAnimationFrame(brandTraceFrameId);
   }

@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { computed } from "vue";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
@@ -9,6 +10,7 @@ export const useAppStore = defineStore("app", () => {
   const appInfo = ref<AppInfo | null>(null);
   const loading = ref(false);
   const loaded = ref(false);
+  useBackendScope([appInfo, loading, loaded]);
 
   const appName = computed(() => (appInfo.value?.name ?? "").trim());
 

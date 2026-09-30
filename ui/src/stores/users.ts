@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
@@ -104,15 +105,20 @@ export const useUsersStore = defineStore("users", () => {
   const remPeers = ref<RemPeerEntry[]>([]);
   const remConnectedMode = ref(false);
   const loading = ref(false);
+  const backendScope = useBackendScope([clients, identities, remPeers, remConnectedMode, loading]);
 
   const fetchUsers = async () => {
+    const assertCurrent = backendScope();
     loading.value = true;
     try {
       const response = await get<ClientApiPayload[]>(endpoints.clients);
-      clients.value = response.map(fromApiClient);
+      assertCurrent();
       const identityResponse = await get<IdentityApiPayload[]>(endpoints.identities);
-      identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
+      assertCurrent();
       const remPeersResponse = await get<RemPeersApiPayload>(endpoints.remPeers);
+      assertCurrent();
+      clients.value = response.map(fromApiClient);
+      identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
       remPeers.value = Array.isArray(remPeersResponse.items) ? remPeersResponse.items : [];
       remConnectedMode.value = Boolean(remPeersResponse.effective_connected_mode);
     } finally {

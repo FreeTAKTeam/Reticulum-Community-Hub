@@ -10,13 +10,20 @@
 )]
 
 mod cot_time;
+mod inbound_frames;
+mod socket_io;
+mod socket_receiver;
+pub use socket_receiver::TakSocketReceiver;
+mod service;
+pub use service::{
+    TakService, TakServiceDispatchReport, TakServiceState, TakServiceStatus, TakServiceWorker,
+};
 mod worker_timing;
 
 use std::collections::VecDeque;
 use std::fs;
 use std::io::Read;
 use std::io::Write;
-use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -70,6 +77,8 @@ pub enum TakConnectorError {
     InvalidCotUrl(String),
     #[error("TAK send failed: {0}")]
     Send(String),
+    #[error("TAK receive failed: {0}")]
+    Receive(String),
     #[error("TAK service is not running")]
     ServiceStopped,
     #[error("TAK worker lifecycle failed: {0}")]
@@ -188,9 +197,9 @@ impl Default for TakConnectionConfig {
             tls_client_cert: None,
             tls_client_key: None,
             tls_ca: None,
-            tls_insecure: true,
+            tls_insecure: false,
             tls_client_password: None,
-            pytak_tls_dont_verify: 1,
+            pytak_tls_dont_verify: 0,
             tak_proto: 0,
             fts_compat: 1,
         }
@@ -203,7 +212,10 @@ pub fn parse_inbound_cot_payload(data: impl AsRef<[u8]>, parse: bool) -> TakInbo
     if !parse {
         return TakInboundCotResult::Raw(raw);
     }
-    parse_inbound_cot_event(raw.as_str()).map_or(TakInboundCotResult::Raw(raw), |event| {
+    let Ok(valid) = std::str::from_utf8(data.as_ref()) else {
+        return TakInboundCotResult::Raw(raw);
+    };
+    parse_inbound_cot_event(valid).map_or(TakInboundCotResult::Raw(raw), |event| {
         TakInboundCotResult::Parsed(Box::new(event))
     })
 }
@@ -287,10 +299,14 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
     let mut event: Option<TakInboundCotEvent> = None;
     let mut root_depth: Option<usize> = None;
     let mut depth = 0usize;
+    let mut closed = false;
 
     loop {
         match reader.read_event() {
             Ok(XmlEvent::Start(element)) => {
+                if closed {
+                    return None;
+                }
                 depth = depth.saturating_add(1);
                 if event.is_none() {
                     event = Some(event_from_xml_start(&reader, &element)?);
@@ -304,6 +320,12 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                 }
             }
             Ok(XmlEvent::Empty(element)) => {
+                if closed {
+                    return None;
+                }
+                if depth == 0 {
+                    closed = true;
+                }
                 let element_depth = depth.saturating_add(1);
                 if event.is_none() {
                     event = Some(event_from_xml_start(&reader, &element)?);
@@ -316,14 +338,24 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                     }
                 }
             }
-            Ok(XmlEvent::End(_)) => depth = depth.saturating_sub(1),
+            Ok(XmlEvent::End(_)) => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    closed = true;
+                }
+            }
+            Ok(XmlEvent::DocType(_)) | Err(_) => return None,
+            Ok(XmlEvent::Text(text))
+                if depth == 0 && !text.as_ref().iter().all(u8::is_ascii_whitespace) =>
+            {
+                return None;
+            }
             Ok(XmlEvent::Eof) => break,
             Ok(_) => {}
-            Err(_) => return None,
         }
     }
 
-    event
+    if closed && depth == 0 { event } else { None }
 }
 
 fn event_from_xml_start(
@@ -749,6 +781,9 @@ fn build_tls_connector(
 ) -> Result<TlsConnector, TakConnectorError> {
     let mut builder = TlsConnector::builder();
     if tls_insecure || pytak_tls_dont_verify != 0 {
+        eprintln!(
+            "WARNING: TAK TLS certificate and hostname verification are disabled by explicit configuration"
+        );
         builder.danger_accept_invalid_certs(true);
         builder.danger_accept_invalid_hostnames(true);
     }
@@ -803,6 +838,7 @@ pub struct TakClearSender {
     tls_client_password: Option<String>,
     pytak_tls_dont_verify: u8,
     tak_proto: u8,
+    io_timeout: StdDuration,
 }
 
 impl TakClearSender {
@@ -816,6 +852,7 @@ impl TakClearSender {
             tls_client_password: None,
             pytak_tls_dont_verify: TakConnectionConfig::default().pytak_tls_dont_verify,
             tak_proto: TakConnectionConfig::default().tak_proto,
+            io_timeout: StdDuration::from_secs(5),
         })
     }
 
@@ -829,6 +866,7 @@ impl TakClearSender {
             tls_client_password: config.tls_client_password.clone(),
             pytak_tls_dont_verify: config.pytak_tls_dont_verify,
             tak_proto: config.tak_proto,
+            io_timeout: StdDuration::from_secs(5),
         })
     }
 
@@ -843,8 +881,14 @@ impl TakClearSender {
         )
     }
 
+    #[must_use]
+    pub fn with_io_timeout(mut self, timeout: StdDuration) -> Self {
+        self.io_timeout = timeout.max(StdDuration::from_millis(1));
+        self
+    }
+
     fn send_tls(&self, payload: &CotPayload) -> Result<(), TakConnectorError> {
-        let stream = TcpStream::connect(self.url.host_port.as_str())
+        let stream = socket_io::connect_tcp(self.url.host_port.as_str(), self.io_timeout)
             .map_err(|error| TakConnectorError::Send(error.to_string()))?;
         let server_name = self.url.tls_server_name()?;
         let connector = self.tls_connector()?;
@@ -868,8 +912,9 @@ impl TakCotSender for TakClearSender {
     fn send(&self, payload: &CotPayload) -> Result<(), TakConnectorError> {
         match self.url.scheme.as_str() {
             "tcp" => {
-                let mut stream = TcpStream::connect(self.url.host_port.as_str())
-                    .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+                let mut stream =
+                    socket_io::connect_tcp(self.url.host_port.as_str(), self.io_timeout)
+                        .map_err(|error| TakConnectorError::Send(error.to_string()))?;
                 let encoded = encode_outbound_cot_payload(payload, self.tak_proto);
                 stream
                     .write_all(encoded.as_slice())
@@ -880,6 +925,9 @@ impl TakCotSender for TakClearSender {
             }
             "udp" => {
                 let socket = UdpSocket::bind("0.0.0.0:0")
+                    .map_err(|error| TakConnectorError::Send(error.to_string()))?;
+                socket
+                    .set_write_timeout(Some(self.io_timeout))
                     .map_err(|error| TakConnectorError::Send(error.to_string()))?;
                 let encoded = encode_outbound_cot_payload(payload, self.tak_proto);
                 socket
@@ -893,164 +941,38 @@ impl TakCotSender for TakClearSender {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TakSocketReceiver {
-    url: CotUrl,
-    tls_client_cert: Option<String>,
-    tls_client_key: Option<String>,
-    tls_ca: Option<String>,
-    tls_insecure: bool,
-    tls_client_password: Option<String>,
-    pytak_tls_dont_verify: u8,
-    read_timeout: StdDuration,
-    max_bytes: usize,
-}
-
-impl TakSocketReceiver {
-    pub fn new(cot_url: &str) -> Result<Self, TakConnectorError> {
-        Ok(Self {
-            url: CotUrl::parse(cot_url)?,
-            tls_client_cert: None,
-            tls_client_key: None,
-            tls_ca: None,
-            tls_insecure: TakConnectionConfig::default().tls_insecure,
-            tls_client_password: None,
-            pytak_tls_dont_verify: TakConnectionConfig::default().pytak_tls_dont_verify,
-            read_timeout: StdDuration::from_secs(2),
-            max_bytes: 64 * 1024,
-        })
-    }
-
-    pub fn from_config(config: &TakConnectionConfig) -> Result<Self, TakConnectorError> {
-        Ok(Self {
-            url: CotUrl::parse(config.cot_url.as_str())?,
-            tls_client_cert: config.tls_client_cert.clone(),
-            tls_client_key: config.tls_client_key.clone(),
-            tls_ca: config.tls_ca.clone(),
-            tls_insecure: config.tls_insecure,
-            tls_client_password: config.tls_client_password.clone(),
-            pytak_tls_dont_verify: config.pytak_tls_dont_verify,
-            read_timeout: StdDuration::from_secs(2),
-            max_bytes: 64 * 1024,
-        })
-    }
-
-    #[must_use]
-    pub fn with_read_timeout(mut self, read_timeout: StdDuration) -> Self {
-        self.read_timeout = read_timeout;
-        self
-    }
-
-    #[must_use]
-    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
-        self.max_bytes = max_bytes.max(1);
-        self
-    }
-
-    fn read_from_stream(
-        &self,
-        stream: &mut dyn Read,
-    ) -> Result<Option<Vec<u8>>, TakConnectorError> {
-        let mut buffer = vec![0_u8; self.max_bytes];
-        match stream.read(buffer.as_mut_slice()) {
-            Ok(0) => Ok(None),
-            Ok(read) => {
-                buffer.truncate(read);
-                Ok(Some(buffer))
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                Ok(None)
-            }
-            Err(error) => Err(TakConnectorError::Send(error.to_string())),
-        }
-    }
-
-    fn receive_tcp(&self) -> Result<Option<Vec<u8>>, TakConnectorError> {
-        let mut stream = TcpStream::connect(self.url.host_port.as_str())
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        stream
-            .set_read_timeout(Some(self.read_timeout))
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        self.read_from_stream(&mut stream)
-    }
-
-    fn receive_udp(&self) -> Result<Option<Vec<u8>>, TakConnectorError> {
-        let socket = UdpSocket::bind(self.url.host_port.as_str())
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        socket
-            .set_read_timeout(Some(self.read_timeout))
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        let mut buffer = vec![0_u8; self.max_bytes];
-        match socket.recv(buffer.as_mut_slice()) {
-            Ok(read) => {
-                buffer.truncate(read);
-                Ok(Some(buffer))
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                Ok(None)
-            }
-            Err(error) => Err(TakConnectorError::Send(error.to_string())),
-        }
-    }
-
-    fn receive_tls(&self) -> Result<Option<Vec<u8>>, TakConnectorError> {
-        let stream = TcpStream::connect(self.url.host_port.as_str())
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        stream
-            .set_read_timeout(Some(self.read_timeout))
-            .map_err(|error| TakConnectorError::Send(error.to_string()))?;
-        let server_name = self.url.tls_server_name()?;
-        let connector = build_tls_connector(
-            self.tls_ca.as_deref(),
-            self.tls_client_cert.as_deref(),
-            self.tls_client_key.as_deref(),
-            self.tls_client_password.as_deref(),
-            self.tls_insecure,
-            self.pytak_tls_dont_verify,
-        )?;
-        let mut stream = connector
-            .connect(server_name.as_str(), stream)
-            .map_err(|error| TakConnectorError::Send(format!("{error:?}")))?;
-        self.read_from_stream(&mut stream)
-    }
-}
-
-impl TakCotReceiver for TakSocketReceiver {
-    fn receive(&mut self) -> Result<Option<Vec<u8>>, TakConnectorError> {
-        match self.url.scheme.as_str() {
-            "tcp" => self.receive_tcp(),
-            "udp" => self.receive_udp(),
-            "ssl" | "tls" => self.receive_tls(),
-            other => Err(TakConnectorError::UnsupportedScheme(other.to_string())),
-        }
-    }
-}
-
 pub fn drain_queue_to_sender(
     queue: &mut TakOutboundQueue,
     sender: &dyn TakCotSender,
 ) -> Result<usize, TakConnectorError> {
+    let (sent, error) = drain_queue_until(queue, sender, &|| false);
+    error.map_or(Ok(sent), Err)
+}
+
+fn drain_queue_until(
+    queue: &mut TakOutboundQueue,
+    sender: &dyn TakCotSender,
+    cancelled: &impl Fn() -> bool,
+) -> (usize, Option<TakConnectorError>) {
     let mut sent = 0;
-    while let Some(payload) = queue.pending.front().cloned() {
-        sender.send(&payload)?;
-        queue.pop().ok_or_else(|| {
-            TakConnectorError::Worker(
-                "outbound queue changed while removing a delivered payload".to_string(),
-            )
-        })?;
+    while !cancelled() {
+        let Some(payload) = queue.pending.front().cloned() else {
+            break;
+        };
+        if let Err(error) = sender.send(&payload) {
+            return (sent, Some(error));
+        }
+        if queue.pop().is_none() {
+            return (
+                sent,
+                Some(TakConnectorError::Worker(
+                    "outbound queue changed while removing a delivered payload".to_string(),
+                )),
+            );
+        }
         sent += 1;
     }
-    Ok(sent)
+    (sent, None)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1201,7 +1123,7 @@ where
                         break;
                     }
                 }
-                thread::sleep(current_interval);
+                thread::park_timeout(current_interval);
             }
         });
 
@@ -1220,6 +1142,7 @@ where
     pub fn shutdown(&mut self) -> Result<TakInboundStatus, TakConnectorError> {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
             handle
                 .join()
                 .map_err(|_| TakConnectorError::Worker("inbound worker panicked".to_string()))?;
@@ -1233,300 +1156,11 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TakServiceState {
-    Stopped,
-    Running,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TakServiceStatus {
-    pub state: TakServiceState,
-    pub queue: TakQueueStats,
-    pub total_sent: u64,
-    pub total_failed: u64,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TakServiceDispatchReport {
-    pub enqueued: bool,
-    pub sent: usize,
-    pub status: TakServiceStatus,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TakService<S> {
-    connector: TakConnector,
-    queue: TakOutboundQueue,
-    sender: S,
-    state: TakServiceState,
-    total_sent: u64,
-    total_failed: u64,
-    last_error: Option<String>,
-}
-
-impl<S: TakCotSender> TakService<S> {
-    #[must_use]
-    pub fn new(config: TakConnectionConfig, queue_capacity: usize, sender: S) -> Self {
-        Self {
-            connector: TakConnector::new(config),
-            queue: TakOutboundQueue::new(queue_capacity.max(1)),
-            sender,
-            state: TakServiceState::Stopped,
-            total_sent: 0,
-            total_failed: 0,
-            last_error: None,
-        }
-    }
-
-    pub fn start(&mut self) {
-        self.state = TakServiceState::Running;
-    }
-
-    pub fn stop(&mut self) {
-        self.state = TakServiceState::Stopped;
-    }
-
-    #[must_use]
-    pub fn is_running(&self) -> bool {
-        self.state == TakServiceState::Running
-    }
-
-    #[must_use]
-    pub fn status(&self) -> TakServiceStatus {
-        TakServiceStatus {
-            state: self.state,
-            queue: self.queue.stats(),
-            total_sent: self.total_sent,
-            total_failed: self.total_failed,
-            last_error: self.last_error.clone(),
-        }
-    }
-
-    #[must_use]
-    pub fn config(&self) -> &TakConnectionConfig {
-        self.connector.config()
-    }
-
-    pub fn enqueue_chat(
-        &mut self,
-        input: &ChatEventInput,
-    ) -> Result<TakServiceDispatchReport, TakConnectorError> {
-        self.ensure_running()?;
-        let enqueue_result = self.queue.enqueue_chat(&self.connector, input);
-        Ok(self.flush_after_enqueue(enqueue_result))
-    }
-
-    pub fn enqueue_location(
-        &mut self,
-        snapshot: &LocationSnapshot,
-        now: DateTime<Utc>,
-        identity_label: Option<&str>,
-    ) -> Result<TakServiceDispatchReport, TakConnectorError> {
-        self.ensure_running()?;
-        let enqueue_result =
-            self.queue
-                .enqueue_location(&self.connector, snapshot, now, identity_label);
-        Ok(self.flush_after_enqueue(enqueue_result))
-    }
-
-    pub fn enqueue_ping(
-        &mut self,
-        now: DateTime<Utc>,
-    ) -> Result<TakServiceDispatchReport, TakConnectorError> {
-        self.ensure_running()?;
-        let enqueue_result = self.queue.enqueue_ping(&self.connector, now);
-        Ok(self.flush_after_enqueue(enqueue_result))
-    }
-
-    pub fn enqueue_keepalive(
-        &mut self,
-        now: DateTime<Utc>,
-    ) -> Result<TakServiceDispatchReport, TakConnectorError> {
-        self.ensure_running()?;
-        let enqueue_result = self.queue.enqueue_keepalive(&self.connector, now);
-        Ok(self.flush_after_enqueue(enqueue_result))
-    }
-
-    pub fn flush_once(&mut self) -> Result<TakServiceDispatchReport, TakConnectorError> {
-        self.ensure_running()?;
-        Ok(self.flush_after_enqueue(Ok(())))
-    }
-
-    fn ensure_running(&self) -> Result<(), TakConnectorError> {
-        if self.is_running() {
-            Ok(())
-        } else {
-            Err(TakConnectorError::ServiceStopped)
-        }
-    }
-
-    fn flush_after_enqueue(
-        &mut self,
-        enqueue_result: Result<(), TakConnectorError>,
-    ) -> TakServiceDispatchReport {
-        if let Err(error) = enqueue_result {
-            self.total_failed = self.total_failed.saturating_add(1);
-            self.last_error = Some(error.to_string());
-            return TakServiceDispatchReport {
-                enqueued: false,
-                sent: 0,
-                status: self.status(),
-                error: Some(error.to_string()),
-            };
-        }
-
-        match drain_queue_to_sender(&mut self.queue, &self.sender) {
-            Ok(sent) => {
-                self.total_sent = self.total_sent.saturating_add(sent as u64);
-                self.last_error = None;
-                TakServiceDispatchReport {
-                    enqueued: true,
-                    sent,
-                    status: self.status(),
-                    error: None,
-                }
-            }
-            Err(error) => {
-                self.total_failed = self.total_failed.saturating_add(1);
-                self.last_error = Some(error.to_string());
-                TakServiceDispatchReport {
-                    enqueued: true,
-                    sent: 0,
-                    status: self.status(),
-                    error: Some(error.to_string()),
-                }
-            }
-        }
-    }
-}
-
-pub struct TakServiceWorker<S> {
-    service: Arc<Mutex<TakService<S>>>,
-    stop: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
-}
-
-impl<S> TakServiceWorker<S>
-where
-    S: TakCotSender + Send + 'static,
-{
-    pub fn spawn(mut service: TakService<S>, retry_interval: StdDuration) -> Self {
-        let keepalive_interval = StdDuration::from_secs_f64(
-            service
-                .connector
-                .config()
-                .keepalive_interval_seconds
-                .max(1.0),
-        );
-        service.start();
-        let service = Arc::new(Mutex::new(service));
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker_service = Arc::clone(&service);
-        let worker_stop = Arc::clone(&stop);
-        let interval = retry_interval.max(StdDuration::from_millis(1));
-        let handle = thread::spawn(move || {
-            let mut last_ping: Option<Instant> = None;
-            let mut last_keepalive: Option<Instant> = None;
-            let mut current_interval = interval;
-            while !worker_stop.load(Ordering::SeqCst) {
-                match worker_service.lock() {
-                    Ok(mut service) => {
-                        let mut send_failed = false;
-                        if service.is_running() && !service.queue.is_empty() {
-                            if let Ok(report) = service.flush_once() {
-                                current_interval = tak_worker_interval_after_report(
-                                    current_interval,
-                                    interval,
-                                    &report,
-                                );
-                                send_failed = report.error.is_some();
-                            }
-                        }
-                        if service.is_running() && !send_failed {
-                            let now = Instant::now();
-                            if last_ping
-                                .is_none_or(|last| now.duration_since(last) >= keepalive_interval)
-                            {
-                                if let Ok(report) = service.enqueue_ping(Utc::now()) {
-                                    current_interval = tak_worker_interval_after_report(
-                                        current_interval,
-                                        interval,
-                                        &report,
-                                    );
-                                    send_failed = report.error.is_some();
-                                }
-                                last_ping = Some(now);
-                            }
-                            if !send_failed
-                                && last_keepalive.is_none_or(|last| {
-                                    now.duration_since(last) >= keepalive_interval
-                                })
-                            {
-                                if let Ok(report) = service.enqueue_keepalive(Utc::now()) {
-                                    current_interval = tak_worker_interval_after_report(
-                                        current_interval,
-                                        interval,
-                                        &report,
-                                    );
-                                }
-                                last_keepalive = Some(now);
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!("TAK outbound worker service lock poisoned: {error}");
-                        break;
-                    }
-                }
-                thread::sleep(current_interval);
-            }
-        });
-
-        Self {
-            service,
-            stop,
-            handle: Some(handle),
-        }
-    }
-
-    #[must_use]
-    pub fn service(&self) -> Arc<Mutex<TakService<S>>> {
-        Arc::clone(&self.service)
-    }
-
-    pub fn shutdown(&mut self) -> Result<TakServiceStatus, TakConnectorError> {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.handle.take() {
-            handle
-                .join()
-                .map_err(|_| TakConnectorError::Worker("outbound worker panicked".to_string()))?;
-        }
-        let mut service = self.service.lock().map_err(|error| {
-            TakConnectorError::Worker(format!("outbound service lock: {error}"))
-        })?;
-        service.stop();
-        Ok(service.status())
-    }
-}
-
-impl<S> Drop for TakServiceWorker<S> {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
-                eprintln!("TAK outbound worker panicked during drop");
-            }
-        }
-    }
-}
-
 impl<R> Drop for TakInboundWorker<R> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
             if handle.join().is_err() {
                 eprintln!("TAK inbound worker panicked during drop");
             }
@@ -1598,11 +1232,15 @@ fn sanitize_flow_tag_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod stream_framing;
+    mod tls_security;
+    mod worker_lifecycle;
     use super::*;
     use crate::cot_time::test_datetime;
     use std::io::ErrorKind;
     use std::io::Read;
     use std::net::TcpListener;
+    use std::net::TcpStream;
     use std::net::UdpSocket;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
@@ -2860,6 +2498,8 @@ fN59G+INtr0cPXmM6zCYs+c=
             total_sent: 0,
             total_failed: 1,
             last_error: Some("TAK send failed: offline".to_string()),
+            tls_enabled: false,
+            tls_verification_enabled: true,
         };
         let failed_report = TakServiceDispatchReport {
             enqueued: true,
@@ -3014,7 +2654,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(report.status.queue.pending, 1);
         assert_eq!(report.status.total_failed, 1);
 
-        let mut worker = TakServiceWorker::spawn(service, StdDuration::from_millis(10));
+        let mut worker =
+            TakServiceWorker::spawn(service, StdDuration::from_millis(10)).expect("worker");
         let service = worker.service();
 
         for _ in 0..50 {

@@ -34,7 +34,7 @@ const label = computed(() => {
 
 const message = computed(() => {
   if (showLoginRequired.value) {
-    return connectionStore.authMessage || "Authenticate on the Connect page to access this remote hub.";
+    return connectionStore.authMessage || "Authenticate on the Connect page to access this hub.";
   }
   if (showForbidden.value) {
     return connectionStore.authMessage || "Your credentials are valid but do not have permission.";

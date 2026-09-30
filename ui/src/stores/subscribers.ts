@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { del } from "../api/client";
@@ -34,6 +35,7 @@ const fromApiSubscriber = (payload: SubscriberApiPayload): Subscriber => ({
 export const useSubscribersStore = defineStore("subscribers", () => {
   const subscribers = ref<Subscriber[]>([]);
   const loading = ref(false);
+  useBackendScope([subscribers, loading]);
 
   const fetchSubscribers = async () => {
     loading.value = true;

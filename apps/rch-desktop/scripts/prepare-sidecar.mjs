@@ -72,14 +72,18 @@ for (const sidecar of sidecars) {
     });
   }
 
-  const source =
-    sidecar.prebuiltBinary ??
-    join(
-      sidecar.cargoRoot,
-      "target",
-      "release",
-      `${sidecar.binaryName}${exeSuffix}`,
-    );
+  // Ask Cargo for the actual output directory, including CARGO_TARGET_DIR and
+  // workspace configuration, so packaging cannot copy an older default build.
+  const targetDir = sidecar.prebuiltBinary
+    ? undefined
+    : JSON.parse(
+        execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+          cwd: sidecar.cargoRoot,
+          encoding: "utf8",
+        }),
+      ).target_directory;
+  const source = sidecar.prebuiltBinary ??
+    join(targetDir, "release", `${sidecar.binaryName}${exeSuffix}`);
   const destination = join(binariesDir, `${sidecar.binaryName}-${targetTriple}${exeSuffix}`);
 
   if (!existsSync(source)) {

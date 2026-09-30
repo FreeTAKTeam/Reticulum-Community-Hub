@@ -51,6 +51,9 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
+The next candidate is [v3.0.0-preview.11](docs/release-notes-v3.0.0-preview.11.md),
+using the immutable LXMF-rs 0.12.0 baseline.
+
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 
 The implementation, migration, and validation notes that previously occupied this README are now referenced from [the Rust migration status document](docs/rust-migration-status.md).
@@ -86,10 +89,41 @@ cargo run -p r3akt-rch-server -- \
   --bind 127.0.0.1:8080 \
   --db-path ./rch-runtime.db \
   --config-path ./config.ini \
-  --reticulum-config-path "$HOME/.reticulum/config"
+  --reticulum-config-path "$HOME/.reticulum/config" \
+  --api-key change-this-preview-key
 ```
 
 This starts the RCH API and local state service. A live mesh deployment also requires the LXMF-rs ZeroMQ endpoints and a local Reticulum destination. See [Rust migration status](docs/rust-migration-status.md) for the current runtime path and development commands.
+
+Replace the example key with a unique credential. Protected routes, including
+`/Status`, `/diagnostics/runtime`, internal adapters and WebSocket streams,
+require authentication even on loopback. To enroll through the local first-run
+UI instead, omit `--api-key` and add `--ui-dist-path ./ui/dist` after building
+the shared UI. Documentation and local setup remain available before enrollment.
+
+For an already running daemon, use its command endpoint, a response endpoint
+owned by this RCH instance, and its local delivery destination:
+
+```bash
+cargo run -p r3akt-rch-server -- \
+  --bind 127.0.0.1:8080 --db-path ./rch-runtime.db \
+  --config-path ./config.ini --api-key change-this-preview-key \
+  --lxmf-zmq-command tcp://127.0.0.1:9100 \
+  --lxmf-zmq-response tcp://127.0.0.1:9101 \
+  --reticulumd-source '<local-destination>' \
+  --ui-dist-path ./ui/dist
+```
+
+To let RCH manage the matching daemon, replace `--reticulumd-source` with
+`--reticulumd-exe ../LXMF-rs/target/release/reticulumd`, and provide
+`--reticulumd-db-path ./reticulum.db` and
+`--reticulum-config-path "$HOME/.reticulum/config"`. Build that daemon with
+`zmq-pipeline-rpc` enabled. Verify `/Status` and `/diagnostics/runtime`; a
+daemon-backed launch must show the configured source and running daemon.
+
+Remote browser connections require HTTPS/WSS. For a TLS proxy or separately
+hosted UI, set exact comma-separated `RCH_ALLOWED_ORIGINS` values such as
+`https://rch.example.org`. Local loopback HTTP/WS remains supported.
 
 After startup, useful local endpoints include:
 

@@ -131,7 +131,7 @@ router.beforeEach((to) => {
   if (isPublicRoute) {
     return true;
   }
-  if (connectionStore.isRemoteTarget && !connectionStore.hasActiveAuthSession) {
+  if (!connectionStore.hasActiveAuthSession) {
     return {
       path: "/connect",
       query: { redirect: to.fullPath }

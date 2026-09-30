@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { useBackendScope } from "../composables/useBackendScope";
 import { computed } from "vue";
 import { ref } from "vue";
 import { del } from "../api/client";
@@ -74,6 +75,7 @@ const fromApiZone = (entry: ZoneEntry): Zone | null => {
 export const useZonesStore = defineStore("zones", () => {
   const zones = ref<Zone[]>([]);
   const loading = ref(false);
+  useBackendScope([zones, loading]);
 
   const zoneIndex = computed(() => {
     const map = new Map<string, Zone>();

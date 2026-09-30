@@ -128,7 +128,7 @@
                     class="attachment-card"
                   >
                     <div v-if="attachment.category === 'image' && attachment.file_id" class="attachment-image">
-                      <img :src="resolveAttachmentUrl(attachment)" :alt="attachment.name ?? 'image attachment'" />
+                      <img v-if="attachmentPreviewUrls[attachmentPath(attachment)]" :src="attachmentPreviewUrls[attachmentPath(attachment)]" :alt="attachment.name ?? 'image attachment'" />
                       <div class="attachment-meta">
                         <span>{{ attachment.name }}</span>
                         <span>{{ formatSize(attachment.size) }}</span>
@@ -141,6 +141,7 @@
                       </div>
                       <div class="attachment-size">{{ formatSize(attachment.size) }}</div>
                     </div>
+                    <BaseButton variant="secondary" icon-left="download" @click="downloadAttachment(attachment)">Download</BaseButton>
                   </div>
                 </div>
               </article>
@@ -189,6 +190,8 @@ import { watch } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import { endpoints } from "../api/endpoints";
+import { getBlob } from "../api/client";
+import { useAttachmentPreviews } from "../composables/useAttachmentPreviews";
 import type { ChatAttachment } from "../api/types";
 import type { ChatMessage } from "../api/types";
 import type { WsMessage } from "../api/ws";
@@ -333,15 +336,29 @@ const composerTargetOptions = computed(() => {
   return peers.value.map((peer) => ({ value: peer.id, label: peer.label }));
 });
 
-const resolveAttachmentUrl = (attachment: ChatAttachment) => {
-  if (!attachment.file_id) {
-    return "";
+const attachmentPath = (attachment: ChatAttachment) => attachment.file_id
+  ? `${attachment.category === "image" ? endpoints.images : endpoints.files}/${attachment.file_id}/raw`
+  : "";
+const previewPaths = computed(() => visibleMessages.value.flatMap((message) =>
+  (message.attachments ?? []).filter((attachment) => attachment.category === "image" && attachment.file_id).map(attachmentPath)));
+const { urls: attachmentPreviewUrls } = useAttachmentPreviews(previewPaths);
+
+const downloadAttachment = async (attachment: ChatAttachment) => {
+  const path = attachmentPath(attachment);
+  if (!path) { return; }
+  try {
+    const blob = await getBlob(path);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = attachment.name || "attachment";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    toastStore.push(error instanceof Error ? error.message : "Attachment download failed.", "error");
   }
-  const base =
-    attachment.category === "image"
-      ? `${endpoints.images}/${attachment.file_id}/raw`
-      : `${endpoints.files}/${attachment.file_id}/raw`;
-  return connectionStore.resolveUrl(base);
 };
 
 const resolveMessageSource = (message: ChatMessage) => {
@@ -522,10 +539,14 @@ const fromWsMessage = (payload: Record<string, unknown>): ChatMessage => ({
 });
 
 let wsClient: WsClient | null = null;
+let disposed = false;
 
 onMounted(async () => {
+  try {
   await Promise.all([usersStore.fetchUsers(), topicsStore.fetchTopics(), chatStore.fetchMessages()]);
+  if (disposed) { return; }
   await scrollToLatest();
+  if (disposed) { return; }
   wsClient = new WsClient("/messages/stream", handleWsMessage, () => {
     if (wsClient) {
       wsClient.send({
@@ -536,9 +557,13 @@ onMounted(async () => {
     }
   });
   wsClient.connect();
+  } catch (error) {
+    if (!disposed) { console.warn("Unable to initialize chat", error); toastStore.push("Unable to load chat", "danger"); }
+  }
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   wsClient?.close();
 });
 

@@ -9,6 +9,8 @@
     )
 )]
 
+mod cli_runtime;
+
 use std::env;
 use std::fs;
 use std::future::Future;
@@ -198,22 +200,19 @@ where
     .with_api_bind(api_bind);
     state.start_managed_reticulumd()?;
     if let Err(error) = state.register_lxmf_zmq_service_identity() {
-        if let Err(stop_error) = state.stop_managed_reticulumd() {
-            eprintln!(
-                "reticulumd cleanup after RCH identity registration failure failed: {stop_error}"
-            );
-        }
+        cli_runtime::cleanup_after_startup_failure(&state, "identity registration");
         return Err(error.into());
     }
     let verification_state = state.clone();
     let verification_result =
-        tokio::task::spawn_blocking(move || verification_state.verify_lxmf_zmq_data_plane())
-            .await
-            .map_err(|error| format!("ZeroMQ startup verification task failed: {error}"))?;
-    if let Err(error) = verification_result {
-        if let Err(stop_error) = state.stop_managed_reticulumd() {
-            eprintln!("reticulumd cleanup after ZeroMQ verification failure failed: {stop_error}");
-        }
+        tokio::task::spawn_blocking(move || verification_state.verify_lxmf_zmq_data_plane()).await;
+    let verification_error = match verification_result {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error.to_string()),
+        Err(error) => Some(format!("ZeroMQ startup verification task failed: {error}")),
+    };
+    if let Some(error) = verification_error {
+        cli_runtime::cleanup_after_startup_failure(&state, "ZeroMQ verification");
         return Err(error.into());
     }
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
@@ -224,38 +223,30 @@ where
         hub_service_config.announce_interval,
     );
     println!("r3akt-rch-server listening on http://{}", args.bind);
+    let signal_state = state.clone();
     let serve_result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal)
+    .with_graceful_shutdown(async move {
+        shutdown_signal.await;
+        r3akt_rch_server::request_runtime_exit(&signal_state);
+    })
     .await;
-    if let Err(error) = r3akt_rch_server::shutdown_runtime_for_exit(&state) {
+    let shutdown_result = cli_runtime::finish(
+        &state,
+        [
+            ("outbound", outbound_worker),
+            ("inbound", inbound_worker),
+            ("identity announce", announce_worker),
+        ],
+    )
+    .await;
+    if let Err(error) = &shutdown_result {
         eprintln!("r3akt-rch-server shutdown warning: {error}");
     }
-    outbound_worker.abort();
-    match outbound_worker.await {
-        Err(error) if !error.is_cancelled() => {
-            eprintln!("outbound worker join failed during shutdown: {error}");
-        }
-        Ok(()) | Err(_) => {}
-    }
-    inbound_worker.abort();
-    match inbound_worker.await {
-        Err(error) if !error.is_cancelled() => {
-            eprintln!("inbound worker join failed during shutdown: {error}");
-        }
-        Ok(()) | Err(_) => {}
-    }
-    announce_worker.abort();
-    match announce_worker.await {
-        Err(error) if !error.is_cancelled() => {
-            eprintln!("RCH announce worker join failed during shutdown: {error}");
-        }
-        Ok(()) | Err(_) => {}
-    }
     serve_result?;
-    Ok(())
+    shutdown_result.map_err(Into::into)
 }
 
 fn build_runtime_state(
@@ -334,6 +325,12 @@ fn apply_runtime_config(
         .with_optional_api_key(api_key)
         .with_optional_system_status_fanout_mode(system_status_fanout_mode)
         .with_outbound_identity_allowlist(args.outbound_allowlist.clone());
+    let allowed_origins = match env::var("RCH_ALLOWED_ORIGINS") {
+        Ok(origins) => origins.split(',').map(ToString::to_string).collect(),
+        Err(env::VarError::NotPresent) => Vec::new(),
+        Err(error) => return Err(format!("invalid RCH_ALLOWED_ORIGINS: {error}").into()),
+    };
+    state = state.with_allowed_browser_origins(allowed_origins)?;
     if let Some(path) = &args.config_path {
         state = state.with_config_path(path);
     }
