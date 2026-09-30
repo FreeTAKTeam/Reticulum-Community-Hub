@@ -25,6 +25,63 @@ fn setup_payload(name: &str) -> Value {
 }
 
 #[tokio::test]
+async fn setup_password_minimum_counts_unicode_characters_before_enrollment() {
+    let (state, dir) = setup_state();
+    let app = crate::create_app_with_state(state.clone().with_api_key("secret"));
+    for password in ["😀😀", "ééééééé"] {
+        let mut payload = setup_payload("Unicode password fixture");
+        payload["remote_password"] = json!(password);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/r3akt/setup/complete")
+                    .header("X-API-Key", "secret")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            crate::load_stored_remote_password(&state)
+                .expect("credential")
+                .is_none()
+        );
+        assert!(crate::load_kill_switch_pin(&state).expect("PIN").is_none());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config.ini")).expect("config"),
+            "[hub]\nname = Original\n"
+        );
+    }
+    let password = "éééééééé";
+    let mut payload = setup_payload("Unicode password fixture");
+    payload["remote_password"] = json!(password);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/r3akt/setup/complete")
+                .header("X-API-Key", "secret")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        state
+            .validate_stored_remote_password(Some(password))
+            .expect("password accepted")
+    );
+    drop(state);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[tokio::test]
 async fn served_ui_and_error_responses_enforce_browser_security_headers() {
     let (state, directory) = setup_state();
     let ui = directory.join("ui");

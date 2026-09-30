@@ -82,7 +82,7 @@ fn complete_setup(state: &AppState, payload: &FirstRunSetupPayload) -> Result<Va
     }
 
     let remote_password = payload.remote_password.trim();
-    if remote_password.len() < 8 {
+    if remote_password.chars().count() < 8 {
         return Err(ApiError::BadRequest(
             "Remote access password must contain at least eight characters".to_string(),
         ));

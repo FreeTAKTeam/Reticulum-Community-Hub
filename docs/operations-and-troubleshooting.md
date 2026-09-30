@@ -20,6 +20,11 @@ on `rch-python`; do not mix stores or packaging between release lines.
 - ZeroMQ command/response sockets are mandatory for LXMF delivery. RPC is
   reserved for control operations.
 - TAK is a separate `r3akt-tak-service` process.
+- For UDP TAK, `COT_URL` identifies the outbound peer. The receiver listens on
+  that port on the local wildcard address in the peer's address family. Loopback
+  endpoints retain a loopback-only receiver. Multicast membership is not implied.
+- First-run passwords require at least eight Unicode characters and at most
+  1,024 UTF-8 bytes; the server enforces both limits before enrollment.
 
 ## Health checks
 

@@ -482,7 +482,7 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     if (!hubName) {
       return jsonResponse({ detail: "Hub name is required" }, 400);
     }
-    if (remotePassword.length < 8) {
+    if (Array.from(remotePassword).length < 8) {
       return jsonResponse({ detail: "Remote access password must contain at least eight characters" }, 400);
     }
     if (!/^\d{6}$/.test(killSwitchPin)) {

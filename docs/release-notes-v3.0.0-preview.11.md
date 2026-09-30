@@ -19,6 +19,8 @@ checkout. Local daemon development still uses the documented sibling layout.
   trusted local first run. Setup-status responses expose readiness without secret
   values or configuration paths. Existing legacy password records migrate
   atomically to salted Argon2 hashes after successful authentication.
+  Setup counts Unicode characters for the eight-character password minimum,
+  while retaining the 1,024-byte maximum.
 - Browser origins are checked against the listening authority and explicitly
   configured `RCH_ALLOWED_ORIGINS`. Remote UI connections require HTTPS/WSS;
   local loopback HTTP/WS remains supported. UI requests, caches and preview URLs
@@ -42,6 +44,8 @@ checkout. Local daemon development still uses the documented sibling layout.
   Truncated, malformed and oversized frames report errors and reset the stream.
   The service retains bounded pending work through transient bridge failures,
   checks cancellation between sends and reports partial-send counts correctly.
+  UDP receivers bind locally on the configured peer port rather than trying to
+  bind a remote TAK address, and retain their socket across polls.
 - TAK marker retries supply an optional `Idempotency-Key`. With SQLite enabled,
   marker creation and its original response commit together; a retry receives the
   same 201 response without duplicate activity. Reusing a key with a different

@@ -2,7 +2,7 @@ use super::{
     CotUrl, Instant, Read, StdDuration, TakConnectionConfig, TakConnectorError, TakCotReceiver,
     UdpSocket, build_tls_connector, inbound_frames, socket_io,
 };
-use std::net::TcpStream;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs};
 
 #[derive(Debug)]
 enum Stream {
@@ -179,10 +179,25 @@ impl TakSocketReceiver {
 
     fn receive_udp(&mut self) -> Result<Option<Vec<u8>>, TakConnectorError> {
         if self.datagram.is_none() {
-            self.datagram = Some(
-                UdpSocket::bind(&self.url.host_port)
-                    .map_err(|error| TakConnectorError::Receive(error.to_string()))?,
-            );
+            let peer = self
+                .url
+                .host_port
+                .to_socket_addrs()
+                .map_err(|error| {
+                    TakConnectorError::Receive(format!("cannot resolve TAK UDP endpoint: {error}"))
+                })?
+                .next()
+                .ok_or_else(|| {
+                    TakConnectorError::Receive(
+                        "TAK UDP endpoint resolved to no addresses".to_string(),
+                    )
+                })?;
+            let bind = udp_bind_address(peer);
+            self.datagram = Some(UdpSocket::bind(bind).map_err(|error| {
+                TakConnectorError::Receive(format!(
+                    "cannot bind local TAK UDP receiver at {bind}: {error}"
+                ))
+            })?);
         }
         let socket = self.datagram.as_ref().ok_or_else(|| {
             TakConnectorError::Receive("CoT datagram socket unavailable".to_string())
@@ -215,6 +230,17 @@ impl TakSocketReceiver {
     }
 }
 
+fn udp_bind_address(peer: SocketAddr) -> SocketAddr {
+    // COT_URL is the outbound peer, not a local interface. Receive on the
+    // configured UDP port in the same address family; retain loopback scope.
+    let ip = match peer.ip() {
+        ip if ip.is_loopback() => ip,
+        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    };
+    SocketAddr::new(ip, peer.port())
+}
+
 impl TakCotReceiver for TakSocketReceiver {
     fn receive(&mut self) -> Result<Option<Vec<u8>>, TakConnectorError> {
         let result = match self.url.scheme.as_str() {
@@ -227,5 +253,25 @@ impl TakCotReceiver for TakSocketReceiver {
             self.buffer.clear();
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn udp_receive_binding_preserves_address_family_port_and_loopback_scope() {
+        for (peer, bind) in [
+            ("192.0.2.20:8087", "0.0.0.0:8087"),
+            ("[2001:db8::20]:8087", "[::]:8087"),
+            ("127.0.0.1:8087", "127.0.0.1:8087"),
+            ("[::1]:8087", "[::1]:8087"),
+        ] {
+            assert_eq!(
+                udp_bind_address(peer.parse().expect("peer")),
+                bind.parse().expect("local binding")
+            );
+        }
     }
 }

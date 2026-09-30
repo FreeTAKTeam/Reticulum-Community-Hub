@@ -4,6 +4,27 @@ const FIRST: &[u8] = br#"<event uid="first"><point lat="1" lon="2" /></event>"#;
 const SECOND: &[u8] = br#"<event uid="second"><point lat="3" lon="4" /></event>"#;
 
 #[test]
+fn remote_udp_peer_receives_on_a_local_socket_and_keeps_it_across_polls() {
+    let reservation = UdpSocket::bind("127.0.0.1:0").expect("reserve port");
+    let port = reservation.local_addr().expect("port").port();
+    drop(reservation);
+    let mut receiver = TakSocketReceiver::new(&format!("udp://192.0.2.20:{port}"))
+        .expect("remote endpoint")
+        .with_read_timeout(StdDuration::from_millis(20));
+    assert_eq!(receiver.receive().expect("local bind and timeout"), None);
+    let sender = UdpSocket::bind("127.0.0.1:0").expect("sender");
+    for frame in [FIRST, SECOND] {
+        sender
+            .send_to(frame, ("127.0.0.1", port))
+            .expect("datagram");
+        assert_eq!(
+            receiver.receive().expect("received local datagram"),
+            Some(frame.to_vec())
+        );
+    }
+}
+
+#[test]
 fn incomplete_or_multiple_xml_events_cannot_parse_as_one_event() {
     for bytes in [
         br#"<event uid="first"><point lat="1" lon="2" />"#.to_vec(),

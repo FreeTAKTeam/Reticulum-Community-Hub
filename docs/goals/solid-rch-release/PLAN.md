@@ -135,3 +135,12 @@ follow-on. Preserve the same preview.11/LXMF0.12.0 scope and unrelated local wor
 This publication goal is incomplete until the public versioned release and its
 downloads are verified. Other native/hardware acceptance remains explicitly
 limited; publication must not imply stable v3.0.0 readiness.
+
+Review follow-up on PR #239 reproduced and corrected two defects: UDP receivers
+must bind a local address instead of a remote TAK peer, and the setup password
+minimum must count Unicode characters instead of UTF-8 bytes. Regression tests
+cover both fixes and the shared setup form's corresponding feedback. The Windows
+rename concern was checked against the pinned Rust implementation and successful
+hosted Windows replacement/rollback tests; its premise did not require a
+production rewrite. Every correction requires fresh final-head hosted checks and
+package builds before merge and publication.
