@@ -750,7 +750,8 @@ impl AppState {
         let command_endpoint = command_endpoint.into();
         let response_endpoint = response_endpoint.into();
         let request_timeout = if cfg!(test) {
-            Duration::from_millis(100)
+            // The RPC deadline includes both local socket handshakes and scheduling.
+            Duration::from_millis(250)
         } else {
             Duration::from_secs(3)
         };
@@ -785,7 +786,8 @@ impl AppState {
         let command_endpoint = command_endpoint.into();
         let response_endpoint = response_endpoint.into();
         let request_timeout = if cfg!(test) {
-            Duration::from_millis(100)
+            // The RPC deadline includes both local socket handshakes and scheduling.
+            Duration::from_millis(250)
         } else {
             Duration::from_secs(3)
         };
@@ -27723,6 +27725,8 @@ mod tests {
     mod attachment_security;
     mod auth;
     mod field_commands;
+    #[path = "issue_238_live.rs"]
+    mod issue_238_live;
     mod release_durability;
     mod release_lifecycle;
     mod release_receipt_callbacks;
@@ -55351,7 +55355,10 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "bounded ZMQ pre-admission timeout took too long: {elapsed:?}"
         );
-        assert!(error.to_string().contains("ZeroMQ"));
+        assert!(
+            error.to_string().contains("SDK_TRANSPORT_ZMQ_TIMEOUT"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -55532,7 +55539,10 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("unbound ZMQ endpoint must fail before admission"),
         };
-        assert!(error.to_string().contains("ZeroMQ"));
+        assert!(
+            error.to_string().contains("SDK_TRANSPORT_ZMQ_TIMEOUT"),
+            "{error}"
+        );
         let requests = rpc_server.join().expect("rpc server");
         assert!(
             requests.is_empty(),

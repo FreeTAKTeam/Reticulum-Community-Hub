@@ -13,10 +13,19 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
-## LXMF-rs v0.12.0 Integration
+## Issue #238 development baseline
 
-The current dependency, CI, and packaged-daemon baseline is LXMF-rs `v0.12.0`
-at commit `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`. The lockfile resolves
+Development dependencies and CI now use LXMF-rs `0.13.0` plus the ZeroMQ
+connection/response recovery fix at `7e26c1a9c415e5cdabcaed1bab618698288be239`.
+This includes a daemon response-writer fix; pairing the new RCH SDK with an
+unpatched old daemon does not provide the complete fix. See
+[the issue evidence](issue-238-inbound-zmq.md) for fresh validation and limits.
+The preview.11 release evidence below remains a historical record.
+
+## LXMF-rs v0.12.0 Integration (preview.11 historical)
+
+The preview.11 dependency, CI, and packaged-daemon baseline was LXMF-rs `v0.12.0`
+at commit `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`. Its lockfile resolved
 `lxmf-reference`, `lxmf-wire`, `lxmf-sdk`, `reticulum-rs-core`, and
 `reticulum-rs-rpc` to `0.12.0`. The runtime manifest records SDK contract
 release `v2.6` and the identity import, activation, and discovery operations

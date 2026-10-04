@@ -1118,16 +1118,16 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lxmf-reference"
-version = "0.12.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755#20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755"
+version = "0.13.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=7e26c1a9c415e5cdabcaed1bab618698288be239#7e26c1a9c415e5cdabcaed1bab618698288be239"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "lxmf-sdk"
-version = "0.12.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755#20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755"
+version = "0.13.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=7e26c1a9c415e5cdabcaed1bab618698288be239#7e26c1a9c415e5cdabcaed1bab618698288be239"
 dependencies = [
  "hex",
  "hmac",
@@ -1146,8 +1146,8 @@ dependencies = [
 
 [[package]]
 name = "lxmf-wire"
-version = "0.12.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755#20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755"
+version = "0.13.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=7e26c1a9c415e5cdabcaed1bab618698288be239#7e26c1a9c415e5cdabcaed1bab618698288be239"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -1689,8 +1689,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reticulum-rs-core"
-version = "0.12.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755#20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755"
+version = "0.13.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=7e26c1a9c415e5cdabcaed1bab618698288be239#7e26c1a9c415e5cdabcaed1bab618698288be239"
 dependencies = [
  "aes",
  "atomicwrites",
@@ -1710,8 +1710,8 @@ dependencies = [
 
 [[package]]
 name = "reticulum-rs-rpc"
-version = "0.12.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755#20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755"
+version = "0.13.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=7e26c1a9c415e5cdabcaed1bab618698288be239#7e26c1a9c415e5cdabcaed1bab618698288be239"
 dependencies = [
  "base64 0.22.1",
  "ciborium",

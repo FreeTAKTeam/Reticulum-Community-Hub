@@ -3,7 +3,7 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, checksum-recorded LXMF `0.12.0` `reticulumd` binary with ZeroMQ
+  binary, checksum-recorded LXMF `0.13.0` `reticulumd` binary with ZeroMQ
   support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
@@ -41,9 +41,9 @@ Draft notes for the latest Rust preview are in
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
-LXMF 0.12.0 `reticulumd` path when that checkout is intentionally dirty; hosted
+LXMF 0.13.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755` (`v0.12.0`). The Rust library dependencies resolve that same immutable Git revision without
+`7e26c1a9c415e5cdabcaed1bab618698288be239` (LXMF `0.13.0` plus the issue #238 fix). The Rust library dependencies resolve that same immutable Git revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 

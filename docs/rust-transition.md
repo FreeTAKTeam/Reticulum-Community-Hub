@@ -197,9 +197,9 @@ Release blockers cleared in the latest parity pass:
 - ZeroMQ is the permanent LXMF data plane for send, ordered batch acceptance,
   delivery status, and event traffic. RPC is an optional administration
   channel and must not be called from HTTP delivery or fanout hot paths.
-- Production library dependencies use released LXMF `0.12.0` from an immutable Git revision; a clean server build does not require a sibling checkout.
+- Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
-  `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755` (`v0.12.0`). The matching
+  `7e26c1a9c415e5cdabcaed1bab618698288be239` (based on `v0.13.0`, including the daemon response-writer fix). The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.
