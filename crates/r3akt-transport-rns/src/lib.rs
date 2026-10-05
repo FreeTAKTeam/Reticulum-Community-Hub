@@ -2069,7 +2069,11 @@ fn open_zmq_sdk_actor_session(
 }
 
 fn rch_lxmf_start_request() -> LxmfSdkStartRequest {
-    LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()).with_requested_capabilities([
+    let mut config = LxmfSdkConfig::desktop_local_default();
+    // Polling advances a cursor without removing retained events. Reject would
+    // permanently starve this continuous consumer once the daemon's log fills.
+    config.overflow_policy = lxmf_sdk::OverflowPolicy::DropOldest;
+    LxmfSdkStartRequest::new(config).with_requested_capabilities([
         "sdk.capability.batch_send",
         "sdk.capability.async_events",
         "sdk.capability.identity_multi",
@@ -3839,6 +3843,9 @@ mod tests {
 
     #[path = "../actor_request_expiry.rs"]
     mod actor_request_expiry;
+
+    #[path = "../event_retention.rs"]
+    mod event_retention;
 
     #[derive(Debug, Clone)]
     struct RecordedRpcCall {
