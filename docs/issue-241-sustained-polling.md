@@ -76,12 +76,12 @@ The northbound API and identity authorization contract are unchanged.
   server-only release gate passed on CI-pinned Rust 1.88 both before and after
   the paired pin update.
 
-The exact stripped daemon artifact also passed preserved-state/hot-restart
-qualification with two newly imported messages and normal shutdown. Its one
+The earlier cursor-only stripped artifact from revision `75b245bf` passed
+preserved-state/hot-restart qualification with two newly imported messages and
+normal shutdown. Its one
 readiness interruption occurred during the intentional daemon restart; readiness
-was healthy after recovery. The rebuilt artifact must repeat sustained qualification against this saved state
-before publication; release-specific evidence will be packaged in
-runtime-verification.json. These loopback runs
+was healthy after recovery. Consult runtime-verification.json in the published testing artifact for that
+release's sustained and restart qualification results. These loopback runs
 do not establish that the production topology or
 preserved state triggering the readiness stall has been repaired. Sanitized
 interface configuration, stalled-process RSS and cgroup memory.stat anon/file/sock
