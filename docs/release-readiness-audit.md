@@ -16,11 +16,19 @@ The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier 
 ## Issue #238 development baseline
 
 Development dependencies and CI now use LXMF-rs `0.13.0` plus the ZeroMQ
-connection/response, restart-cursor recovery and storage-contention reactor fixes at `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`.
+connection/response, restart-cursor recovery and storage-contention reactor fixes plus the indexed propagation-mark lookup for #242 at `67e63710986111fbf671dd3cf823d57615f8596f`.
 This includes a daemon response-writer fix; pairing the new RCH SDK with an
 unpatched old daemon does not provide the complete fix. See
 [the issue evidence](issue-238-inbound-zmq.md) for fresh validation and limits.
 The preview.11 release evidence below remains a historical record.
+
+## Issue #242 development qualification
+
+The current source adds bounded announce imports/diagnostics and schema-4
+projections, plus the pinned daemon propagation-mark index. See
+[resource evidence and upgrade instructions](issue-242-resource-efficiency.md).
+This development qualification does not supersede the published preview.12
+artifact record or establish production resolution under a 2 GiB memory limit.
 
 ## LXMF-rs v0.12.0 Integration (preview.11 historical)
 

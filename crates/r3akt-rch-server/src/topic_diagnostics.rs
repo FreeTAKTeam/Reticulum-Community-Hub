@@ -1,7 +1,7 @@
 use super::{
-    ApiError, AppState, BTreeMap, ConfigFileKind, HashMap, HashSet, Json, State, Value,
-    apply_config_file, config_text_section_value, identity_announce_matches_destination, json,
-    load_identity_announces_for_state, normalize_identity_key, normalize_topic_id,
+    ApiError, AppState, BTreeMap, ConfigFileKind, HashMap, HashSet, Json, RchSqliteStore, State,
+    Value, apply_config_file, config_text_section_value, json, normalize_identity_key,
+    normalize_topic_id,
 };
 
 pub(super) fn topic_subscription_diagnostics(state: &AppState) -> Result<Value, ApiError> {
@@ -50,17 +50,23 @@ pub(super) fn topic_subscription_diagnostics(state: &AppState) -> Result<Value, 
         .values()
         .map(|count| count.saturating_sub(1))
         .sum::<usize>();
-    let announces = load_identity_announces_for_state(state)?;
-    missing_subscriber_identity_count = missing_subscriber_identity_count.saturating_add(
-        subscriber_destinations
-            .iter()
-            .filter(|destination| {
-                !announces
-                    .iter()
-                    .any(|record| identity_announce_matches_destination(record, destination))
-            })
-            .count(),
-    );
+    if !subscriber_destinations.is_empty() {
+        let store = state
+            .sqlite_path
+            .as_ref()
+            .map(|path| RchSqliteStore::open_read_only(path.as_ref()))
+            .transpose()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let missing = store
+            .as_ref()
+            .map(|store| store.missing_identity_announce_count(&subscriber_destinations))
+            .transpose()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .unwrap_or(subscriber_destinations.len());
+        missing_subscriber_identity_count =
+            missing_subscriber_identity_count.saturating_add(missing);
+    }
+
     let last_identity_announce_update_error = state
         .identity_announce_update_error
         .read()

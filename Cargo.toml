@@ -32,7 +32,7 @@ r3akt-rch-server = { path = "crates/r3akt-rch-server" }
 r3akt-tak-connector = { path = "crates/r3akt-tak-connector" }
 r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
-rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68", version = "0.13.0" }
+rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "67e63710986111fbf671dd3cf823d57615f8596f", version = "0.13.0" }
 base64 = "0.22"
 argon2 = "0.5"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
