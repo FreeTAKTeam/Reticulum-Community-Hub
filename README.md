@@ -54,6 +54,9 @@ The Rust edition is currently preview software. Use it for testing, integration 
 The published preview is [v3.0.0-preview.11](docs/release-notes-v3.0.0-preview.11.md),
 using the immutable LXMF-rs 0.12.0 baseline. Current development uses LXMF-rs
 0.13.0 with the [inbound ZeroMQ recovery fix](docs/issue-238-inbound-zmq.md).
+The [preview.12 testing candidate](docs/release-notes-v3.0.0-preview.12.md)
+pairs this baseline with the [issue #241 sustained-runtime fixes](docs/issue-241-sustained-polling.md)
+and the standalone reticulumd rch241.2 candidate.
 Upgrading the RCH SDK alone does not fix an old daemon's response writer; use
 `reticulumd` from the same pinned revision when deploying this change.
 

@@ -96,3 +96,25 @@ this revision and its Rust 1.88 server release gate passed. Hosted checks and
 updated exact-pair sustained qualification remain pending before publication.
 
 Final storage testing checkpoint: [rch241.2 daemon-only prerelease](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.13.0-rch241.2) is published from bbde8f2c. The exact archive is 11,298,594 bytes, with SHA256 e9e0f9e8e6c9bee9e21676c218599f64ea96551dab1168b72b6d77a07e2e5882. Anonymous download, binary/metadata binding, five regular files, executable help and public tag binding pass; stable v0.13.0 remains latest. The independent verifier confirms four fresh receipts/SQLite records, both mature progress phases, two cursor resets, all current/retired process exits zero and no unplanned readiness failure. The paired soak records RSS without separate systemd cgroup limits. Original production trigger and memory-growth diagnosis remain open pending production evidence; do not mark the full issue resolved from this testing release.
+
+## Matching RCH testing publication slice
+
+The user now explicitly requests a matching RCH prerelease to test the daemon
+candidate. Prepare `v3.0.0-preview.12` on the existing repair branch without
+merging either PR. Keep RCH backend source and the immutable LXMF bbde8f2c pin
+unchanged. Update desktop version metadata and the existing workflow's manual
+label; preserve preview.11, Python stable 2.9.6 and daemon rch241.2 assets.
+The existing `.github/workflows/rust-release.yml` remains the package owner and
+builds the five server/two desktop packages; no alternate workflow is introduced.
+
+PRE publication review passed. Main owns metadata, notes and publication; the
+reviewer checks correctness/maintainability and independently verifies outputs.
+Reuse unchanged-source backend acceptance; verify metadata/local links, fresh
+source CI and all seven hosted package builds, including the desktop package
+build. Before claiming the download ready, anonymously verify all 14 assets,
+the seven adjacent hashes, all five server source/tag/daemon manifests and
+fresh authenticated inbound persistence with downloaded Linux binaries.
+Confirm desktop versions and embedded sidecars without claiming native window
+acceptance. Bundled daemons are freshly compiled at the same bbde8f2c source as
+the standalone candidate and are not asserted byte-identical. Original
+production stall/memory evidence remains open; publication does not close it.

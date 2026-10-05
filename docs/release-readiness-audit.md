@@ -161,3 +161,15 @@ before stable `v3.0.0`:
   label `rust-next`.
 - Continue broad parity hardening for less common Python edge cases listed in
   `README.md` and `docs/release-contract-matrix.json`.
+
+## Preview.12 matching testing publication
+
+The user authorized a matching RCH testing prerelease after the standalone
+reticulumd rch241.2 publication. [Preview.12 release notes](release-notes-v3.0.0-preview.12.md)
+record the paired source and deployment scope. Backend source is unchanged
+from the qualified issue #241 pair. The existing release workflow must build
+all five server and two desktop packages at the new source tag before package
+readiness is claimed. Public download checksums, all server source manifests
+and fresh downloaded Linux inbound persistence are publication acceptance;
+native desktop interaction and the original production trigger remain separate
+unproven acceptance. This does not change the stable-release gates above.

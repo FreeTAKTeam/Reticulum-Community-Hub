@@ -23,7 +23,7 @@ when a GitHub release is published. Server package names include the resolved
 release version, for example
 `rch-rust-full-windows-x64-v3.0.0-preview.11.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
-Manual workflow runs default to `v3.0.0-preview.11` and can override that label
+Manual workflow runs default to `v3.0.0-preview.12` and can override that label
 with the `release_version` input. While `main` remains the default branch,
 GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
@@ -36,8 +36,11 @@ passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. It uploaded
 `rch-desktop-windows-x64-nsis`, and `rch-desktop-linux-x64-appimage`; downloaded
 artifacts matched their SHA-256 sidecars.
 
-Draft notes for the latest Rust preview are in
-`docs/release-notes-v3.0.0-preview.11.md`.
+The matching issue #241 testing release is `v3.0.0-preview.12`; its
+[release notes](../docs/release-notes-v3.0.0-preview.12.md) explain using the
+server/UI package with the standalone daemon candidate. Preview.11 remains a
+historical release. The existing release workflow owns all five server and two
+desktop packages; this testing release uses that same workflow.
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated

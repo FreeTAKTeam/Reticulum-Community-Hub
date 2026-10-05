@@ -84,8 +84,11 @@ capabilities.
 
 ## Current Validation Snapshot
 
-The dated evidence below is historical. The next preview.11 candidate's gates
-and artifact evidence are maintained in
+The dated evidence below is historical. The preview.12 testing candidate pairs
+RCH with the issue #241 daemon fixes; see its
+[release notes](release-notes-v3.0.0-preview.12.md) and
+[sustained-runtime evidence](issue-241-sustained-polling.md). Preview.11's gates
+and artifact evidence remain in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
