@@ -28,13 +28,15 @@
 
 ## Current board
 
-- Baseline retained-window failure: reproduced locally; evidence in /tmp/rch241-soak-baseline/samples.json, live session 98369 at plan creation.
-- Production readiness stall: investigation active; no confirmed local reproduction yet.
-- PRE review: passed for the bounded RCH retention correction; shared-policy scope and interleaved marker assertions incorporated.
-- Retention implementation: complete; real-daemon regression fails at cursor 1024 before the policy change and receives all 1280 markers after it. Correctness and maintainability review passed.
-- Local gates: Rust 1.88 server release-readiness passed, including strict workspace clippy, serial workspace tests, rustdoc, documentation links, optimized server build and HTTP smoke. Rust 1.96 exposes an unchanged implicit-clone lint in server startup; CI uses Rust 1.88.
-- Qualification: active three-peer two-worker run has crossed 1024, received and persisted a real peer message and completed authenticated announce. Both unchanged baselines remain ready but stop consuming at 1024. No readiness stall reproduced yet. Two-worker runs were also confined to two CPUs without restarting at baseline 1091s / fixed 620s.
-- Hosted RCH checks: all nine passed on retention commit 772f6f7. Full qualification and production-stall diagnosis remain pending. A separately reproduced preserved-cursor defect now justifies the narrow daemon slice below.
+- Retained-window starvation: reproduced and corrected under RCH's shared start negotiation; the real-daemon regression receives all 1,280 ordered markers. Other clients still control their explicit shared-policy choices.
+- Preserved cursor after restart: reproduced and corrected by the daemon's existing poll owner; RCH's existing reset path resumes imports.
+- Saved-policy restoration: reproduced and corrected under the existing domain snapshot owner; negotiation/configuration persistence regressions pass.
+- Storage contention: actual two-worker daemon starvation reproduced with a real TCP peer and a native external SQLite writer. Awaited blocking boundaries preserve ordered writes and non-overlapping maintenance. PRE and POST reviews pass; the durable regression fails before and passes after the change.
+- Production-specific trigger and memory growth: unproven. The isolated cgroup probe did not reproduce the reported growth. Separate service memory breakdown and sanitized production interface/state evidence remain missing.
+- Local gates: affected daemon tests, strict all-feature lint, diagnostics scanner, formatting, module size and boundaries pass. Aligned RCH Rust 1.88 server release-readiness passes, including strict workspace clippy, serial workspace tests, rustdoc, document links, optimized build and HTTP smoke.
+- Exact artifact: rch241.1 is published and independently verified. The new bbde8f2c stripped rch241.2 candidate passes forced storage contention (158 healthy readiness samples and 20 successful correlated polls); its separate 30-minute RCH/three-peer qualification is running with preserved state and distinct fresh-message markers.
+- Hosted checks: all nine aligned RCH checks pass on 48c4f3f; daemon unit/quality/build and independent interoperability pass on bbde8f2c. HIL remains running before publication of rch241.2.
+- Publication: daemon-only testing scope; no new RCH release and no merge authorization for PR #240 or #654. Keep prior release assets and stable v0.13.0 unchanged. Independently verify the public source tag, archive, checksum, exact contents and executable after publication.
 
 ## Preserved-state finding and proposed daemon slice
 
