@@ -80,14 +80,14 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 ## Local server
 
 Rust library dependencies resolve LXMF-rs `0.13.0` plus the issue #238 fix at the immutable commit
-`d37d39b23d90c5bd75e80dcecab8030d87107421` from Git. A sibling checkout is
+`bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68` from Git. A sibling checkout is
 needed for local daemon development and default desktop sidecar preparation.
 For a fresh development layout, run this from the RCH repository:
 
 ```bash
 git clone --filter=blob:none --no-checkout https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
-git -C ../LXMF-rs fetch origin d37d39b23d90c5bd75e80dcecab8030d87107421
-git -C ../LXMF-rs checkout --detach d37d39b23d90c5bd75e80dcecab8030d87107421
+git -C ../LXMF-rs fetch origin bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
+git -C ../LXMF-rs checkout --detach bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
 ```
 
 If that sibling already exists, preserve any local changes and use a clean

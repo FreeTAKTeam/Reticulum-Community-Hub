@@ -22,7 +22,7 @@ and budgets negotiation plus identity restoration plus the requested RPCs.
 The initial issue #238 repair pinned
 `7e26c1a9c415e5cdabcaed1bab618698288be239`, based on LXMF-rs `0.13.0`.
 The [issue #241 follow-up](issue-241-sustained-polling.md) advances current dependencies and daemon builds to
-`d37d39b23d90c5bd75e80dcecab8030d87107421`, adding explicit recovery for a cursor ahead of a restarted daemon.
+`bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, adding explicit recovery for a cursor ahead of a restarted daemon.
 SDK contract version 2 / release `v2.6`, the configured endpoints, and the RCH
 northbound contract are unchanged. Deploy the matching patched `reticulumd`;
 SDK-only updates cannot repair an older daemon's shared response writer.

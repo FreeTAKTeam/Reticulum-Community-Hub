@@ -53,3 +53,42 @@ The exact paired candidate again stopped at cursor 1024 while readiness remained
 Checkpoint: saved-policy correction committed/pushed as d37d39b2 in daemon PR #654. PRE and POST correctness/maintainability reviews passed. All 758 RPC tests, 242 SDK unit tests and selected integrations, strict affected-package lint, formatting, boundaries, module size and diagnostics scanner pass. The RCH pin now targets this revision. Its first aligned release-gate attempt hit the unchanged inbound chat timestamp assertion; isolated retry and full workspace retry passed. The aligned optimized RCH build and HTTP smoke passed; corrected packaged-artifact qualification is running. The failed first candidate remains saved separately.
 
 Final testing checkpoint: d37d39b2 exact stripped artifact / aligned RCH completed 30 minutes with 9034 events, 11358 polls, four fresh Delivered and persisted messages, two cursor resets, late authenticated announce and all owned/retired processes exiting zero. Only readiness interruption was the intentional daemon restart. The independent verifier validates receipt and persistence timestamps, both mature cursor-progress phases, health outside restart and source/binary binding. Both source heads' hosted checks passed, including daemon HIL and independent interoperability. The requested daemon-only testing release target is reticulumd-test-0.13.0-rch241.1; production readiness-stall diagnosis remains open and this evidence does not close the full issue.
+
+## Storage contention and reactor starvation slice
+
+The exact published d37d39b2 daemon, confined to two CPU slots and two Tokio
+workers, lost readiness during a controlled three-second SQLite BEGIN IMMEDIATE
+lock while a real TCP peer sent announces and propagation maintenance ran every
+second. Eight external 250 ms readiness probes timed out and the authorized
+identity announce RPC exceeded its two-second deadline. Readiness, RPC and
+announce persistence recovered after lock release; every owned process exited
+normally. The shortened maintenance interval and disposable state deliberately
+exercise the contention boundary; this is not a reproduction of the production
+topology or its original trigger. Evidence is retained separately under
+/tmp/rch241-readiness-contention/run-3.
+
+The existing announce consumer waits synchronously for its storage writer from a
+Tokio worker while retaining a destination guard. The maintenance task also
+performs synchronous SQLite work on a Tokio worker. Proposed correction: release
+the destination guard after copying announce metadata, and await one
+spawn_blocking operation for the existing sequential announce persistence calls.
+Await propagation maintenance through spawn_blocking as well. Preserve the
+current persistence owner, announce ordering/backpressure, non-overlapping
+maintenance schedule and operator-visible errors. No storage-policy, lock-owner,
+timeout or authorization changes. PRE review must pass before implementation.
+Repeat the same actual-daemon contention regression, add a durable regression
+through these owners, run affected daemon checks and hosted CI, then rebuild and
+independently verify a new daemon-only testing candidate. Do not replace the
+published rch241.1 assets or infer the undisclosed production trigger is solved.
+
+Storage checkpoint: PRE and POST correctness/maintainability reviews passed.
+Daemon commit bbde8f2c preserves sequential persistence and non-overlapping
+maintenance through awaited blocking workers. The actual-binary regression
+failed before the change and passes afterward, including newer persisted
+identity timestamps and graceful shutdown. The stripped rch241.2 candidate
+passed the same three-second contention probe with 158/158 ready responses,
+20 successful polls (maximum 54 ms), resumed persistence and all process exits
+zero. Affected daemon tests, strict all-feature lint, formatting, architecture
+boundaries, module size and diagnostics scanner passed. RCH pins now align to
+this revision and its Rust 1.88 server release gate passed. Hosted checks and
+updated exact-pair sustained qualification remain pending before publication.

@@ -55,8 +55,27 @@ imports; it does not promise replay of all events lost across a restart.
 The correction is reviewed in
 [LXMF-rs PR #654](https://github.com/FreeTAKTeam/LXMF-rs/pull/654).
 Current RCH SDK dependencies and daemon-build references align to immutable
-revision `d37d39b23d90c5bd75e80dcecab8030d87107421`, based on version 0.13.0.
+revision `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, based on version 0.13.0.
 The northbound API and identity authorization contract are unchanged.
+
+## Network worker starvation during storage contention
+
+A controlled test of the published d37d39b2 daemon reproduced eight readiness
+timeouts during a three-second SQLite write lock while a real TCP peer announced
+and propagation maintenance ran every second. Both network workers waited on
+synchronous storage operations; readiness and persistence recovered after the
+lock was released. This establishes a contention defect, rather than the original
+production trigger or its memory-growth cause.
+
+The daemon now releases the destination guard before persistence and awaits the
+existing ordered announce/identity writes on a blocking worker. Due propagation
+maintenance is likewise awaited on a blocking worker, with the next interval
+scheduled after completion. Storage ownership, ordering, authorization and error
+reporting remain intact. A real-binary regression fails before the correction and
+passes after it, requiring readiness and correlated ZeroMQ polling under a native
+watchdog's database lock, then announce/identity persistence recovery and normal
+owned-process shutdown. Identity announce can still legitimately wait for its
+database commit while another writer holds the database.
 
 ## Evidence and remaining limit
 
