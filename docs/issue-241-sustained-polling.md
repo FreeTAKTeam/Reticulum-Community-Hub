@@ -80,8 +80,15 @@ The earlier cursor-only stripped artifact from revision `75b245bf` passed
 preserved-state/hot-restart qualification with two newly imported messages and
 normal shutdown. Its one
 readiness interruption occurred during the intentional daemon restart; readiness
-was healthy after recovery. Consult runtime-verification.json in the published testing artifact for that
-release's sustained and restart qualification results. These loopback runs
+was healthy after recovery. The final stripped artifact from revision `d37d39b2`, paired with the aligned RCH
+source, completed 30 minutes against the preserved state: 9,034 events, 11,358
+polls and four distinct Delivered peer messages imported and persisted after run
+start. It reset its cursor at startup and again after a daemon-only restart while
+RCH remained running. The one sampled readiness interruption was the deliberate
+restart; readiness recovered, late authenticated announces succeeded, and every
+owned process exited normally. Both repositories' source checks passed, including
+daemon HIL and independent interoperability. Consult runtime-verification.json
+in the testing artifact for release-specific source, checksums and measurements. These loopback runs
 do not establish that the production topology or
 preserved state triggering the readiness stall has been repaired. Sanitized
 interface configuration, stalled-process RSS and cgroup memory.stat anon/file/sock
