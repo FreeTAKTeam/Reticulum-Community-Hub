@@ -29,6 +29,9 @@ projections, plus the pinned daemon propagation-mark index. See
 [resource evidence and upgrade instructions](issue-242-resource-efficiency.md).
 This development qualification does not supersede the published preview.12
 artifact record or establish production resolution under a 2 GiB memory limit.
+The matching preview.13 publication is described in
+[its release notes](release-notes-v3.0.0-preview.13.md); package acceptance
+requires successful builds and independent public-download verification.
 
 ## LXMF-rs v0.12.0 Integration (preview.11 historical)
 
