@@ -94,3 +94,15 @@ preserved state triggering the readiness stall has been repaired. Sanitized
 interface configuration, stalled-process RSS and cgroup memory.stat anon/file/sock
 measurements remain useful production evidence. Do not close the full issue from
 stream-retention or restart-recovery evidence alone.
+
+A separate allocation probe used the unchanged `7359ab22` daemon binary from
+`reticulumd-test-0.13.0-rch238.2` in an owned systemd user service, with two CPU
+affinity slots, two Tokio workers, MemoryHigh 512 MiB, MemoryMax 768 MiB,
+TasksMax 512 and LimitNOFILE 65536. A separately accounted client completed
+10,000 correlated ZeroMQ requests in 521 seconds. All 52 readiness samples
+returned 200; daemon cgroup memory peaked at 6,320,128 bytes and process RSS at
+21,872 KiB. Neither service recorded memory-pressure, high/max-limit or OOM
+events, and both stopped normally. This did not reproduce the reported memory
+growth through repeated response connections. It exercised a disposable database
+and a raw client without RCH or mesh peers, so it does not qualify the production
+topology, preserved state or its longer stall window.
