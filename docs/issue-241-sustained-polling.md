@@ -125,3 +125,19 @@ events, and both stopped normally. This did not reproduce the reported memory
 growth through repeated response connections. It exercised a disposable database
 and a raw client without RCH or mesh peers, so it does not qualify the production
 topology, preserved state or its longer stall window.
+
+The exact bbde8f2c stripped daemon and aligned RCH executable subsequently completed
+30 minutes against preserved state: 9,038 events, 11,355 polls, four distinct
+Delivered/imported/persisted messages, startup and hot-restart cursor recovery,
+late authenticated announces and normal shutdown of all current/retired processes.
+The only sampled readiness interruption was the deliberate daemon restart. Its
+separate three-second contention probe returned all 158 readiness responses and
+20 correlated polls successfully (maximum poll 54 ms), with persistence recovery.
+Both repositories' source checks passed, including daemon HIL and interoperability.
+The [daemon-only testing prerelease rch241.2](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.13.0-rch241.2)
+contains only the executable, license, instructions and verification metadata.
+Anonymous public download, checksum, exact archive contents, source tag and
+executable help were independently verified. The paired soak records process RSS
+without separate systemd memory limits; it does not establish the production
+trigger or memory-growth cause. Existing rch241.1 assets and stable v0.13.0 remain
+unchanged.
