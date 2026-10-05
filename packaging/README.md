@@ -43,7 +43,7 @@ Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
 LXMF 0.13.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`7e26c1a9c415e5cdabcaed1bab618698288be239` (LXMF `0.13.0` plus the issue #238 fix). The Rust library dependencies resolve that same immutable Git revision without
+`d37d39b23d90c5bd75e80dcecab8030d87107421` (LXMF `0.13.0` plus the issue #238 and restart-cursor #241 fixes). The Rust library dependencies resolve that same immutable Git revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 

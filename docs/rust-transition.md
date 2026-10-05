@@ -199,7 +199,7 @@ Release blockers cleared in the latest parity pass:
   channel and must not be called from HTTP delivery or fanout hot paths.
 - Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
-  `7e26c1a9c415e5cdabcaed1bab618698288be239` (based on `v0.13.0`, including the daemon response-writer fix). The matching
+  `d37d39b23d90c5bd75e80dcecab8030d87107421` (based on `v0.13.0`, including response-writer and restart-cursor fixes). The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.

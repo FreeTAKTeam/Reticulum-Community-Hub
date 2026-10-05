@@ -16,7 +16,7 @@ The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier 
 ## Issue #238 development baseline
 
 Development dependencies and CI now use LXMF-rs `0.13.0` plus the ZeroMQ
-connection/response recovery fix at `7e26c1a9c415e5cdabcaed1bab618698288be239`.
+connection/response and restart-cursor recovery fixes at `d37d39b23d90c5bd75e80dcecab8030d87107421`.
 This includes a daemon response-writer fix; pairing the new RCH SDK with an
 unpatched old daemon does not provide the complete fix. See
 [the issue evidence](issue-238-inbound-zmq.md) for fresh validation and limits.
