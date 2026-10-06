@@ -32,3 +32,28 @@ Owner: `LXMF-rs/crates/libs/rns-rpc/src/storage/messages_parts/messagesstore_sec
 ## Execution disposition
 
 PRE and POST source review passed. The committed server-only release gate, four backend package suites, upstream RPC 759 tests/lint, module budgets and documentation checks passed. Both 30-minute local workloads completed; independent audits verify all 100,000 raw payloads, four distinct Delivered/persisted messages, post-restart imports and candidate zero shutdown codes. The candidate meets every local resource/latency budget; see [the evidence report](../../issue-242-resource-efficiency.md) for exact metrics, source/binary identities, fixture deviations and evidence limits. The bounded implementation is locally qualified. Original production daemon CPU attribution and the 2 GiB reclaim-pressure acceptance remain unproven, so #242 stays open. No merge or release is part of this source integration.
+
+## Follow-up: retained announce lookups after preview.13
+
+Preview.13 already contains the diagnostics/import correction. With 100,000
+preserved synthetic records, current-main release-mode measurements still show
+214.6 ms median for a one-client roster enrichment and 78.7 ms for one recipient
+freshness probe. Redirect these paths to the schema-4 normalized destination and
+announced-identity indexes. Core remains the read owner; no new cache, connection
+owner, schema migration, history retention policy or daemon change.
+
+Preserve raw destination ordering across all requested identities, deduplicate
+rows matching both indexes, retain REM source precedence and exact raw-field
+semantics for the delivery timestamp helper. Relay sender names and active topic
+subscribers use the same bounded matching reader. Storage/decode failures in
+these paths propagate to callers; they must not become missing/freshness-false
+fallbacks. Empty client rosters must never mean full-history selection.
+
+Verification: alias/case/Unicode whitespace/timestamp boundary/query-plan tests,
+full-reader equivalence for shared-identity annotations and relay ties,
+corrupt unrelated versus requested payloads, storage errors, unchanged raw
+history digest in the explicit 100,000-row release probe, required workspace
+checks and committed server-only readiness gate. Public full-history APIs and
+chat-name alias graph construction retain their existing contract. The original
+production daemon CPU spike and 2 GiB memory-pressure acceptance still require
+fresh deployment evidence; this follow-up does not certify them.

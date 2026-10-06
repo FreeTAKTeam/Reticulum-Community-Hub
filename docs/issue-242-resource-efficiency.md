@@ -173,15 +173,84 @@ receipt output, independent audits, and the SQL probe script/results. These are
 local qualification artifacts, not committed production data or public release
 assets. Published preview.12 and rch241.2 assets remain historical baselines.
 
+## Follow-up after preview.13: roster and recipient reads
+
+Preview.13 already shipped the preceding diagnostics/import and daemon index
+fixes. A separate optimized probe of current main (`af46606`) still measured
+history amplification in `/Client` enrichment and per-recipient freshness. The
+follow-up uses the existing schema-4 destination/announced-identity indexes:
+
+- Client roster annotations decode only rows matching existing client keys;
+  an empty roster reads no announce history. REM annotation winners retain raw
+  destination order and the existing destination-source precedence, including
+  shared aliases, case and Unicode whitespace.
+- Known/fresh recipient checks use indexed membership/timestamp predicates and
+  decode no announce payloads. Freshness remains inclusive at the cutoff.
+- Relay sender names, direct-topic active subscribers and delivery timestamp
+  lookups read only matching rows. Relay timestamp ties and the timestamp
+  helper's existing exact raw-field equality remain unchanged.
+- Storage/decode errors in delivery timestamp and freshness paths now propagate
+  instead of silently becoming absent data or a false presence result.
+
+No schema, daemon pin, history retention, connection ownership or persisted
+record changes are needed. Memory for the matching reader scales with matched
+rows; this is not an absolute cap when many rows share one requested identity.
+
+The explicit release probe creates 100,000 synthetic announces and one client
+whose identity aliases the final record. Eleven sequential calls per operation
+on the same local x86_64 host, Rust 1.88, installed locked dependencies:
+
+| Operation | Main median / max | Indexed median / max |
+|---|---:|---:|
+| Client roster enrichment | 214.60 / 252.72 ms | 0.81 / 1.47 ms |
+| Recipient freshness | 78.69 / 86.22 ms | 0.41 / 0.46 ms |
+
+These are synchronous server-path timings, including each read-only connection
+open. They are not HTTP p95 measurements or a new 30-minute CPU/memory-pressure
+qualification. The committed probe can be repeated with:
+
+```sh
+cargo test --locked --release -p r3akt-rch-server profile_remaining_announce_paths -- --ignored --nocapture
+```
+
+The probe also verifies the count and raw payload fingerprint before/after its
+reads. Regressions compare indexed annotations with the full-history reference,
+exercise aliases/shared identities/source precedence/timestamp ties, confirm
+both lookup branches use index searches, and distinguish unrelated corrupt
+payloads from corrupt requested records or an unavailable database.
+
+An authenticated HTTP comparison used two independent copies of the previously
+qualified 100,007-row database and the same one-client roster. The published
+preview.13 server (backend source unchanged in main before this follow-up) was
+compared with the indexed optimized build. Five warm-up and twenty measured
+`/Client` requests produced identical JSON responses and identical before/after
+raw announce payload fingerprints. Both owned server processes exited zero.
+
+| HTTP fixture measurement | Preview.13 | Indexed follow-up |
+|---|---:|---:|
+| `/Client` median / max | 235.52 / 314.12 ms | 0.78 / 1.69 ms |
+| PSS after repeated reads | 324.8 MiB | 53.6 MiB |
+| RSS after repeated reads | 327.4 MiB | 56.2 MiB |
+| Swap | 0 | 0 |
+
+These are short local snapshots without a daemon or enforced memory cgroup;
+HTTP response equality and preserved history are established, while long-term
+production memory pressure is not. Binary SHA256 values:
+preview.13 `b26b234300b169220538a0cd83a9a10cc74fc5df2016ecde4a6967233d4e3ed4`,
+indexed server `6684bb7ed3e23aba996a98afe17b55449147094fdf7efaa58b38c17c7be89da5`.
+The explicit final release probe also passed its raw-history fingerprint check.
+The committed server-only gate, workspace format/clippy/tests, four backend
+package suites and module-size checks passed for this follow-up.
+
 ## Remaining production evidence
 
 The exact production SQLite state, allocation profile, symbolized daemon CPU
 profile and original network workload are unavailable. The production report's
 2 GiB reclaim/swap behavior and high daemon CPU cannot be certified from the
-local fixture. Full-history public listing, REM roster enrichment and some message alias
-lookups still have
-history-dependent work; a baseline authenticated `/Client` probe took 274 ms
-with this fixture. Those paths are outside this bounded correction and require
-separate workload measurements before changing their alias-selection behavior.
+local fixture. Public full-history identity/REM listing, REM mode loading and
+chat-name alias graph construction still have history-dependent work. The
+client roster and recipient scans measured above have been redirected to
+indexed reads; this does not establish that all endpoint work is independent
+of retained history or attribute the production daemon CPU spike.
 Keep #242 open until deployment measurements establish its production
 acceptance. Do not erase the existing databases to obtain a lower memory result.

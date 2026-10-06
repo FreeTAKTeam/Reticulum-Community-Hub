@@ -328,3 +328,118 @@ fn batch_membership_counts_missing_duplicates_without_decoding_history() {
         0
     );
 }
+
+#[test]
+fn identity_matches_preserve_raw_order_and_deduplicate_destination_and_alias_matches() {
+    let mut store = RchSqliteStore::in_memory().expect("store");
+    let mut first = record("\u{2003}TARGET\u{2003}", 30);
+    first.announced_identity_hash = Some(" Shared ".to_string());
+    let mut second = record("A", 20);
+    second.announced_identity_hash = Some("shared".to_string());
+    let mut third = record("shared", 10);
+    third.announced_identity_hash = Some("SHARED".to_string());
+    store
+        .upsert_identity_announces(&[first, second, third])
+        .expect("records");
+    let all = store.load_identity_announces().expect("reference");
+    let keys = [" SHARED ", "target", "SHARED", "missing", " "].map(str::to_string);
+    assert_eq!(
+        store
+            .load_identity_announces_for_identities(&keys)
+            .expect("matches"),
+        all
+    );
+    assert!(
+        store
+            .load_identity_announces_for_identities(&[])
+            .expect("empty")
+            .is_empty()
+    );
+    store.connection.execute(
+        "INSERT INTO rch_identity_announces (destination_hash,payload,last_seen_ts_ms,normalized_destination_hash) VALUES ('unrelated',X'C1',0,'unrelated')", [],
+    ).expect("corrupt unrelated fixture");
+    assert_eq!(
+        store
+            .load_identity_announces_for_identities(&keys)
+            .expect("isolated matches"),
+        all
+    );
+    assert!(
+        store
+            .load_identity_announces_for_identities(&["unrelated".to_string()])
+            .is_err()
+    );
+    let bytes: Vec<u8> = store
+        .connection
+        .query_row(
+            "SELECT payload FROM rch_identity_announces WHERE destination_hash='unrelated'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("unrelated bytes");
+    assert_eq!(bytes, [0xc1]);
+}
+
+#[test]
+fn indexed_freshness_matches_normalized_aliases_and_inclusive_timestamp_boundaries() {
+    let mut store = RchSqliteStore::in_memory().expect("store");
+    let mut announce = record(" MiXeD ", -10);
+    announce.announced_identity_hash = Some("\u{2003}ALIAS\u{2003}".to_string());
+    store
+        .upsert_identity_announces(&[announce])
+        .expect("record");
+    for identity in ["mixed", " MIXED ", "alias", "\u{2003}ALIAS\u{2003}"] {
+        assert!(
+            store
+                .has_identity_announce_since_for_any(&[identity], -10)
+                .expect("boundary")
+        );
+        assert!(
+            !store
+                .has_identity_announce_since_for_any(&[identity], -9)
+                .expect("stale")
+        );
+    }
+    assert!(
+        store
+            .has_identity_announce_since_for_any(&["missing", "alias"], i64::MIN)
+            .expect("any")
+    );
+    assert!(
+        !store
+            .has_identity_announce_since_for_any(&["alias"], i64::MAX)
+            .expect("future")
+    );
+    assert!(
+        !store
+            .has_identity_announce_since_for_any(&[" ", "missing"], -10)
+            .expect("absent")
+    );
+    assert!(
+        !store
+            .has_identity_announce_since_for_any(&[], -10)
+            .expect("empty")
+    );
+    for sql in [
+        "SELECT destination_hash,payload FROM rch_identity_announces WHERE normalized_destination_hash='mixed' UNION ALL SELECT destination_hash,payload FROM rch_identity_announces WHERE normalized_announced_identity_hash='mixed'",
+        "SELECT EXISTS(SELECT 1 FROM rch_identity_announces WHERE normalized_destination_hash='mixed' AND last_seen_ts_ms>=-10 UNION ALL SELECT 1 FROM rch_identity_announces WHERE normalized_announced_identity_hash='mixed' AND last_seen_ts_ms>=-10)",
+    ] {
+        let mut statement = store
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .expect("plan");
+        let plan = statement
+            .query_map([], |row| row.get::<_, String>(3))
+            .expect("rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("plan")
+            .join(" ");
+        assert!(
+            plan.contains("SEARCH rch_identity_announces USING"),
+            "{plan}"
+        );
+        assert!(plan.contains("idx_rch_announces_destination"), "{plan}");
+        assert!(plan.contains("idx_rch_announces_identity"), "{plan}");
+        assert!(!plan.contains("SCAN rch_identity_announces"), "{plan}");
+    }
+}

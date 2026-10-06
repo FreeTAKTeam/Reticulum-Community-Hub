@@ -3,6 +3,7 @@ use super::{
     encode_msgpack, normalize_hash, params,
 };
 use rusqlite::OptionalExtension;
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Default)]
 pub struct IdentityAnnounceSummary {
@@ -95,6 +96,85 @@ impl RchSqliteStore {
         };
         transaction.commit()?;
         Ok(missing)
+    }
+
+    /// Read only destination/announced-identity matches, preserving the full
+    /// history reader's raw destination order and returning each row once.
+    pub fn load_identity_announces_for_identities(
+        &self,
+        identities: &[String],
+    ) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
+        if identities.is_empty() {
+            return Ok(Vec::new());
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        let records = {
+            let mut statement = transaction.prepare(
+                "SELECT destination_hash, payload FROM rch_identity_announces
+                 WHERE normalized_destination_hash = ?1
+                 UNION ALL
+                 SELECT destination_hash, payload FROM rch_identity_announces
+                 WHERE normalized_announced_identity_hash = ?1",
+            )?;
+            let mut seen = HashSet::new();
+            let mut payloads = BTreeMap::new();
+            for identity in identities {
+                let Some(identity) = normalize_hash(Some(identity)) else {
+                    continue;
+                };
+                if !seen.insert(identity.clone()) {
+                    continue;
+                }
+                let mut rows = statement.query([identity])?;
+                while let Some(row) = rows.next()? {
+                    payloads.insert(row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?);
+                }
+            }
+            payloads
+                .into_values()
+                .map(|payload| decode_msgpack(&payload))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        transaction.commit()?;
+        Ok(records)
+    }
+
+    /// Probe indexed timestamps without decoding historical payloads.
+    pub fn has_identity_announce_since_for_any(
+        &self,
+        identities: &[&str],
+        cutoff_ts_ms: i64,
+    ) -> Result<bool, RchCoreError> {
+        if identities.is_empty() {
+            return Ok(false);
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        let found = {
+            let mut statement = transaction.prepare(
+                "SELECT EXISTS(
+                    SELECT 1 FROM rch_identity_announces
+                    WHERE normalized_destination_hash = ?1 AND last_seen_ts_ms >= ?2
+                    UNION ALL
+                    SELECT 1 FROM rch_identity_announces
+                    WHERE normalized_announced_identity_hash = ?1 AND last_seen_ts_ms >= ?2
+                 )",
+            )?;
+            let mut found = false;
+            for identity in identities {
+                let Some(identity) = normalize_hash(Some(identity)) else {
+                    continue;
+                };
+                if statement
+                    .query_row(params![identity, cutoff_ts_ms], |row| row.get::<_, bool>(0))?
+                {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        transaction.commit()?;
+        Ok(found)
     }
 
     pub fn has_identity_announce(&self, destination: &str) -> Result<bool, RchCoreError> {
