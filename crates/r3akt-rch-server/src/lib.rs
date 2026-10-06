@@ -102,23 +102,22 @@ use r3akt_rch_bridge::{ReticulumdRpc, ReticulumdRpcClient};
 use r3akt_rch_core::{
     ChatAttachmentRecord, ClientRecord as CoreClientRecord, DeliveryMode, FileAttachmentRecord,
     IdentityStateRecord as CoreIdentityStateRecord, MarkerRecord as CoreMarkerRecord,
-    MessageRecord as CoreMessageRecord, MissionAuditEvent, MissionChangeRecord,
-    OutboundDeliveryPolicy, RchCore, RchDatabaseWipeReport, RchSqliteStore, RetentionPolicy,
-    SubjectOperationRight, SubscriberRecord as CoreSubscriberRecord, SystemEventRecord,
-    TelemetryRecord, TopicRecord as CoreTopicRecord, Visibility,
-    ZonePointRecord as CoreZonePointRecord, ZoneRecord as CoreZoneRecord, classify_delivery_mode,
-    is_supported_checklist_command, is_supported_mission_command, normalize_topic_id,
-    rch_mission_role_bundle_definitions, rch_operation_definitions, rch_role_bundle_definitions,
+    MessageRecord as CoreMessageRecord, MissionAuditEvent, MissionChangeRecord, RchCore,
+    RchDatabaseWipeReport, RchSqliteStore, RetentionPolicy, SubjectOperationRight,
+    SubscriberRecord as CoreSubscriberRecord, SystemEventRecord, TelemetryRecord,
+    TopicRecord as CoreTopicRecord, Visibility, ZonePointRecord as CoreZonePointRecord,
+    ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
+    is_supported_mission_command, normalize_topic_id, rch_mission_role_bundle_definitions,
+    rch_operation_definitions, rch_role_bundle_definitions,
 };
 #[cfg(test)]
 use r3akt_transport_rns::MessageBus;
 #[cfg(test)]
 use r3akt_transport_rns::delivery_snapshot_from_status_result;
 use r3akt_transport_rns::{
-    LxmfDeliverySnapshot, LxmfDeliveryState, LxmfMessageHistoryListRequest, LxmfSdkOutboundBatch,
-    LxmfSdkOutboundBatchMessage, LxmfSdkOutboundBatchResult, LxmfSdkOutboundMessage,
-    LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload, LxmfSdkSharedRecipient,
-    RchServiceIdentityConfig, ReticulumdAnnounceRecord, ZmqDataPlane,
+    LxmfDeliverySnapshot, LxmfDeliveryState, LxmfMessageHistoryListRequest,
+    LxmfSdkOutboundBatchResult, LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload,
+    LxmfSdkSharedRecipient, RchServiceIdentityConfig, ReticulumdAnnounceRecord, ZmqDataPlane,
     delivery_snapshot_receipt_status, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
     poll_reticulumd_events, reticulumd_message_to_envelope,
 };
@@ -147,22 +146,16 @@ use auth_throttle::AuthThrottleState;
 use first_run_setup::{first_run_setup_complete, first_run_setup_status};
 
 const CHAT_ATTACHMENT_MAX_BYTES: usize = 8 * 1024 * 1024;
-const OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS: i64 = 30_000;
-const OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX: u64 = 10;
-const OUTBOUND_DISPATCH_TIMEOUT_MS: i64 = 30_000;
 const OUTBOUND_RETRY_WORKER_POLL_MS: u64 = 500;
 const OUTBOUND_RETRY_WORKER_TICK_TIMEOUT_MS: u64 = 31_000;
 const OUTBOUND_RETRY_BACKOFF_MS: i64 = 500;
 const OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS: i64 = 65_000;
 const OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS: u64 = 30;
-const OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS: u64 = 120;
 const OUTBOUND_RETRY_MAX_ATTEMPTS: u64 = 2;
 const OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS: u64 = 5;
-const OUTBOUND_PROPAGATION_STAMP_COST: u32 = 16;
 const RETICULUMD_RECEIPT_STATUS_POLL_MS: i64 = 5_000;
 const RETICULUMD_RECEIPT_STATUS_PASS_INTERVAL_MS: i64 = 10_000;
 const RETICULUMD_RECEIPT_STATUS_RPC_BUDGET_PER_PASS: usize = 4;
-const CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS: f64 = 45.0;
 #[cfg(not(test))]
 const CONTROL_SYNC_REQUEST_TIMEOUT_MS: u64 = 70_000;
 #[cfg(test)]
@@ -177,8 +170,6 @@ const RETICULUMD_EVENT_CURSOR_SETTING: &str = "reticulumd_event_cursor";
 const LOCAL_TELEMETRY_SAMPLER_INTERVAL_MS: u64 = 600_000;
 const MISSION_CHANGE_FANOUT_CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const OUTBOUND_BROADCAST_ROSTER_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-#[cfg(test)]
-const MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS: i64 = 30 * 60 * 1000;
 #[cfg(not(test))]
 const REM_CHECKLIST_COMMAND_FANOUT_SPACING_MS: i64 = 2_000;
 #[cfg(test)]
@@ -282,7 +273,6 @@ pub struct AppState {
     runtime_exit: Arc<runtime_exit::RuntimeExit>,
     managed_reticulumd: Arc<RwLock<ManagedReticulumdState>>,
     managed_reticulumd_process: Arc<Mutex<Option<Child>>>,
-    outbound_delivery_policy: Arc<RwLock<OutboundDeliveryPolicy>>,
     outbound_retry_worker_stats: Arc<RwLock<OutboundRetryWorkerStats>>,
     reticulumd_inbound_worker_stats: Arc<RwLock<ReticulumdInboundWorkerStats>>,
     reticulumd_receipt_status_next_poll_ts_ms: Arc<RwLock<i64>>,
@@ -560,7 +550,6 @@ impl Default for AppState {
             runtime_exit: Arc::default(),
             managed_reticulumd: Arc::default(),
             managed_reticulumd_process: Arc::default(),
-            outbound_delivery_policy: Arc::default(),
             outbound_retry_worker_stats: Arc::default(),
             reticulumd_inbound_worker_stats: Arc::default(),
             reticulumd_receipt_status_next_poll_ts_ms: Arc::default(),
@@ -868,13 +857,6 @@ impl AppState {
                 return Err(format!(
                     "ZeroMQ daemon is missing required capability {capability}"
                 ));
-            }
-        }
-        if self.reticulumd_rpc_endpoint.is_some() {
-            if let Err(error) = ensure_outbound_propagation_node_selected(self) {
-                eprintln!(
-                    "optional RPC propagation-node control initialization did not complete: {error}"
-                );
             }
         }
         Ok(())
@@ -1971,64 +1953,11 @@ fn repair_success_superseded_outbound_metadata(
         }
         let original = message.delivery_metadata.clone();
         clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
-        prune_success_superseded_receipt_targets(message);
         if message.delivery_metadata != original {
             repaired.push(message.clone());
         }
     }
     repaired
-}
-
-fn prune_success_superseded_receipt_targets(message: &mut OutboundMessageRecord) {
-    if message.delivery_method != "propagated"
-        || !matches!(
-            message.delivery_mode,
-            DeliveryMode::Broadcast | DeliveryMode::Fanout
-        )
-    {
-        return;
-    }
-    let targets = reticulumd_receipt_targets_for_message(message);
-    if targets.len() < 2
-        || !targets
-            .iter()
-            .any(reticulumd_receipt_target_success_terminal)
-    {
-        return;
-    }
-    let retained = targets
-        .iter()
-        .filter(|target| reticulumd_receipt_target_terminal(target))
-        .cloned()
-        .collect::<Vec<_>>();
-    if retained.len() == targets.len() || retained.is_empty() {
-        return;
-    }
-    let pruned_count = targets.len().saturating_sub(retained.len());
-    let receipt_status = retained
-        .iter()
-        .find(|target| reticulumd_receipt_target_success_terminal(target))
-        .and_then(|target| target.status.clone())
-        .unwrap_or_else(|| "sent".to_string());
-    merge_delivery_metadata(
-        &mut message.delivery_metadata,
-        json!({
-            "receipt_pending": false,
-            "receipt_status": receipt_status,
-            "receipt_timeout": false,
-            "reticulumd_dispatch_count": retained.len(),
-            "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&retained),
-            "stale_receipt_targets_pruned": pruned_count,
-        }),
-    );
-    if let Some(object) = message.delivery_metadata.as_object_mut() {
-        object.remove("sdk_attempts");
-        object.remove("sdk_delivery_state");
-        object.remove("sdk_last_updated_ms");
-        object.remove("sdk_message_id");
-        object.remove("sdk_reason_code");
-        object.remove("sdk_terminal");
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2084,133 +2013,6 @@ struct MessagePayload {
 struct InternalMessagePayload {
     destination: String,
     text: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryReceiptPayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(
-        default,
-        rename = "acknowledgement_type",
-        alias = "AcknowledgementType",
-        alias = "acknowledgementType"
-    )]
-    acknowledgement_type: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryFailurePayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(default, rename = "reason", alias = "Reason")]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryRetryPayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(default, rename = "reason", alias = "Reason")]
-    reason: Option<String>,
-    #[serde(default, rename = "attempts", alias = "Attempts")]
-    attempts: Option<u64>,
-    #[serde(
-        default,
-        rename = "next_attempt_at_ts_ms",
-        alias = "NextAttemptAtTsMs",
-        alias = "nextAttemptAtTsMs"
-    )]
-    next_attempt_at_ts_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryPropagationPayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(default, rename = "reason", alias = "Reason")]
-    reason: Option<String>,
-    #[serde(
-        default,
-        rename = "local_propagation_fallback",
-        alias = "LocalPropagationFallback",
-        alias = "localPropagationFallback"
-    )]
-    local_propagation_fallback: Option<bool>,
-    #[serde(
-        default,
-        rename = "propagation_node_hex",
-        alias = "PropagationNodeHex",
-        alias = "propagationNodeHex"
-    )]
-    propagation_node_hex: Option<String>,
-    #[serde(default, rename = "attempts", alias = "Attempts")]
-    attempts: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryDropPayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(default, rename = "reason", alias = "Reason")]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-struct InternalDeliveryAttemptPayload {
-    #[serde(
-        default,
-        rename = "message_id",
-        alias = "MessageID",
-        alias = "messageId"
-    )]
-    message_id: Option<String>,
-    #[serde(default, rename = "destination", alias = "Destination")]
-    destination: Option<String>,
-    #[serde(default, rename = "attempts", alias = "Attempts")]
-    attempts: Option<u64>,
-    #[serde(
-        default,
-        rename = "attempt_started_at_ts_ms",
-        alias = "AttemptStartedAtTsMs",
-        alias = "attemptStartedAtTsMs"
-    )]
-    attempt_started_at_ts_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2854,30 +2656,6 @@ fn create_app_router(state: AppState) -> Router {
         .route(
             "/internal/message",
             get(method_not_allowed).post(internal_post_message),
-        )
-        .route(
-            "/internal/delivery-receipt",
-            get(method_not_allowed).post(internal_delivery_receipt),
-        )
-        .route(
-            "/internal/delivery-failure",
-            get(method_not_allowed).post(internal_delivery_failure),
-        )
-        .route(
-            "/internal/delivery-retry",
-            get(method_not_allowed).post(internal_delivery_retry),
-        )
-        .route(
-            "/internal/delivery-propagation",
-            get(method_not_allowed).post(internal_delivery_propagation),
-        )
-        .route(
-            "/internal/delivery-drop",
-            get(method_not_allowed).post(internal_delivery_drop),
-        )
-        .route(
-            "/internal/delivery-attempt",
-            get(method_not_allowed).post(internal_delivery_attempt),
         )
         .route(
             "/internal/rch/announce-capabilities",
@@ -3641,24 +3419,11 @@ fn import_reticulumd_announce_batch(
 }
 
 fn announce_is_telephony(announce: &ReticulumdAnnounceRecord) -> bool {
-    if normalize_identity_key(&announce.peer)
-        .as_deref()
-        .is_some_and(is_known_pixel_voice_destination)
-    {
-        return true;
-    }
     announce
         .aspect
         .as_deref()
         .map(str::to_ascii_lowercase)
         .is_some_and(|aspect| aspect.contains("telephony") || aspect.contains("voice"))
-}
-
-fn is_known_pixel_voice_destination(destination_hash: &str) -> bool {
-    destination_hash
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("77b253")
 }
 
 fn load_identity_announce_records(
@@ -3741,20 +3506,6 @@ fn record_announce_identity_states(
         identity_states.insert(record.identity_key(), record);
     }
     drop(identity_states);
-    let mut policy = state
-        .outbound_delivery_policy
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    for announce in announces {
-        policy.mark_presence(&announce.destination_hash, announce.last_seen_ts_ms);
-        if let Some(identity) = announce
-            .announced_identity_hash
-            .as_deref()
-            .and_then(normalize_identity_key)
-        {
-            policy.mark_presence(&identity, announce.last_seen_ts_ms);
-        }
-    }
     Ok(())
 }
 
@@ -4153,24 +3904,8 @@ fn relay_reticulumd_inbound_topic_message(
         .collect::<Vec<_>>();
     let is_direct_topic = topic_id.trim().eq_ignore_ascii_case("direct");
     let default_direct_relay = relay_destinations.is_empty() && is_direct_topic;
-    let mut direct_active_relay = false;
-    if is_direct_topic {
-        let active_subscribers = active_direct_subscriber_relay_destinations(
-            state,
-            source.as_str(),
-            &relay_destinations,
-        )?;
-        if active_subscribers.is_empty() {
-            let active_destinations =
-                active_generic_lxmf_relay_destinations(state, source.as_str())?;
-            if !active_destinations.is_empty() {
-                relay_destinations = active_destinations;
-                direct_active_relay = true;
-            }
-        } else {
-            relay_destinations = active_subscribers;
-            direct_active_relay = true;
-        }
+    if default_direct_relay {
+        relay_destinations = recent_roster_relay_destinations(state, &source)?;
     }
     if relay_destinations.is_empty() {
         return Ok(None);
@@ -4192,7 +3927,7 @@ fn relay_reticulumd_inbound_topic_message(
         json!({
             "reticulumd_inbound_relay": true,
             "reticulumd_inbound_default_direct_relay": default_direct_relay,
-            "reticulumd_inbound_direct_active_relay": direct_active_relay,
+
             "inbound_message_id": inbound_record.message_id,
             "source": source.clone(),
             "direction": "outbound",
@@ -4216,6 +3951,28 @@ fn relay_reticulumd_inbound_topic_message(
         }),
     )?;
     Ok(Some(relay))
+}
+
+// Default direct-topic recipients come from the application roster. Explicit
+// subscribers are never replaced based on announce freshness or inferred paths.
+fn recent_roster_relay_destinations(
+    state: &AppState,
+    source: &str,
+) -> Result<Vec<String>, ApiError> {
+    let now = unix_now_ms();
+    let source = normalize_identity_key(source);
+    let mut destinations = state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
+        .filter(|client| !client.paused && client_has_recent_presence(client, now))
+        .filter_map(|client| normalize_identity_key(&client.identity))
+        .filter(|identity| source.as_deref() != Some(identity.as_str()))
+        .collect::<Vec<_>>();
+    destinations.sort();
+    destinations.dedup();
+    Ok(destinations)
 }
 
 fn relay_sender_display_name(state: &AppState, source: &str) -> Result<String, ApiError> {
@@ -4296,59 +4053,6 @@ fn relay_display_name_from_text(value: &str) -> Option<String> {
             })
             .collect(),
     )
-}
-
-fn active_generic_lxmf_relay_destinations(
-    state: &AppState,
-    source: &str,
-) -> Result<Vec<String>, ApiError> {
-    let now = unix_now_ms();
-    let source = normalize_identity_key(source);
-    let mut destinations = state
-        .clients
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .filter_map(|client| {
-            let identity = normalize_identity_key(client.identity.as_str())?;
-            if source.as_deref() == Some(identity.as_str()) {
-                return None;
-            }
-            if client.paused {
-                return None;
-            }
-            let last_seen = unix_ms_from_iso8601(client.last_seen.as_str())?;
-            (last_seen >= now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS)
-                .then_some(identity)
-        })
-        .collect::<Vec<_>>();
-    destinations.sort();
-    destinations.dedup();
-    Ok(destinations)
-}
-
-fn active_direct_subscriber_relay_destinations(
-    state: &AppState,
-    source: &str,
-    subscribers: &[String],
-) -> Result<Vec<String>, ApiError> {
-    let now = unix_now_ms();
-    let source = normalize_identity_key(source);
-    let announces = load_identity_announces_for_identities_for_state(state, subscribers)?;
-    let mut destinations = subscribers
-        .iter()
-        .filter_map(|destination| normalize_identity_key(destination))
-        .filter(|destination| source.as_deref() != Some(destination.as_str()))
-        .filter(|destination| {
-            announces.iter().any(|record| {
-                record.last_seen_ts_ms >= now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS
-                    && identity_announce_matches_destination(record, destination)
-            })
-        })
-        .collect::<Vec<_>>();
-    destinations.sort();
-    destinations.dedup();
-    Ok(destinations)
 }
 
 fn process_reticulumd_inbound_command(
@@ -4793,11 +4497,6 @@ where
     persist_client_row(state, &client)?;
     clients.insert(key, client.clone());
     drop(clients);
-    state
-        .outbound_delivery_policy
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .mark_presence(source, now_ms);
     Ok(client)
 }
 
@@ -6860,61 +6559,6 @@ fn openapi_components() -> Value {
                 },
                 "required": ["accepted"]
             },
-            "InternalDeliveryReceiptPayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "acknowledgement_type": openapi_nullable_string()
-                }
-            },
-            "InternalDeliveryFailurePayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "reason": openapi_nullable_string()
-                }
-            },
-            "InternalDeliveryRetryPayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "reason": openapi_nullable_string(),
-                    "attempts": openapi_nullable_integer(),
-                    "next_attempt_at_ts_ms": openapi_nullable_integer()
-                }
-            },
-            "InternalDeliveryPropagationPayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "reason": openapi_nullable_string(),
-                    "local_propagation_fallback": openapi_nullable(json!({ "type": "boolean" })),
-                    "propagation_node_hex": openapi_nullable_string(),
-                    "attempts": openapi_nullable_integer()
-                }
-            },
-            "InternalDeliveryDropPayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "reason": openapi_nullable_string()
-                }
-            },
-            "InternalDeliveryAttemptPayload": {
-                "type": "object",
-                "properties": {
-                    "message_id": openapi_nullable_string(),
-                    "destination": openapi_nullable_string(),
-                    "attempts": openapi_nullable_integer(),
-                    "attempt_started_at_ts_ms": openapi_nullable_integer()
-                }
-            },
-            "InternalDeliveryCallbackResult": openapi_freeform_object_schema(),
             "AnnounceCapabilities": openapi_freeform_object_schema(),
             "InternalIdentityAnnouncePayload": {
                 "type": "object",
@@ -9349,54 +8993,6 @@ fn openapi_document() -> Value {
                     "Internal message accepted result."
                 )
             },
-            "/internal/delivery-receipt": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryReceiptPayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery receipt callback result."
-                )
-            },
-            "/internal/delivery-failure": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryFailurePayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery failure callback result."
-                )
-            },
-            "/internal/delivery-retry": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryRetryPayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery retry callback result."
-                )
-            },
-            "/internal/delivery-propagation": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryPropagationPayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery propagation callback result."
-                )
-            },
-            "/internal/delivery-drop": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryDropPayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery drop callback result."
-                )
-            },
-            "/internal/delivery-attempt": {
-                "post": openapi_json_request_response_operation(
-                    Vec::new(),
-                    "InternalDeliveryAttemptPayload",
-                    "InternalDeliveryCallbackResult",
-                    "Internal delivery attempt callback result."
-                )
-            },
             "/internal/rch/announce-capabilities": {
                 "get": openapi_schema_response_operation(
                     Vec::new(),
@@ -10611,9 +10207,7 @@ fn outbound_delivery_diagnostics_with_refresh(
     refresh_delivery_state: bool,
 ) -> Result<Value, ApiError> {
     if refresh_delivery_state {
-        finalize_stale_pending_dispatches(state)?;
         poll_reticulumd_delivery_receipts(state)?;
-        finalize_expired_delivery_receipts(state)?;
     }
     let mut callback_diagnostics = outbound_delivery_callback_diagnostics(state)?;
     let messages = state
@@ -10963,82 +10557,69 @@ fn poll_reticulumd_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
             continue;
         }
         update_reticulumd_receipt_target_statuses(state, &message_id, &statuses)?;
-        if statuses.len() == targets.len()
-            && statuses.iter().all(|target| {
-                target
-                    .sdk_snapshot
-                    .as_ref()
-                    .is_some_and(sdk_status_delivered_terminal)
-                    || target
-                        .status
-                        .as_deref()
-                        .is_some_and(|status| status.eq_ignore_ascii_case("delivered"))
-            })
+        apply_reticulumd_target_statuses(state, &message, &statuses, targets.len())?;
+    }
+    Ok(())
+}
+
+fn apply_reticulumd_target_statuses(
+    state: &AppState,
+    message: &OutboundMessageRecord,
+    statuses: &[ReticulumdReceiptTarget],
+    target_count: usize,
+) -> Result<(), ApiError> {
+    if (message
+        .delivery_metadata
+        .get("retry_scheduled")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || message.delivery_metadata["dispatch_status"].as_str() == Some("in_progress"))
+        && message
+            .delivery_metadata
+            .get("target_destinations")
+            .and_then(Value::as_array)
+            .is_some_and(|destinations| !destinations.is_empty())
+    {
+        return Ok(());
+    }
+    if statuses.len() != target_count || statuses.is_empty() {
+        return Ok(());
+    }
+    let all_delivered = statuses.iter().all(|target| {
+        if let Some(snapshot) = &target.sdk_snapshot {
+            sdk_status_delivered_terminal(snapshot)
+        } else {
+            target.status.as_deref() == Some("delivered")
+        }
+    });
+    if !outbound_pre_admission_rejected_destinations(message).is_empty()
+        && statuses.iter().all(reticulumd_receipt_target_terminal)
+        && statuses
+            .iter()
+            .any(reticulumd_receipt_target_success_terminal)
+    {
+        mark_reticulumd_status_sent(state, &message.message_id, "sent")?;
+    } else if all_delivered {
+        mark_reticulumd_status_delivery_receipt(state, &message.message_id, "delivered")?;
+    } else if statuses
+        .iter()
+        .all(reticulumd_receipt_target_success_terminal)
+    {
+        mark_reticulumd_status_sent(state, &message.message_id, "sent")?;
+    } else if let Some(success) = propagated_fanout_partial_success_status(message, statuses) {
+        mark_reticulumd_status_sent(state, &message.message_id, &success)?;
+    } else if statuses.iter().all(reticulumd_receipt_target_terminal) {
+        if let Some(failed) = statuses
+            .iter()
+            .find(|target| reticulumd_receipt_target_failure_terminal(target))
         {
-            mark_reticulumd_status_delivery_receipt(state, &message_id, "delivered")?;
-        } else if statuses.len() == targets.len()
-            && statuses.iter().all(|target| {
-                target
-                    .sdk_snapshot
-                    .as_ref()
-                    .is_some_and(sdk_status_sent_terminal)
-                    || target
-                        .status
-                        .as_deref()
-                        .is_some_and(terminal_reticulumd_sent_status)
-            })
-        {
-            let receipt_status = statuses
-                .first()
-                .and_then(|target| target.status.as_deref())
-                .unwrap_or("sent");
-            mark_reticulumd_status_sent(state, &message_id, receipt_status)?;
-        } else if statuses.len() == targets.len()
-            && statuses
-                .iter()
-                .all(reticulumd_receipt_target_success_terminal)
-        {
-            mark_reticulumd_status_sent(state, &message_id, "sent")?;
-        } else if statuses.len() == targets.len() {
-            if let Some(receipt_status) =
-                propagated_fanout_partial_success_status(&message, &statuses)
-            {
-                mark_reticulumd_status_sent(state, &message_id, receipt_status.as_str())?;
-            } else if !propagated_multi_recipient_has_pending_targets(&message, &statuses) {
-                if let Some(failed) = statuses.iter().find_map(|target| {
-                    target
-                        .status
-                        .as_deref()
-                        .filter(|status| terminal_reticulumd_failure_status(status))
-                        .map(ToString::to_string)
-                        .or_else(|| {
-                            target
-                                .sdk_snapshot
-                                .as_ref()
-                                .filter(|snapshot| sdk_status_failure_terminal(snapshot))
-                                .map(delivery_snapshot_receipt_status)
-                        })
-                }) {
-                    mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
-                }
-            }
-        } else if !propagated_multi_recipient_allows_partial_success(&message) {
-            if let Some(failed) = statuses.iter().find_map(|target| {
-                target
-                    .status
-                    .as_deref()
-                    .filter(|status| terminal_reticulumd_failure_status(status))
-                    .map(ToString::to_string)
-                    .or_else(|| {
-                        target
-                            .sdk_snapshot
-                            .as_ref()
-                            .filter(|snapshot| sdk_status_failure_terminal(snapshot))
-                            .map(delivery_snapshot_receipt_status)
-                    })
-            }) {
-                mark_reticulumd_status_delivery_failure(state, &message_id, &failed)?;
-            }
+            let status = failed
+                .sdk_snapshot
+                .as_ref()
+                .map(delivery_snapshot_receipt_status)
+                .or_else(|| failed.status.clone())
+                .unwrap_or_else(|| "failed".to_string());
+            mark_reticulumd_status_delivery_failure(state, &message.message_id, &status)?;
         }
     }
     Ok(())
@@ -11106,6 +10687,24 @@ struct ReticulumdReceiptTarget {
     last_poll_ts_ms: Option<i64>,
 }
 
+fn receipt_target_sdk_snapshot(
+    object: &serde_json::Map<String, Value>,
+) -> Option<LxmfDeliverySnapshot> {
+    let terminal = object.get("sdk_terminal")?.as_bool()?;
+    let value = json!({
+        "message_id": object.get("sdk_message_id"), "state": object.get("sdk_delivery_state"),
+        "terminal": terminal, "attempts": object.get("sdk_attempts"),
+        "reason_code": object.get("sdk_reason_code"), "last_updated_ms": object.get("sdk_last_updated_ms"),
+    });
+    match serde_json::from_value(value) {
+        Ok(snapshot) => Some(snapshot),
+        Err(error) => {
+            eprintln!("Invalid persisted SDK receipt snapshot: {error}; re-querying daemon");
+            None
+        }
+    }
+}
+
 fn reticulumd_receipt_targets_for_message(
     message: &OutboundMessageRecord,
 ) -> Vec<ReticulumdReceiptTarget> {
@@ -11127,6 +10726,9 @@ fn reticulumd_receipt_targets_for_message(
                     if message_id.is_empty() {
                         return None;
                     }
+                    let sdk_snapshot = receipt_target_sdk_snapshot(object);
+                    let typed_snapshot_invalid =
+                        object.contains_key("sdk_terminal") && sdk_snapshot.is_none();
                     Some(ReticulumdReceiptTarget {
                         message_id: message_id.to_string(),
                         destination: destination.to_string(),
@@ -11134,9 +10736,9 @@ fn reticulumd_receipt_targets_for_message(
                             .get("status")
                             .and_then(Value::as_str)
                             .map(str::trim)
-                            .filter(|status| !status.is_empty())
+                            .filter(|status| !typed_snapshot_invalid && !status.is_empty())
                             .map(ToString::to_string),
-                        sdk_snapshot: None,
+                        sdk_snapshot,
                         last_poll_ts_ms: object
                             .get("receipt_last_poll_ts_ms")
                             .and_then(Value::as_i64),
@@ -11188,20 +10790,13 @@ fn update_reticulumd_receipt_target_statuses(
     let mut pending_update = message_persistence::Update::new(&state, message);
     let message = &mut *pending_update;
     let mut targets = reticulumd_receipt_targets_for_message(message);
-    let normalize_peer_not_announced = propagated_multi_recipient_allows_partial_success(message);
     for status in statuses {
         if let Some(target) = targets
             .iter_mut()
             .find(|target| target.message_id == status.message_id)
         {
-            if normalize_peer_not_announced && reticulumd_receipt_target_peer_not_announced(status)
-            {
-                target.status = Some("propagation pending: peer not announced".to_string());
-                target.sdk_snapshot = None;
-            } else {
-                target.status.clone_from(&status.status);
-                target.sdk_snapshot.clone_from(&status.sdk_snapshot);
-            }
+            target.status.clone_from(&status.status);
+            target.sdk_snapshot.clone_from(&status.sdk_snapshot);
             target.last_poll_ts_ms = status.last_poll_ts_ms;
         }
     }
@@ -11401,35 +10996,22 @@ fn sdk_status_failure_terminal(snapshot: &LxmfDeliverySnapshot) -> bool {
 }
 
 fn reticulumd_receipt_target_success_terminal(target: &ReticulumdReceiptTarget) -> bool {
-    target.sdk_snapshot.as_ref().is_some_and(|snapshot| {
-        sdk_status_delivered_terminal(snapshot) || sdk_status_sent_terminal(snapshot)
-    }) || target.status.as_deref().is_some_and(|status| {
+    if let Some(snapshot) = &target.sdk_snapshot {
+        return sdk_status_delivered_terminal(snapshot) || sdk_status_sent_terminal(snapshot);
+    }
+    target.status.as_deref().is_some_and(|status| {
         status.eq_ignore_ascii_case("delivered") || terminal_reticulumd_sent_status(status)
     })
 }
 
 fn reticulumd_receipt_target_failure_terminal(target: &ReticulumdReceiptTarget) -> bool {
+    if let Some(snapshot) = &target.sdk_snapshot {
+        return sdk_status_failure_terminal(snapshot);
+    }
     target
         .status
         .as_deref()
         .is_some_and(terminal_reticulumd_failure_status)
-        || target
-            .sdk_snapshot
-            .as_ref()
-            .is_some_and(sdk_status_failure_terminal)
-}
-
-fn reticulumd_receipt_target_peer_not_announced(target: &ReticulumdReceiptTarget) -> bool {
-    target.status.as_deref().is_some_and(|status| {
-        status
-            .trim()
-            .eq_ignore_ascii_case("failed: peer not announced")
-    }) || target.sdk_snapshot.as_ref().is_some_and(|snapshot| {
-        snapshot
-            .reason_code
-            .as_deref()
-            .is_some_and(|reason| reason.eq_ignore_ascii_case("peer_not_announced"))
-    })
 }
 
 fn reticulumd_receipt_target_terminal(target: &ReticulumdReceiptTarget) -> bool {
@@ -11466,7 +11048,6 @@ fn propagated_fanout_partial_success_status(
     let all_resolved = statuses.iter().all(|target| {
         reticulumd_receipt_target_success_terminal(target)
             || propagated_multi_recipient_target_failure_terminal(message, target)
-            || reticulumd_receipt_target_peer_not_announced(target)
     });
     if !has_success || !all_resolved {
         return None;
@@ -11501,27 +11082,14 @@ fn mark_reticulumd_status_delivery_receipt(
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let Some(message) = messages.iter_mut().find(|message| {
             message.message_id == message_id
-                && !matches!(
-                    normalized_delivery_state(message).as_str(),
-                    "delivered" | "failed"
-                )
+                && !matches!(normalized_delivery_state(message).as_str(), "delivered")
         }) else {
             return Ok(());
         };
         let mut pending_update = message_persistence::Update::new(&state, message);
         let message = &mut *pending_update;
-        let is_propagated = message.delivery_method == "propagated";
-        let delivered_state = if is_propagated {
-            "propagated"
-        } else {
-            "delivered"
-        };
-        let acknowledgement_type = if is_propagated {
-            "propagation_acceptance"
-        } else {
-            "delivery_receipt"
-        };
-        message.delivery_state = delivered_state.to_string();
+        let acknowledgement_type = "delivery_receipt";
+        message.delivery_state = "delivered".to_string();
         clear_success_superseded_delivery_metadata(&mut message.delivery_metadata);
         merge_delivery_metadata(
             &mut message.delivery_metadata,
@@ -11539,22 +11107,9 @@ fn mark_reticulumd_status_delivery_receipt(
     };
     broadcast_message_event(&state, &message);
     let destination = message.destination.as_deref().unwrap_or("unknown");
-    let is_propagated = message.delivery_method == "propagated";
-    let event_type = if is_propagated {
-        "message_propagated"
-    } else {
-        "message_delivered"
-    };
-    let event_message = if is_propagated {
-        format!("Message accepted for propagation to {destination}")
-    } else {
-        format!("Message delivered to {destination}")
-    };
-    let acknowledgement_type = if is_propagated {
-        "propagation_acceptance"
-    } else {
-        "delivery_receipt"
-    };
+    let event_type = "message_delivered";
+    let event_message = format!("Message delivered to {destination}");
+    let acknowledgement_type = "delivery_receipt";
     let _ = record_system_event(
         state,
         event_type,
@@ -11580,10 +11135,7 @@ fn mark_reticulumd_status_sent(
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let Some(message) = messages.iter_mut().find(|message| {
             message.message_id == message_id
-                && !matches!(
-                    normalized_delivery_state(message).as_str(),
-                    "delivered" | "failed"
-                )
+                && !matches!(normalized_delivery_state(message).as_str(), "delivered")
         }) else {
             return Ok(());
         };
@@ -11615,11 +11167,14 @@ fn propagated_fanout_partial_success_metadata(message: &OutboundMessageRecord) -
         return json!({});
     }
     let targets = reticulumd_receipt_targets_for_message(message);
-    let failed_destinations = targets
+    let mut failed_destinations = targets
         .iter()
         .filter(|target| propagated_multi_recipient_target_failure_terminal(message, target))
         .filter_map(|target| normalize_identity_key(target.destination.as_str()))
         .collect::<Vec<_>>();
+    failed_destinations.extend(outbound_pre_admission_rejected_destinations(message));
+    failed_destinations.sort();
+    failed_destinations.dedup();
     let propagated_destinations = targets
         .iter()
         .filter(|target| reticulumd_receipt_target_success_terminal(target))
@@ -11636,31 +11191,17 @@ fn propagated_fanout_partial_success_metadata(message: &OutboundMessageRecord) -
 }
 
 fn propagated_multi_recipient_allows_partial_success(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "propagated"
-        && matches!(
-            message.delivery_mode,
-            DeliveryMode::Fanout | DeliveryMode::Broadcast
-        )
-}
-
-fn propagated_multi_recipient_has_pending_targets(
-    message: &OutboundMessageRecord,
-    statuses: &[ReticulumdReceiptTarget],
-) -> bool {
-    propagated_multi_recipient_allows_partial_success(message)
-        && statuses.iter().any(|target| {
-            !reticulumd_receipt_target_success_terminal(target)
-                && !propagated_multi_recipient_target_failure_terminal(message, target)
-        })
+    matches!(
+        message.delivery_mode,
+        DeliveryMode::Fanout | DeliveryMode::Broadcast
+    )
 }
 
 fn propagated_multi_recipient_target_failure_terminal(
-    message: &OutboundMessageRecord,
+    _message: &OutboundMessageRecord,
     target: &ReticulumdReceiptTarget,
 ) -> bool {
     reticulumd_receipt_target_failure_terminal(target)
-        && !(propagated_multi_recipient_allows_partial_success(message)
-            && reticulumd_receipt_target_peer_not_announced(target))
 }
 
 fn mark_reticulumd_status_delivery_failure(
@@ -11702,11 +11243,6 @@ fn mark_reticulumd_status_delivery_failure(
         pending_update.commit()?
     };
     broadcast_message_event(&state, &message);
-    if message.delivery_method == "direct" {
-        if let Some(destination) = message.destination.as_deref() {
-            mark_direct_delivery_failure(state, destination)?;
-        }
-    }
     let destination = message.destination.as_deref().unwrap_or("unknown");
     if normalized_delivery_state(&message) == "queued" {
         let retry_reason = message
@@ -11734,229 +11270,6 @@ fn mark_reticulumd_status_delivery_failure(
     Ok(())
 }
 
-fn finalize_stale_pending_dispatches(state: &AppState) -> Result<(), ApiError> {
-    let now_ms = unix_now_ms();
-    let mut changed_messages = Vec::new();
-    let mut system_events = Vec::new();
-    let mut direct_failure_destinations = Vec::new();
-    let mut messages = state
-        .messages
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    for message in messages.iter() {
-        if !dispatch_pending(message) || !dispatch_deadline_expired(message, now_ms) {
-            continue;
-        }
-        let mut candidate = message.clone();
-        let message = &mut candidate;
-        if message.delivery_method == "direct" {
-            if let Some(destination) = message.destination.clone() {
-                direct_failure_destinations.push(destination);
-            }
-        }
-        let attempts = outbound_attempts(message).saturating_add(1);
-        let max_attempts = outbound_effective_max_attempts_for_retry(message, false);
-        if direct_dispatch_timeout_should_queue_propagation(message) {
-            message.delivery_state = "queued".to_string();
-            message.delivery_method = "propagated".to_string();
-            message.delivery_policy_reason =
-                direct_timeout_propagation_policy_reason(message).to_string();
-            clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": 0,
-                    "direct_attempts": attempts,
-                    "delivery_mode": "propagated",
-                    "dispatch_status": "queued",
-                    "dispatch_timeout": true,
-                    "dispatch_timed_out_at_ts_ms": now_ms,
-                    "error": "send_timeout",
-                    "fallback_reason": "direct_dispatch_timeout",
-                    "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
-                    "previous_delivery_method": "direct",
-                    "receipt_pending": false,
-                    "retry_reason": "send_timeout",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": now_ms,
-                }),
-            );
-            changed_messages.push(message.clone());
-            system_events.push((
-                "message_propagation_queued",
-                direct_timeout_propagation_event_message(message).to_string(),
-                outbound_delivery_callback_metadata(
-                    outbound_delivery_propagation_metadata(message, "direct_dispatch_timeout"),
-                    "propagation_fallback",
-                ),
-            ));
-            continue;
-        }
-        if (message.delivery_method != "propagated"
-            || is_rem_command_message(message)
-            || propagated_multi_recipient_allows_partial_success(message))
-            && outbound_retry_attempt_allowed(message, attempts, max_attempts)
-        {
-            let next_attempt_at_ts_ms = now_ms.saturating_add(
-                outbound_backoff_ms(message)
-                    .saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX)),
-            );
-            message.delivery_state = "queued".to_string();
-            merge_delivery_metadata(
-                &mut message.delivery_metadata,
-                json!({
-                    "acked": false,
-                    "attempts": attempts,
-                    "dispatch_status": "queued",
-                    "dispatch_timeout": true,
-                    "dispatch_timed_out_at_ts_ms": now_ms,
-                    "error": "send_timeout",
-                    "receipt_pending": false,
-                    "retry_reason": "send_timeout",
-                    "retry_scheduled": true,
-                    "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
-                }),
-            );
-            changed_messages.push(message.clone());
-            let destination = message
-                .destination
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string();
-            system_events.push((
-                "message_delivery_retrying",
-                format!("Retrying message delivery to {destination}"),
-                outbound_delivery_retry_metadata(message, "send_timeout"),
-            ));
-            continue;
-        }
-        message.delivery_state = "failed".to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "attempts": attempts,
-                "dispatch_status": "failed",
-                "dispatch_timeout": true,
-                "dispatch_timed_out_at_ts_ms": now_ms,
-                "error": "send_timeout",
-                "receipt_pending": false,
-                "retry_scheduled": false,
-            }),
-        );
-        changed_messages.push(message.clone());
-        let destination = message
-            .destination
-            .as_deref()
-            .unwrap_or("unknown")
-            .to_string();
-        system_events.push((
-            "message_delivery_failed",
-            format!("Message delivery failed for {destination}"),
-            outbound_delivery_failure_metadata(message, "send_timeout"),
-        ));
-    }
-    message_persistence::commit_batch(state, &mut messages, &changed_messages)?;
-    drop(messages);
-    for destination in direct_failure_destinations {
-        mark_direct_delivery_failure(state, destination.as_str())?;
-    }
-    if changed_messages.is_empty() {
-        return Ok(());
-    }
-    for message in changed_messages {
-        broadcast_message_event(state, &message);
-    }
-    for (event_type, message, metadata) in system_events {
-        let _ = record_system_event(state, event_type, &message, metadata)?;
-    }
-    Ok(())
-}
-
-fn finalize_expired_delivery_receipts(state: &AppState) -> Result<(), ApiError> {
-    let now_ms = unix_now_ms();
-    let mut changed_messages = Vec::new();
-    let mut timeout_events = Vec::new();
-    let mut messages = state
-        .messages
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    for message in messages.iter() {
-        if !delivery_receipt_pending(message) || !receipt_deadline_expired(message, now_ms) {
-            continue;
-        }
-        let mut candidate = message.clone();
-        let message = &mut candidate;
-        let attempts = outbound_attempts(message).saturating_add(1);
-        let active_reticulumd_status = reticulumd_receipt_targets_for_message(message)
-            .iter()
-            .find_map(|target| {
-                target
-                    .status
-                    .as_deref()
-                    .filter(|status| reticulumd_status_still_active(Some(status)))
-                    .map(ToString::to_string)
-            });
-        let active_extension_count = message
-            .delivery_metadata
-            .get("receipt_active_extension_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        if let Some(active_reticulumd_status) = active_reticulumd_status {
-            if active_extension_count < OUTBOUND_RECEIPT_ACTIVE_EXTENSION_MAX {
-                let receipt_timeout_ms = outbound_receipt_timeout_ms(message);
-                merge_delivery_metadata(
-                    &mut message.delivery_metadata,
-                    json!({
-                        "receipt_pending": true,
-                        "receipt_status": active_reticulumd_status,
-                        "receipt_timeout": false,
-                        "receipt_active_extension_count": active_extension_count.saturating_add(1),
-                        "receipt_deadline_ts_ms": now_ms + receipt_timeout_ms,
-                    }),
-                );
-                changed_messages.push(message.clone());
-                continue;
-            }
-        }
-        message.delivery_state = "failed".to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "attempts": attempts,
-                "dispatch_status": "failed",
-                "error": "delivery_receipt_timeout",
-                "receipt_pending": false,
-                "receipt_timeout": true,
-                "receipt_timeout_at_ts_ms": now_ms,
-                "retry_scheduled": false,
-                "retry_owner": "reticulumd",
-            }),
-        );
-        timeout_events.push((
-            message
-                .destination
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string(),
-            outbound_delivery_failure_metadata(message, "delivery_receipt_timeout"),
-        ));
-        changed_messages.push(message.clone());
-    }
-    message_persistence::commit_batch(state, &mut messages, &changed_messages)?;
-    drop(messages);
-    for (destination, metadata) in timeout_events {
-        let _ = record_system_event(
-            state,
-            "message_delivery_failed",
-            &format!("Message delivery failed for {destination}"),
-            metadata,
-        )?;
-    }
-    Ok(())
-}
-
 fn outbound_delivery_failure_metadata(message: &OutboundMessageRecord, reason: &str) -> Value {
     json!({
         "MessageID": message.message_id,
@@ -11979,48 +11292,6 @@ fn outbound_delivery_retry_metadata(message: &OutboundMessageRecord, reason: &st
         "State": message.delivery_state,
         "DeliveryMetadata": message.delivery_metadata,
         "retry_reason": reason,
-        "delivery_method": message.delivery_method,
-        "delivery_policy_reason": message.delivery_policy_reason,
-        "route_type": delivery_route_type(message.delivery_mode),
-    })
-}
-
-fn outbound_delivery_propagation_metadata(message: &OutboundMessageRecord, reason: &str) -> Value {
-    json!({
-        "MessageID": message.message_id,
-        "TopicID": message.topic_id,
-        "Destination": message.destination,
-        "State": message.delivery_state,
-        "DeliveryMetadata": message.delivery_metadata,
-        "fallback_reason": reason,
-        "delivery_method": if message
-            .delivery_metadata
-            .get("local_propagation_fallback")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            "local_propagation_store"
-        } else {
-            "propagated"
-        },
-        "route_type": delivery_route_type(message.delivery_mode),
-        "propagation_node": message
-            .delivery_metadata
-            .get("propagation_node_hex")
-            .cloned()
-            .unwrap_or(Value::Null),
-    })
-}
-
-fn outbound_delivery_drop_metadata(message: &OutboundMessageRecord, reason: &str) -> Value {
-    json!({
-        "MessageID": message.message_id,
-        "TopicID": message.topic_id,
-        "Destination": message.destination,
-        "State": message.delivery_state,
-        "Content": message.content,
-        "DeliveryMetadata": message.delivery_metadata,
-        "drop_reason": reason,
         "delivery_method": message.delivery_method,
         "delivery_policy_reason": message.delivery_policy_reason,
         "route_type": delivery_route_type(message.delivery_mode),
@@ -12064,48 +11335,7 @@ fn normalized_delivery_state(message: &OutboundMessageRecord) -> String {
 }
 
 fn effective_delivery_state(message: &OutboundMessageRecord) -> String {
-    let state = normalized_delivery_state(message);
-    if state == "failed" && retryable_propagation_fallback_has_successful_dispatch(message) {
-        "propagated".to_string()
-    } else if state == "failed" && retryable_propagation_fallback_has_active_dispatch(message) {
-        "propagating".to_string()
-    } else if state == "failed" && retryable_propagation_fallback_repair_pending(message) {
-        "queued".to_string()
-    } else if state == "propagated" && propagated_dispatch_has_active_targets(message) {
-        "propagating".to_string()
-    } else {
-        state
-    }
-}
-
-fn retryable_propagation_fallback_repair_pending(message: &OutboundMessageRecord) -> bool {
-    propagated_direct_timeout_fallback(message)
-        && propagated_fallback_has_retryable_error(message)
-        && message
-            .delivery_metadata
-            .get("dispatch_status")
-            .and_then(Value::as_str)
-            .is_some_and(|status| matches!(status, "failed" | "queued"))
-        && message
-            .delivery_metadata
-            .get("reticulumd_dispatch_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            == 0
-}
-
-fn propagated_dispatch_has_active_targets(message: &OutboundMessageRecord) -> bool {
-    if message.delivery_method != "propagated" || !message_has_reticulumd_receipt_targets(message) {
-        return false;
-    }
-    let targets = reticulumd_receipt_targets_for_message(message);
-    !targets.is_empty()
-        && targets
-            .iter()
-            .any(|target| reticulumd_status_still_active(target.status.as_deref()))
-        && !targets
-            .iter()
-            .any(reticulumd_receipt_target_success_terminal)
+    normalized_delivery_state(message)
 }
 
 fn message_has_reticulumd_receipt_targets(message: &OutboundMessageRecord) -> bool {
@@ -12114,21 +11344,6 @@ fn message_has_reticulumd_receipt_targets(message: &OutboundMessageRecord) -> bo
         .get("reticulumd_receipt_targets")
         .and_then(Value::as_array)
         .is_some_and(|targets| !targets.is_empty())
-}
-
-fn retryable_propagation_fallback_has_active_dispatch(message: &OutboundMessageRecord) -> bool {
-    propagated_direct_timeout_fallback(message)
-        && propagated_fallback_has_retryable_error(message)
-        && propagated_dispatch_has_active_targets(message)
-}
-
-fn retryable_propagation_fallback_has_successful_dispatch(message: &OutboundMessageRecord) -> bool {
-    propagated_direct_timeout_fallback(message)
-        && propagated_fallback_has_retryable_error(message)
-        && message_has_reticulumd_receipt_targets(message)
-        && reticulumd_receipt_targets_for_message(message)
-            .iter()
-            .any(reticulumd_receipt_target_success_terminal)
 }
 
 fn delivery_receipt_pending(message: &OutboundMessageRecord) -> bool {
@@ -12149,35 +11364,20 @@ fn delivery_receipt_pending(message: &OutboundMessageRecord) -> bool {
 }
 
 fn reticulumd_status_poll_candidate(message: &OutboundMessageRecord) -> bool {
-    let state = normalized_delivery_state(message);
-    if state == "delivered"
-        || (state == "failed" && !retryable_propagation_fallback_has_active_dispatch(message))
-    {
-        return false;
+    if message_has_reticulumd_receipt_targets(message) {
+        return delivery_receipt_pending(message)
+            || (normalized_delivery_state(message) == "failed"
+                && !outbound_pre_admission_rejected_destinations(message).is_empty()
+                && reticulumd_receipt_targets_for_message(message)
+                    .iter()
+                    .any(reticulumd_receipt_target_success_terminal))
+            || reticulumd_receipt_targets_for_message(message)
+                .iter()
+                .any(|target| !reticulumd_receipt_target_terminal(target));
     }
-    if delivery_receipt_pending(message) {
-        return true;
-    }
-    if message
-        .delivery_metadata
-        .get("reticulumd_dispatch_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        == 0
-    {
-        return false;
-    }
-    reticulumd_receipt_targets_for_message(message)
-        .iter()
-        .any(|target| reticulumd_status_still_active(target.status.as_deref()))
-}
-
-fn reticulumd_status_still_active(status: Option<&str>) -> bool {
-    let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) else {
-        return true;
-    };
-    let normalized = status.to_ascii_lowercase();
-    normalized == "pending" || normalized.starts_with("sending") || normalized == "queued"
+    normalized_delivery_state(message) != "delivered"
+        && normalized_delivery_state(message) != "failed"
+        && delivery_receipt_pending(message)
 }
 
 fn reticulumd_receipt_pending_after_dispatch(
@@ -12200,21 +11400,6 @@ fn reticulumd_receipt_pending_after_dispatch(
                 && message.delivery_method == "propagated"))
 }
 
-fn dispatch_pending(message: &OutboundMessageRecord) -> bool {
-    if message
-        .delivery_metadata
-        .get("dispatch_status")
-        .and_then(Value::as_str)
-        != Some("in_progress")
-    {
-        return false;
-    }
-    normalized_delivery_state(message) == "queued"
-        || (normalized_delivery_state(message) == "failed"
-            && propagated_direct_timeout_fallback(message)
-            && propagated_fallback_has_retryable_error(message))
-}
-
 fn dispatch_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 {
     let started_ts_ms = message
         .delivery_metadata
@@ -12225,15 +11410,6 @@ fn dispatch_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 
     now_ms.saturating_sub(started_ts_ms).max(0)
 }
 
-fn dispatch_deadline_expired(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    let deadline_ts_ms = message
-        .delivery_metadata
-        .get("dispatch_deadline_ts_ms")
-        .and_then(Value::as_i64)
-        .unwrap_or_else(|| message.created_ts_ms + OUTBOUND_DISPATCH_TIMEOUT_MS);
-    deadline_ts_ms <= now_ms
-}
-
 fn receipt_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 {
     let registered_ts_ms = message
         .delivery_metadata
@@ -12241,15 +11417,6 @@ fn receipt_pending_age_ms(message: &OutboundMessageRecord, now_ms: i64) -> i64 {
         .and_then(Value::as_i64)
         .unwrap_or(message.created_ts_ms);
     now_ms.saturating_sub(registered_ts_ms).max(0)
-}
-
-fn receipt_deadline_expired(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    let deadline_ts_ms = message
-        .delivery_metadata
-        .get("receipt_deadline_ts_ms")
-        .and_then(Value::as_i64)
-        .unwrap_or_else(|| message.created_ts_ms + outbound_receipt_timeout_ms(message));
-    deadline_ts_ms <= now_ms
 }
 
 async fn help_text() -> impl IntoResponse {
@@ -12773,508 +11940,6 @@ async fn internal_post_message(
     Ok(Json(json!({ "accepted": true })))
 }
 
-async fn internal_delivery_receipt(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryReceiptPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let acknowledgement_type = payload
-        .acknowledgement_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("delivery_receipt");
-    let is_propagated = acknowledgement_type == "propagation_acceptance";
-    let delivered_state = if is_propagated {
-        "propagated"
-    } else {
-        "delivered"
-    };
-    let now_ms = unix_now_ms();
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && delivery_receipt_pending(message)
-                    })
-            })
-            .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
-        let current = message.clone();
-        let Some(mut pending_update) =
-            message_persistence::Update::for_receipt(&state, message, is_propagated)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        message.delivery_state = delivered_state.to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": true,
-                "receipt_pending": false,
-                "receipt_ack_ts_ms": now_ms,
-                "acknowledgement_type": acknowledgement_type,
-                "receipt_timeout": false,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    let destination = message.destination.as_deref().unwrap_or("unknown");
-    let event_type = if is_propagated {
-        "message_propagated"
-    } else {
-        "message_delivered"
-    };
-    let event_message = if is_propagated {
-        format!("Message accepted for propagation to {destination}")
-    } else {
-        format!("Message delivered to {destination}")
-    };
-    let event = record_system_event(
-        &state,
-        event_type,
-        &event_message,
-        outbound_delivery_callback_metadata(
-            outbound_delivery_receipt_metadata(&message, acknowledgement_type),
-            "delivery_receipt",
-        ),
-    )?;
-    Ok(Json(json!({
-        "status": delivered_state,
-        "message": message,
-        "event": event,
-    })))
-}
-
-async fn internal_delivery_failure(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryFailurePayload>,
-) -> Result<Json<Value>, ApiError> {
-    let reason = payload
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("delivery_failed");
-    let now_ms = unix_now_ms();
-    let message = {
-        let messages = state
-            .messages
-            .read()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        messages
-            .iter()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && delivery_receipt_pending(message)
-                    })
-            })
-            .cloned()
-            .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?
-    };
-    if delivery_failure_callback_should_retry(&message) {
-        if let Some(retry_message) =
-            schedule_outbound_retry_after_failure(&state, &message, reason.to_string())?
-        {
-            let destination = retry_message.destination.as_deref().unwrap_or("unknown");
-            let event = record_system_event(
-                &state,
-                "message_delivery_retrying",
-                &format!("Retrying message delivery to {destination}"),
-                outbound_delivery_callback_metadata(
-                    outbound_delivery_retry_metadata(&retry_message, reason),
-                    "delivery_failure",
-                ),
-            )?;
-            return Ok(Json(json!({
-                "status": "retry_scheduled",
-                "message": retry_message,
-                "event": event,
-            })));
-        }
-    }
-    let target_message_id = message.message_id.clone();
-    let expected = message;
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| message.message_id == target_message_id)
-            .ok_or_else(|| ApiError::NotFound("Pending delivery receipt not found".to_string()))?;
-        let current = message.clone();
-        let Some(mut pending_update) =
-            message_persistence::Update::for_attempt(&state, message, &expected)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        message.delivery_state = "failed".to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "dispatch_status": "failed",
-                "error": reason,
-                "receipt_pending": false,
-                "delivery_failed_ts_ms": now_ms,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    let destination = message.destination.as_deref().unwrap_or("unknown");
-    let event = record_system_event(
-        &state,
-        "message_delivery_failed",
-        &format!("Message delivery failed for {destination}"),
-        outbound_delivery_callback_metadata(
-            outbound_delivery_failure_metadata(&message, reason),
-            "delivery_failure",
-        ),
-    )?;
-    Ok(Json(json!({
-        "status": "failed",
-        "message": message,
-        "event": event,
-    })))
-}
-
-async fn internal_delivery_retry(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryRetryPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let reason = payload
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("delivery_retry");
-    let now_ms = unix_now_ms();
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && delivery_receipt_pending(message)
-                    })
-            })
-            .ok_or_else(|| ApiError::NotFound("Pending delivery retry not found".to_string()))?;
-        let current = message.clone();
-        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        let attempts = payload.attempts.unwrap_or_else(|| {
-            message
-                .delivery_metadata
-                .get("attempts")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                .saturating_add(1)
-        });
-        message.delivery_state = "queued".to_string();
-        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "attempts": attempts,
-                "dispatch_status": "queued",
-                "retry_scheduled": true,
-                "retry_reason": reason,
-                "last_attempt_failed_at_ts_ms": now_ms,
-                "receipt_pending": false,
-                "receipt_timeout": false,
-                "next_attempt_at_ts_ms": payload.next_attempt_at_ts_ms,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    let destination = message.destination.as_deref().unwrap_or("unknown");
-    let event = record_system_event(
-        &state,
-        "message_delivery_retrying",
-        &format!("Retrying message delivery to {destination}"),
-        outbound_delivery_callback_metadata(
-            outbound_delivery_retry_metadata(&message, reason),
-            "delivery_retry",
-        ),
-    )?;
-    Ok(Json(json!({
-        "status": "retry_scheduled",
-        "message": message,
-        "event": event,
-    })))
-}
-
-async fn internal_delivery_propagation(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryPropagationPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let reason = payload
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("direct_delivery_failed");
-    let local_propagation_fallback = payload.local_propagation_fallback.unwrap_or(false);
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && message_persistence::dispatch_update_allowed(message)
-                    })
-            })
-            .ok_or_else(|| {
-                ApiError::NotFound("Pending propagation fallback not found".to_string())
-            })?;
-        let current = message.clone();
-        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        let attempts = payload.attempts.unwrap_or_else(|| {
-            message
-                .delivery_metadata
-                .get("attempts")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-        });
-        message.delivery_state = "queued".to_string();
-        message.delivery_method = "propagated".to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "attempts": attempts,
-                "delivery_mode": "propagated",
-                "dispatch_status": "queued",
-                "fallback_reason": reason,
-                "local_propagation_fallback": local_propagation_fallback,
-                "propagation_node_hex": payload.propagation_node_hex,
-                "receipt_pending": false,
-                "retry_scheduled": false,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    let destination = message.destination.as_deref().unwrap_or("unknown");
-    let event_message = if local_propagation_fallback {
-        format!("Direct delivery exhausted; stored message for local propagation to {destination}")
-    } else {
-        let node = message
-            .delivery_metadata
-            .get("propagation_node_hex")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("unknown");
-        format!(
-            "Direct delivery exhausted; queued message for propagation to {destination} via {node}"
-        )
-    };
-    let event = record_system_event(
-        &state,
-        "message_propagation_queued",
-        &event_message,
-        outbound_delivery_callback_metadata(
-            outbound_delivery_propagation_metadata(&message, reason),
-            "propagation_fallback",
-        ),
-    )?;
-    Ok(Json(json!({
-        "status": "propagation_queued",
-        "message": message,
-        "event": event,
-    })))
-}
-
-async fn internal_delivery_drop(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryDropPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let reason = payload
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("queue_saturated");
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && message_persistence::dispatch_update_allowed(message)
-                    })
-            })
-            .ok_or_else(|| ApiError::NotFound("Pending delivery drop not found".to_string()))?;
-        let current = message.clone();
-        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        message.delivery_state = "failed".to_string();
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "acked": false,
-                "dispatch_status": "failed",
-                "drop_reason": reason,
-                "receipt_pending": false,
-                "retry_scheduled": false,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    let event = record_system_event(
-        &state,
-        "message_delivery_failed",
-        "Outbound payload dropped before delivery",
-        outbound_delivery_callback_metadata(
-            outbound_delivery_drop_metadata(&message, reason),
-            "payload_drop",
-        ),
-    )?;
-    Ok(Json(json!({
-        "status": "dropped",
-        "message": message,
-        "event": event,
-    })))
-}
-
-async fn internal_delivery_attempt(
-    State(state): State<AppState>,
-    Json(payload): Json<InternalDeliveryAttemptPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let now_ms = payload.attempt_started_at_ts_ms.unwrap_or_else(unix_now_ms);
-    let message = {
-        let mut messages = state
-            .messages
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let message = messages
-            .iter_mut()
-            .find(|message| {
-                payload
-                    .message_id
-                    .as_deref()
-                    .is_some_and(|message_id| message.message_id == message_id)
-                    || payload.destination.as_deref().is_some_and(|destination| {
-                        message.destination.as_deref() == Some(destination)
-                            && message_persistence::dispatch_update_allowed(message)
-                    })
-            })
-            .ok_or_else(|| ApiError::NotFound("Pending delivery attempt not found".to_string()))?;
-        let current = message.clone();
-        let Some(mut pending_update) = message_persistence::Update::for_callback(&state, message)
-        else {
-            return Ok(Json(json!({
-                "status": current.delivery_state,
-                "message": current,
-                "event": Value::Null,
-            })));
-        };
-        let message = &mut *pending_update;
-        let attempts = payload.attempts.unwrap_or_else(|| {
-            message
-                .delivery_metadata
-                .get("attempts")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-        });
-        message.delivery_state = "queued".to_string();
-        clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
-        merge_delivery_metadata(
-            &mut message.delivery_metadata,
-            json!({
-                "attempts": attempts,
-                "callback_source": "reticulumd_internal_adapter",
-                "callback_type": "delivery_attempt",
-                "last_attempt_at": iso8601_from_unix_ms(now_ms),
-                "last_attempt_at_ts_ms": now_ms,
-                "retry_scheduled": false,
-            }),
-        );
-        pending_update.commit()?
-    };
-    broadcast_message_event(&state, &message);
-    Ok(Json(json!({
-        "status": "attempt_started",
-        "message": message,
-    })))
-}
-
 fn internal_message_published_event(topic_path: &str, message_id: &str) -> Value {
     json!({
         "api_version": "v1",
@@ -13358,16 +12023,6 @@ async fn internal_identity_announce(
         .or_else(|| normalize_identity_key(&announce.destination_hash))
         .ok_or_else(|| ApiError::Internal("identity announce key was not recorded".to_string()))?;
     record_announce_identity_state(&state, &announce)?;
-    {
-        let mut policy = state
-            .outbound_delivery_policy
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        policy.mark_presence(&announce.destination_hash, announce.last_seen_ts_ms);
-        if primary_identity != announce.destination_hash {
-            policy.mark_presence(&primary_identity, announce.last_seen_ts_ms);
-        }
-    }
     let event = record_system_event(
         &state,
         "IdentityAnnounceRecorded",
@@ -14051,6 +12706,7 @@ async fn record_outbound_message_deferred_async(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutboundDispatchMode {
+    #[cfg(test)]
     Inline,
     Deferred,
 }
@@ -14067,55 +12723,15 @@ fn record_outbound_message_with_metadata_mode(
 ) -> Result<OutboundMessageRecord, ApiError> {
     let delivery_mode = classify_delivery_mode(topic_id.as_deref(), destination.as_deref())
         .map_err(|error| ApiError::BadRequest(python_delivery_error_detail(&error)))?;
-    let target_destinations = outbound_target_destinations_from_metadata(&delivery_metadata);
-    let mut delivery_decision = outbound_delivery_decision_for_targets_with_refresh(
-        state,
-        delivery_mode,
-        topic_id.as_deref(),
-        destination.as_deref(),
-        target_destinations.as_deref(),
-        dispatch_mode == OutboundDispatchMode::Inline,
-    )?;
     let is_rem_command = delivery_metadata
         .get("fanout_channel")
         .and_then(Value::as_str)
         .is_some_and(is_rem_command_channel);
-    if delivery_mode == DeliveryMode::Targeted
-        && !is_rem_command
-        && delivery_decision.method == "propagated"
-        && delivery_decision.reason == "no_fresh_presence"
-        && destination
-            .as_deref()
-            .map(|identity| outbound_targeted_destination_should_reject_stale(state, identity))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        let destination = destination.as_deref().unwrap_or("unknown");
-        return Err(ApiError::BadRequest(format!(
-            "destination {} is not currently reachable; wait for a fresh announce or recent chat before sending",
-            short_identity(destination)
-        )));
-    }
-    if is_rem_command
-        && delivery_decision.method != "propagated"
-        && destination
-            .as_deref()
-            .map(|identity| rem_command_destination_should_propagate(state, identity))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        delivery_decision.method = "propagated".to_string();
-        delivery_decision.reason = "no_fresh_presence".to_string();
-    }
     let effective_dispatch_mode = if is_rem_command {
         OutboundDispatchMode::Deferred
     } else {
         dispatch_mode
     };
-    if is_rem_command && delivery_decision.method != "propagated" {
-        delivery_decision.method = "auto".to_string();
-        delivery_decision.reason = "rem_auto".to_string();
-    }
     let message_id = if compact_id {
         Uuid::new_v4().simple().to_string()
     } else {
@@ -14128,8 +12744,8 @@ fn record_outbound_message_with_metadata_mode(
         sender: "northbound".to_string(),
         content: content.to_string(),
         delivery_mode,
-        delivery_method: delivery_decision.method,
-        delivery_policy_reason: delivery_decision.reason,
+        delivery_method: "auto".to_string(),
+        delivery_policy_reason: "sdk_owned".to_string(),
         delivery_state: "queued".to_string(),
         delivery_metadata,
         created_ts_ms: unix_now_ms(),
@@ -14199,7 +12815,9 @@ fn record_outbound_message_with_metadata_mode(
                 );
             }
             let dispatch_count = dispatch_report.count;
-            let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+            let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.uncertain {
+                ("queued", "admission_unknown", false)
+            } else if dispatch_report.deferred {
                 ("queued", "queued_deferred", false)
             } else if dispatch_count > 0 {
                 (
@@ -14214,19 +12832,25 @@ fn record_outbound_message_with_metadata_mode(
             } else {
                 ("queued", "not_configured", false)
             };
-            let receipt_pending =
-                reticulumd_receipt_pending_after_dispatch(&message, dispatch_count, delivery_state);
+            let receipt_pending = dispatch_report.uncertain
+                || reticulumd_receipt_pending_after_dispatch(
+                    &message,
+                    dispatch_count,
+                    delivery_state,
+                );
             let receipt_registered_ts_ms = unix_now_ms();
             let mut delivery_update = json!({
                 "dispatch_status": dispatch_status,
                 "reticulumd_dispatch_count": dispatch_count,
                 "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&dispatch_report.receipts),
+                "reticulumd_paths": dispatch_report.paths,
+                "admission_uncertain": dispatch_report.uncertain,
+                "admission_error": dispatch_report.admission_error,
                 "zmq_partial_acceptance": dispatch_count > 0 && !dispatch_report.rejected.is_empty(),
-                "zmq_rejected_count": dispatch_report.rejected.len(),
-                "zmq_rejections": dispatch_report.rejected,
+                "zmq_rejected_count": merged_zmq_rejections(&message, &dispatch_report).len(),
+                "zmq_rejections": merged_zmq_rejections(&message, &dispatch_report),
                 "receipt_pending": receipt_pending,
                 "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-                "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
                 "retry_scheduled": retry_scheduled,
             });
             merge_delivery_metadata(
@@ -14252,19 +12876,7 @@ fn record_outbound_message_with_metadata_mode(
         }
         Err(error) => {
             let error_text = error.to_string();
-            if let Some(retry_message) =
-                schedule_outbound_retry_after_failure(state, &message, error_text.clone())?
-            {
-                let destination = retry_message.destination.as_deref().unwrap_or("unknown");
-                let retry_reason = retry_reason_for_error(error_text.as_str());
-                let _ = record_system_event(
-                    state,
-                    "message_delivery_retrying",
-                    &format!("Retrying message delivery to {destination}"),
-                    outbound_delivery_retry_metadata(&retry_message, retry_reason),
-                )?;
-                return Ok(retry_message);
-            }
+
             let failure_metadata = outbound_delivery_metadata(
                 &message,
                 0,
@@ -14339,216 +12951,101 @@ fn dispatch_outbound_message(
         ApiError::ServiceUnavailable("ZeroMQ data plane is unavailable".to_string())
     })?;
     let destinations = outbound_destinations(state, message)?;
-    let fanout_destination_count = destinations.len();
-    let fanout_requires_child_ids = fanout_destination_count > 1;
+    let fanout_requires_child_ids = destinations.len() > 1;
     let mut report = DispatchReport::default();
-    if fanout_destination_count > 1 {
-        let batch_id = format!(
-            "{}-fanout-{}",
-            message.message_id,
-            outbound_attempts(message)
-        );
-        let common_fields = outbound_lxmf_fields(
-            message,
-            message
-                .delivery_metadata
-                .get("lxmf_fields")
-                .cloned()
-                .unwrap_or_else(|| json!({})),
-        );
-        let common_title = outbound_lxmf_title(message).to_string();
-        let common_content = outbound_lxmf_content(message).to_string();
-        let common_bytes =
-            shared_group_chat_payload_bytes(&common_title, &common_content, &common_fields);
-        let common_payload = LxmfSdkSharedPayload {
-            bytes: common_bytes,
-            title: common_title,
-            content: common_content,
-            fields: common_fields,
-        };
-        let mut recipients = Vec::with_capacity(fanout_destination_count);
-        for (index, destination) in destinations.iter().enumerate() {
-            let message_id = outbound_dispatch_message_id(
+    let mut recipients = Vec::with_capacity(destinations.len());
+    for (index, destination) in destinations.iter().enumerate() {
+        let path = data_plane
+            .resolve_path(destination.clone())
+            .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+        report.paths.push(path);
+        recipients.push(LxmfSdkSharedRecipient {
+            destination: destination.clone(),
+            delivery_method: None,
+            stamp_cost: None,
+            include_ticket: None,
+            try_propagation_on_fail: true,
+            correlation_id: outbound_dispatch_message_id(
                 message,
                 destination,
                 index,
                 fanout_requires_child_ids,
-            );
-            recipients.push(LxmfSdkSharedRecipient {
-                destination: destination.clone(),
-                delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
-                stamp_cost: lxmf_sdk_stamp_cost(message),
-                include_ticket: lxmf_sdk_include_ticket(message),
-                try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
-                correlation_id: message_id,
-                text_only: outbound_destination_text_only(state, destination),
-            });
-        }
-        let shared_batch = LxmfSdkSharedOutboundBatch {
-            batch_id,
-            source: source.to_string(),
-            common_payload,
-            recipients,
-        };
-        let batch = lxmf_shared_batch_to_legacy_batch(shared_batch);
-        let batch_result = data_plane.send_batch(batch);
-        let results = batch_result.map_err(|error| {
-            let error = error.to_string();
-            if message.delivery_method == "direct"
-                && direct_failure_error_should_trigger_cooldown(error.as_str())
-            {
-                for destination in &destinations {
-                    if let Err(mark_error) =
-                        mark_direct_delivery_failure(state, destination.as_str())
-                    {
-                        eprintln!(
-                            "Failed to record direct-delivery cooldown for {destination}: {mark_error}"
-                        );
-                    }
-                }
-            }
-            ApiError::ServiceUnavailable(error)
-        })?;
-        record_zmq_batch_results(&mut report, results);
-        return Ok(report);
+            ),
+            text_only: outbound_destination_text_only(state, destination),
+        });
     }
-
-    for (index, destination) in destinations.into_iter().enumerate() {
-        let message_id =
-            outbound_dispatch_message_id(message, &destination, index, fanout_requires_child_ids);
-        let mut dispatch_message = message.clone();
-        dispatch_message.message_id.clone_from(&message_id);
-        dispatch_message.destination = Some(destination.clone());
-        let fields = outbound_lxmf_fields(
-            &dispatch_message,
-            message
-                .delivery_metadata
-                .get("lxmf_fields")
-                .cloned()
-                .unwrap_or_else(|| json!({})),
-        );
-        if message.delivery_method == "propagated" {
-            let batch = LxmfSdkOutboundBatch {
-                batch_id: format!(
-                    "{}-single-{}",
-                    message.message_id,
-                    outbound_attempts(message)
-                ),
-                source: source.to_string(),
-                messages: vec![LxmfSdkOutboundBatchMessage {
-                    destination: destination.clone(),
-                    title: outbound_lxmf_title(&dispatch_message).to_string(),
-                    content: outbound_lxmf_content(&dispatch_message).to_string(),
-                    fields,
-                    delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
-                    stamp_cost: lxmf_sdk_stamp_cost(message),
-                    include_ticket: lxmf_sdk_include_ticket(message),
-                    try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
-                    correlation_id: message_id,
-                }],
-            };
-            let results = data_plane
-                .send_batch(batch)
-                .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-            record_zmq_batch_results(&mut report, results);
-            continue;
-        }
-        let outbound = LxmfSdkOutboundMessage {
-            source: source.to_string(),
-            destination: destination.clone(),
-            title: outbound_lxmf_title(&dispatch_message).to_string(),
-            content: outbound_lxmf_content(&dispatch_message).to_string(),
-            fields,
-            delivery_method: lxmf_sdk_delivery_method(message).map(str::to_string),
-            stamp_cost: lxmf_sdk_stamp_cost(message),
-            include_ticket: lxmf_sdk_include_ticket(message),
-            try_propagation_on_fail: lxmf_sdk_try_propagation_on_fail(message),
-            correlation_id: message_id.clone(),
-        };
-        let dispatch_result = data_plane
-            .send_message(outbound)
-            .map_err(|error| error.to_string());
-        let reticulumd_message_id = match dispatch_result {
-            Ok(reticulumd_message_id) => reticulumd_message_id,
-            Err(error) => {
-                if message.delivery_method == "direct"
-                    && direct_failure_error_should_trigger_cooldown(error.as_str())
-                {
-                    mark_direct_delivery_failure(state, destination.as_str())?;
-                }
-                return Err(ApiError::ServiceUnavailable(error));
-            }
-        };
-        report.count += 1;
-        report.receipts.push(ReticulumdReceiptTarget {
-            message_id: reticulumd_message_id,
-            destination,
+    let common_fields = outbound_lxmf_fields(
+        message,
+        message
+            .delivery_metadata
+            .get("lxmf_fields")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    );
+    let common_title = outbound_lxmf_title(message).to_string();
+    let common_content = outbound_lxmf_content(message).to_string();
+    let shared_batch = LxmfSdkSharedOutboundBatch {
+        batch_id: format!(
+            "{}-fanout-{}",
+            message.message_id,
+            outbound_attempts(message)
+        ),
+        source: source.to_string(),
+        common_payload: LxmfSdkSharedPayload {
+            bytes: shared_group_chat_payload_bytes(&common_title, &common_content, &common_fields),
+            title: common_title,
+            content: common_content,
+            fields: common_fields,
+        },
+        recipients,
+    };
+    // Batch items have stable IDs, including a single recipient. An ambiguous response
+    // can therefore be reconciled without changing method or submitting a second send.
+    let batch = lxmf_shared_batch_to_legacy_batch(shared_batch);
+    let uncertain_targets = batch
+        .messages
+        .iter()
+        .map(|item| ReticulumdReceiptTarget {
+            message_id: item.correlation_id.clone(),
+            destination: item.destination.clone(),
             status: None,
             sdk_snapshot: None,
             last_poll_ts_ms: None,
-        });
+        })
+        .collect::<Vec<_>>();
+    match data_plane.send_batch(batch) {
+        Ok(results) => record_zmq_batch_results(&mut report, results),
+        Err(error) if zmq_admission_response_uncertain(&error) => {
+            report.uncertain = true;
+            report.count = uncertain_targets.len();
+            report.admission_error = Some(error.to_string());
+            report.receipts = uncertain_targets;
+        }
+        Err(error) => return Err(ApiError::ServiceUnavailable(error.to_string())),
     }
     Ok(report)
 }
 
-fn ensure_outbound_propagation_node_selected(state: &AppState) -> Result<(), ApiError> {
-    let Some(endpoint) = state.reticulumd_rpc_endpoint.as_deref() else {
-        return Ok(());
-    };
-
-    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint);
-    let selected = client
-        .call("get_outbound_propagation_node", None)
-        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = selected.error {
-        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
-            &error,
-        )));
+fn zmq_admission_response_uncertain(error: &r3akt_transport_rns::TransportError) -> bool {
+    match error {
+        r3akt_transport_rns::TransportError::Sdk { code, .. } => {
+            matches!(
+                code.as_str(),
+                "SDK_TRANSPORT_ZMQ_TIMEOUT" | "SDK_INTERNAL_ERROR"
+            )
+        }
+        r3akt_transport_rns::TransportError::Send(_)
+        | r3akt_transport_rns::TransportError::Receive(_) => true,
+        r3akt_transport_rns::TransportError::NotSubmitted(_)
+        | r3akt_transport_rns::TransportError::Encode(_)
+        | r3akt_transport_rns::TransportError::Backpressure(_)
+        | r3akt_transport_rns::TransportError::AdapterUnavailable => false,
     }
-    if selected
-        .result
-        .as_ref()
-        .and_then(|result| result.get("peer"))
-        .and_then(Value::as_str)
-        .is_some_and(|peer| !peer.trim().is_empty())
-    {
-        return Ok(());
-    }
-
-    let propagation_nodes = client
-        .call("list_propagation_nodes", None)
-        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = propagation_nodes.error {
-        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
-            &error,
-        )));
-    }
-    let peer = propagation_nodes
-        .result
-        .as_ref()
-        .and_then(first_reticulumd_propagation_node)
-        .ok_or_else(|| ApiError::ServiceUnavailable("No reachable propagation node".to_string()))?;
-    let selected = client
-        .call(
-            "set_outbound_propagation_node",
-            Some(json!({ "peer": peer })),
-        )
-        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = selected.error {
-        return Err(ApiError::ServiceUnavailable(reticulumd_rpc_error_text(
-            &error,
-        )));
-    }
-    Ok(())
-}
-
-fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
-    format!("{}: {}", error.code, error.message)
 }
 
 #[cfg(test)]
-fn should_enqueue_without_waiting_for_zmq_response(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "propagated"
+fn reticulumd_rpc_error_text(error: &r3akt_rch_bridge::ReticulumdRpcError) -> String {
+    format!("{}: {}", error.code, error.message)
 }
 
 #[cfg(test)]
@@ -14588,7 +13085,7 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             "title": outbound_lxmf_title(&dispatch_message),
             "content": outbound_lxmf_content(&dispatch_message),
             "fields": fields,
-            "method": message.delivery_method,
+            "method": "direct",
         })
         .to_string();
         let reticulumd_message_id = r3akt_rch_bridge::handle_outbound_json_request_with_reticulumd(
@@ -14596,18 +13093,7 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
             &request,
         )
         .map(|_| message_id.clone())
-        .map_err(|error| {
-            if message.delivery_method == "direct"
-                && direct_failure_error_should_trigger_cooldown(error.to_string().as_str())
-            {
-                if let Err(mark_error) = mark_direct_delivery_failure(state, destination.as_str()) {
-                    eprintln!(
-                        "Failed to record direct-delivery cooldown for {destination}: {mark_error}"
-                    );
-                }
-            }
-            ApiError::ServiceUnavailable(error.to_string())
-        })?;
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
         report.count += 1;
         report.receipts.push(ReticulumdReceiptTarget {
             message_id: reticulumd_message_id,
@@ -14620,37 +13106,14 @@ fn dispatch_outbound_message_legacy_rpc_for_tests(
     Ok(report)
 }
 
-fn lxmf_sdk_delivery_method(message: &OutboundMessageRecord) -> Option<&str> {
-    if message.delivery_method == "auto" && is_rem_command_message(message) {
-        return Some("propagated");
-    }
-    match message.delivery_method.as_str() {
-        "direct" if is_rem_command_message(message) => Some("direct"),
-        "propagated" => Some("propagated"),
-        "opportunistic" => Some("opportunistic"),
-        "paper" => Some("paper"),
-        _ => None,
-    }
-}
-
-fn lxmf_sdk_stamp_cost(message: &OutboundMessageRecord) -> Option<u32> {
-    matches!(lxmf_sdk_delivery_method(message), Some("propagated"))
-        .then_some(OUTBOUND_PROPAGATION_STAMP_COST)
-}
-
-fn lxmf_sdk_include_ticket(message: &OutboundMessageRecord) -> Option<bool> {
-    matches!(lxmf_sdk_delivery_method(message), Some("propagated")).then_some(true)
-}
-
-fn lxmf_sdk_try_propagation_on_fail(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "direct"
-}
-
 #[derive(Default)]
 struct DispatchReport {
     count: usize,
     deferred: bool,
     receipts: Vec<ReticulumdReceiptTarget>,
+    paths: Vec<Value>,
+    uncertain: bool,
+    admission_error: Option<String>,
     rejected: Vec<Value>,
     retryable_rejected_destinations: Vec<String>,
 }
@@ -14682,6 +13145,45 @@ fn record_zmq_batch_results(report: &mut DispatchReport, results: Vec<LxmfSdkOut
     }
 }
 
+fn merged_zmq_rejections(message: &OutboundMessageRecord, report: &DispatchReport) -> Vec<Value> {
+    let mut rejected = message
+        .delivery_metadata
+        .get("zmq_rejections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|rejection| rejection["error"]["retryable"].as_bool() != Some(true))
+        .cloned()
+        .collect::<Vec<_>>();
+    for rejection in &report.rejected {
+        rejected.retain(|previous| previous["destination"] != rejection["destination"]);
+        rejected.push(rejection.clone());
+    }
+    if !report.uncertain {
+        rejected.retain(|rejection| {
+            !report.receipts.iter().any(|receipt| {
+                rejection["destination"].as_str() == Some(receipt.destination.as_str())
+            })
+        });
+    }
+    rejected
+}
+
+fn outbound_pre_admission_rejected_destinations(message: &OutboundMessageRecord) -> Vec<String> {
+    message
+        .delivery_metadata
+        .get("zmq_rejections")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|rejection| {
+            rejection["destination"]
+                .as_str()
+                .and_then(normalize_identity_key)
+        })
+        .collect()
+}
+
 fn outbound_dispatch_message_id(
     message: &OutboundMessageRecord,
     destination: &str,
@@ -14699,7 +13201,6 @@ fn dispatch_destination_suffix(destination: &str, index: usize) -> String {
     let suffix: String = destination
         .chars()
         .filter(char::is_ascii_alphanumeric)
-        .take(12)
         .collect();
     if suffix.is_empty() {
         index.to_string()
@@ -14770,11 +13271,9 @@ fn process_outbound_delivery_worker_tick(
     if state.runtime_exit.is_requested() || runtime_shutdown_requested(state) {
         return Ok(OutboundRetryWorkerReport::default());
     }
-    finalize_stale_pending_dispatches(state)?;
     let report = process_due_outbound_retry_messages(state)?;
     if report.processed == 0 && !state.runtime_exit.is_requested() {
         poll_reticulumd_delivery_receipts(state)?;
-        finalize_expired_delivery_receipts(state)?;
     }
     Ok(report)
 }
@@ -14804,25 +13303,6 @@ fn process_due_outbound_retry_messages(
             break;
         }
         report.processed += 1;
-        if failed_direct_timeout_retry_due(&message, now_ms) {
-            let repair_message = queue_direct_timeout_for_propagation(state, &message, now_ms)?;
-            if normalized_delivery_state(&repair_message) != "queued" {
-                continue;
-            }
-            let _ = record_system_event(
-                state,
-                "message_propagation_queued",
-                direct_timeout_propagation_event_message(&repair_message),
-                outbound_delivery_callback_metadata(
-                    outbound_delivery_propagation_metadata(
-                        &repair_message,
-                        "direct_dispatch_timeout",
-                    ),
-                    "propagation_fallback",
-                ),
-            )?;
-            continue;
-        }
         let Some(message) =
             claim_outbound_attempt(state, &message.message_id, Some(&message), now_ms)?
         else {
@@ -14836,19 +13316,7 @@ fn process_due_outbound_retry_messages(
                 }
                 report.failed += 1;
                 let error_text = error.to_string();
-                if let Some(retry_message) =
-                    schedule_outbound_retry_after_failure(state, &message, error_text.clone())?
-                {
-                    let destination = retry_message.destination.as_deref().unwrap_or("unknown");
-                    let retry_reason = retry_reason_for_error(error_text.as_str());
-                    let _ = record_system_event(
-                        state,
-                        "message_delivery_retrying",
-                        &format!("Retrying message delivery to {destination}"),
-                        outbound_delivery_retry_metadata(&retry_message, retry_reason),
-                    )?;
-                    continue;
-                }
+
                 let failed_message = mark_outbound_dispatch_failed(state, &message, error_text)?;
                 if normalized_delivery_state(&failed_message) != "failed" {
                     continue;
@@ -14933,7 +13401,9 @@ fn process_due_outbound_retry_messages(
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(0);
         let total_dispatch_count = prior_dispatch_count.saturating_add(dispatch_report.count);
-        let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.deferred {
+        let (delivery_state, dispatch_status, retry_scheduled) = if dispatch_report.uncertain {
+            ("queued", "admission_unknown", false)
+        } else if dispatch_report.deferred {
             ("queued", "queued_deferred", false)
         } else {
             (
@@ -14946,23 +13416,26 @@ fn process_due_outbound_retry_messages(
                 false,
             )
         };
-        let receipt_pending = reticulumd_receipt_pending_after_dispatch(
-            &message,
-            total_dispatch_count,
-            delivery_state,
-        );
+        let receipt_pending = dispatch_report.uncertain
+            || reticulumd_receipt_pending_after_dispatch(
+                &message,
+                total_dispatch_count,
+                delivery_state,
+            );
         let receipt_registered_ts_ms = unix_now_ms();
         let mut delivery_update = json!({
             "dispatch_status": dispatch_status,
             "reticulumd_dispatch_count": total_dispatch_count,
             "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&receipt_targets),
+            "reticulumd_paths": dispatch_report.paths,
+            "admission_uncertain": dispatch_report.uncertain,
+            "admission_error": dispatch_report.admission_error,
             "zmq_partial_acceptance": dispatch_report.count > 0 && !dispatch_report.rejected.is_empty(),
-            "zmq_rejected_count": dispatch_report.rejected.len(),
-            "zmq_rejections": dispatch_report.rejected,
+            "zmq_rejected_count": merged_zmq_rejections(&message, &dispatch_report).len(),
+            "zmq_rejections": merged_zmq_rejections(&message, &dispatch_report),
             "target_destinations": Value::Null,
             "receipt_pending": receipt_pending,
             "receipt_registered_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms) } else { Value::Null },
-            "receipt_deadline_ts_ms": if receipt_pending { json!(receipt_registered_ts_ms + outbound_receipt_timeout_ms(&message)) } else { Value::Null },
             "retry_scheduled": retry_scheduled,
         });
         merge_delivery_metadata(
@@ -14989,7 +13462,7 @@ fn process_due_outbound_retry_messages(
         recovered_message.delivery_state = delivery_state.to_string();
         clear_success_superseded_delivery_metadata(&mut recovered_message.delivery_metadata);
         merge_delivery_metadata(&mut recovered_message.delivery_metadata, success_metadata);
-        if !dispatch_report.deferred {
+        if !dispatch_report.deferred && !dispatch_report.uncertain {
             record_outbound_retry_success_event(state, &recovered_message)?;
             report.dispatched += dispatch_report.count;
         }
@@ -15028,7 +13501,7 @@ fn record_outbound_retry_success_event(
 }
 
 fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    (normalized_delivery_state(message) == "queued"
+    normalized_delivery_state(message) == "queued"
         && message
             .delivery_metadata
             .get("retry_scheduled")
@@ -15038,179 +13511,7 @@ fn outbound_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
             .delivery_metadata
             .get("next_attempt_at_ts_ms")
             .and_then(Value::as_i64)
-            .is_none_or(|deadline| deadline <= now_ms))
-        || failed_direct_timeout_retry_due(message, now_ms)
-        || failed_propagation_fallback_retry_due(message, now_ms)
-}
-
-fn failed_direct_timeout_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    if normalized_delivery_state(message) != "failed"
-        || !direct_dispatch_timeout_should_queue_propagation(message)
-        || message
-            .delivery_metadata
-            .get("error")
-            .and_then(Value::as_str)
-            .is_none_or(|error| error != "send_timeout")
-    {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("dispatch_status")
-        .and_then(Value::as_str)
-        != Some("failed")
-    {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("next_attempt_at_ts_ms")
-        .and_then(Value::as_i64)
-        .is_some_and(|deadline| deadline > now_ms)
-    {
-        return false;
-    }
-    true
-}
-
-fn failed_propagation_fallback_retry_due(message: &OutboundMessageRecord, now_ms: i64) -> bool {
-    if normalized_delivery_state(message) != "failed"
-        || !propagated_direct_timeout_fallback(message)
-        || !propagated_fallback_has_retryable_error(message)
-    {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("dispatch_status")
-        .and_then(Value::as_str)
-        == Some("in_progress")
-    {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("reticulumd_dispatch_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        > 0
-    {
-        return false;
-    }
-    if message
-        .delivery_metadata
-        .get("next_attempt_at_ts_ms")
-        .and_then(Value::as_i64)
-        .is_some_and(|deadline| deadline > now_ms)
-    {
-        return false;
-    }
-    let attempts = outbound_attempts(message).saturating_add(1);
-    let rate_limited = message
-        .delivery_metadata
-        .get("error")
-        .and_then(Value::as_str)
-        .is_some_and(outbound_error_is_rate_limited);
-    let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
-    outbound_retry_attempt_allowed(message, attempts, max_attempts)
-        || propagated_direct_timeout_fallback(message)
-}
-
-fn propagated_fallback_has_retryable_error(message: &OutboundMessageRecord) -> bool {
-    if message
-        .delivery_metadata
-        .get("retry_reason")
-        .and_then(Value::as_str)
-        .is_some_and(|reason| matches!(reason, "send_timeout" | "send_error" | "rate_limited"))
-    {
-        return true;
-    }
-    let Some(error) = message
-        .delivery_metadata
-        .get("error")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|error| !error.is_empty())
-    else {
-        return false;
-    };
-    propagated_fallback_error_text_is_retryable(error)
-}
-
-fn propagated_fallback_error_text_is_retryable(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    normalized == "send_timeout"
-        || outbound_error_is_rate_limited(error)
-        || normalized.contains("outbound request failed")
-        || normalized.contains("connection refused")
-        || normalized.contains("os error 10061")
-        || normalized.contains("timed out")
-}
-
-fn schedule_outbound_retry_after_failure(
-    state: &AppState,
-    message: &OutboundMessageRecord,
-    error_text: String,
-) -> Result<Option<OutboundMessageRecord>, ApiError> {
-    if message.delivery_method == "propagated"
-        && !is_rem_command_message(message)
-        && !propagated_multi_recipient_allows_partial_success(message)
-    {
-        return Ok(None);
-    }
-    let attempts = outbound_attempts(message).saturating_add(1);
-    let rate_limited = outbound_error_is_rate_limited(error_text.as_str());
-    let rate_limit_retry_budget = rate_limited || outbound_rate_limit_retry_budget_active(message);
-    let max_attempts = outbound_effective_max_attempts_for_retry(message, rate_limited);
-    let retry_attempt_allowed = outbound_retry_attempt_allowed(message, attempts, max_attempts);
-    let retryable_propagation_fallback = propagated_direct_timeout_fallback(message)
-        && propagated_fallback_error_text_is_retryable(error_text.as_str());
-    let retryable_transport_failure =
-        propagated_broadcast_fallback_should_retry_transport_failure(message, &error_text);
-    if !(retry_attempt_allowed || retryable_propagation_fallback || retryable_transport_failure) {
-        return Ok(None);
-    }
-    let retry_reason = retry_reason_for_error(error_text.as_str());
-    let retry_backoff_ms = if rate_limited {
-        OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS
-    } else {
-        outbound_backoff_ms(message).saturating_mul(i64::try_from(attempts).unwrap_or(i64::MAX))
-    };
-    let next_attempt_at_ts_ms = unix_now_ms().saturating_add(retry_backoff_ms);
-    let mut messages = state
-        .messages
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let Some(stored) = messages
-        .iter_mut()
-        .find(|stored| stored.message_id == message.message_id)
-    else {
-        return Ok(None);
-    };
-    let Some(mut pending_update) = message_persistence::Update::for_attempt(state, stored, message)
-    else {
-        return Ok(None);
-    };
-    let stored = &mut *pending_update;
-    stored.delivery_state = "queued".to_string();
-    merge_delivery_metadata(
-        &mut stored.delivery_metadata,
-        json!({
-            "acked": false,
-            "attempts": attempts,
-            "dispatch_status": "queued",
-            "error": error_text,
-            "receipt_pending": false,
-            "retry_reason": retry_reason,
-            "retry_scheduled": true,
-            "rate_limit_retry_budget": rate_limit_retry_budget,
-            "next_attempt_at_ts_ms": next_attempt_at_ts_ms,
-        }),
-    );
-    let retry_message = pending_update.commit()?;
-    drop(messages);
-    broadcast_message_event(state, &retry_message);
-    Ok(Some(retry_message))
+            .is_none_or(|deadline| deadline <= now_ms)
 }
 
 fn schedule_zmq_pre_admission_retry(
@@ -15268,12 +13569,15 @@ fn schedule_zmq_pre_admission_retry(
             "receipt_pending": false,
             "reticulumd_dispatch_count": accepted_count,
             "reticulumd_receipt_targets": reticulumd_receipt_targets_json(&receipt_targets),
+            "reticulumd_paths": dispatch_report.paths,
+            "admission_uncertain": dispatch_report.uncertain,
+            "admission_error": dispatch_report.admission_error,
             "retry_reason": "zmq_pre_admission_rejected",
             "retry_scheduled": true,
             "target_destinations": dispatch_report.retryable_rejected_destinations,
             "zmq_partial_acceptance": accepted_count > 0,
-            "zmq_rejected_count": dispatch_report.rejected.len(),
-            "zmq_rejections": dispatch_report.rejected,
+            "zmq_rejected_count": merged_zmq_rejections(message, dispatch_report).len(),
+            "zmq_rejections": merged_zmq_rejections(message, dispatch_report),
         }),
     );
     let retry_message = pending_update.commit()?;
@@ -15287,39 +13591,6 @@ fn outbound_error_is_rate_limited(error_text: &str) -> bool {
     normalized.contains("sdk_security_rate_limited")
         || normalized.contains("rate limit")
         || normalized.contains("rate_limited")
-}
-
-fn propagated_broadcast_fallback_should_retry_transport_failure(
-    message: &OutboundMessageRecord,
-    error_text: &str,
-) -> bool {
-    message.delivery_method == "propagated"
-        && message.delivery_mode == DeliveryMode::Broadcast
-        && message.delivery_policy_reason == "broadcast_direct_timeout_fallback"
-        && outbound_error_is_local_transport_unavailable(error_text)
-}
-
-fn outbound_error_is_local_transport_unavailable(error_text: &str) -> bool {
-    let normalized = error_text.trim().to_ascii_lowercase();
-    normalized.contains("connection refused")
-        || normalized.contains("actively refused")
-        || normalized.contains("os error 10061")
-}
-
-fn retry_reason_for_error(error_text: &str) -> &'static str {
-    if error_text.trim().eq_ignore_ascii_case("send_timeout") {
-        "send_timeout"
-    } else if outbound_error_is_rate_limited(error_text) {
-        "rate_limited"
-    } else {
-        "send_error"
-    }
-}
-
-fn delivery_failure_callback_should_retry(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "propagated"
-        && (is_rem_command_message(message)
-            || propagated_multi_recipient_allows_partial_success(message))
 }
 
 fn outbound_attempts(message: &OutboundMessageRecord) -> u64 {
@@ -15339,16 +13610,6 @@ fn outbound_max_attempts(message: &OutboundMessageRecord) -> u64 {
         .max(1)
 }
 
-fn outbound_receipt_timeout_ms(message: &OutboundMessageRecord) -> i64 {
-    message
-        .delivery_metadata
-        .get("delivery_receipt_timeout_ms")
-        .and_then(Value::as_i64)
-        .filter(|timeout_ms| *timeout_ms > 0)
-        .unwrap_or(OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
-        .max(1_000)
-}
-
 fn outbound_effective_max_attempts_for_retry(
     message: &OutboundMessageRecord,
     rate_limited: bool,
@@ -15358,21 +13619,10 @@ fn outbound_effective_max_attempts_for_retry(
     {
         max_attempts = max_attempts.max(OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS);
     }
-    if propagated_direct_timeout_fallback(message) {
-        max_attempts = max_attempts.max(OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS);
-    }
     if rate_limited || outbound_rate_limit_retry_budget_active(message) {
         max_attempts = max_attempts.max(OUTBOUND_RATE_LIMIT_RETRY_MAX_ATTEMPTS);
     }
     max_attempts
-}
-
-fn propagated_direct_timeout_fallback(message: &OutboundMessageRecord) -> bool {
-    propagated_multi_recipient_allows_partial_success(message)
-        && matches!(
-            message.delivery_policy_reason.as_str(),
-            "broadcast_direct_timeout_fallback" | "topic_direct_timeout_fallback"
-        )
 }
 
 fn outbound_rate_limit_retry_budget_active(message: &OutboundMessageRecord) -> bool {
@@ -15403,85 +13653,6 @@ fn outbound_retry_attempt_allowed(
     } else {
         next_attempt < max_attempts
     }
-}
-
-fn direct_dispatch_timeout_should_queue_propagation(message: &OutboundMessageRecord) -> bool {
-    message.delivery_method == "direct"
-        && matches!(
-            message.delivery_mode,
-            DeliveryMode::Broadcast | DeliveryMode::Fanout
-        )
-}
-
-fn direct_timeout_propagation_policy_reason(message: &OutboundMessageRecord) -> &'static str {
-    match message.delivery_mode {
-        DeliveryMode::Broadcast => "broadcast_direct_timeout_fallback",
-        DeliveryMode::Fanout => "topic_direct_timeout_fallback",
-        DeliveryMode::Targeted => "direct_timeout_fallback",
-    }
-}
-
-fn direct_timeout_propagation_event_message(message: &OutboundMessageRecord) -> &'static str {
-    match message.delivery_mode {
-        DeliveryMode::Broadcast => "Direct broadcast timed out; queued message for propagation",
-        DeliveryMode::Fanout => "Direct topic fanout timed out; queued message for propagation",
-        DeliveryMode::Targeted => "Direct delivery timed out; queued message for propagation",
-    }
-}
-
-fn queue_direct_timeout_for_propagation(
-    state: &AppState,
-    message: &OutboundMessageRecord,
-    now_ms: i64,
-) -> Result<OutboundMessageRecord, ApiError> {
-    let mut messages = state
-        .messages
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let Some(stored) = messages
-        .iter_mut()
-        .find(|stored| stored.message_id == message.message_id)
-    else {
-        return Err(ApiError::NotFound("Outbound message not found".to_string()));
-    };
-    if matches!(
-        normalized_delivery_state(stored).as_str(),
-        "delivered" | "propagated" | "expired" | "dropped"
-    ) || stored.delivery_method != message.delivery_method
-        || stored.delivery_policy_reason != message.delivery_policy_reason
-    {
-        return Ok(stored.clone());
-    }
-    let mut pending_update = message_persistence::Update::new(&state, stored);
-    let stored = &mut *pending_update;
-    let attempts = outbound_attempts(stored).saturating_add(1);
-    stored.delivery_state = "queued".to_string();
-    stored.delivery_method = "propagated".to_string();
-    stored.delivery_policy_reason = direct_timeout_propagation_policy_reason(stored).to_string();
-    merge_delivery_metadata(
-        &mut stored.delivery_metadata,
-        json!({
-            "acked": false,
-            "attempts": 0,
-            "direct_attempts": attempts,
-            "delivery_mode": "propagated",
-            "dispatch_status": "queued",
-            "dispatch_timeout": true,
-            "dispatch_timed_out_at_ts_ms": now_ms,
-            "error": "send_timeout",
-            "fallback_reason": "direct_dispatch_timeout",
-            "max_attempts": OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
-            "previous_delivery_method": "direct",
-            "receipt_pending": false,
-            "retry_reason": "send_timeout",
-            "retry_scheduled": true,
-            "next_attempt_at_ts_ms": now_ms,
-        }),
-    );
-    let repaired_message = pending_update.commit()?;
-    drop(messages);
-    broadcast_message_event(state, &repaired_message);
-    Ok(repaired_message)
 }
 
 fn outbound_backoff_ms(message: &OutboundMessageRecord) -> i64 {
@@ -15527,13 +13698,14 @@ fn claim_outbound_attempt(
     let mut pending_update = message_persistence::Update::new(&state, message);
     let message = &mut *pending_update;
     message.delivery_state = "queued".to_string();
+    message.delivery_method = "auto".to_string();
+    message.delivery_policy_reason = "sdk_owned".to_string();
     clear_retry_superseded_delivery_metadata(&mut message.delivery_metadata);
     merge_delivery_metadata(
         &mut message.delivery_metadata,
         json!({
             "dispatch_status": "in_progress",
             "dispatch_started_ts_ms": started_at_ts_ms,
-            "dispatch_deadline_ts_ms": started_at_ts_ms + OUTBOUND_DISPATCH_TIMEOUT_MS,
             "last_attempt_at": iso8601_from_unix_ms(started_at_ts_ms),
             "last_attempt_at_ts_ms": started_at_ts_ms,
             "retry_scheduled": false,
@@ -15599,20 +13771,15 @@ fn mark_outbound_dispatch_failed(
     message_persistence::current(state, &message.message_id)
 }
 
-fn delivery_success_state(message: &OutboundMessageRecord) -> &'static str {
-    if message.delivery_method == "propagated" {
-        "propagated"
-    } else {
-        "sent"
-    }
+fn delivery_success_state(_message: &OutboundMessageRecord) -> &'static str {
+    "sent"
 }
 
-fn delivery_accepted_state(message: &OutboundMessageRecord, dispatch_count: usize) -> &'static str {
-    if dispatch_count > 0 && message.delivery_method == "propagated" {
-        "propagating"
-    } else {
-        delivery_success_state(message)
-    }
+fn delivery_accepted_state(
+    _message: &OutboundMessageRecord,
+    _dispatch_count: usize,
+) -> &'static str {
+    "sent"
 }
 
 fn outbound_delivery_metadata(
@@ -15725,13 +13892,6 @@ fn clear_retry_superseded_delivery_metadata(metadata: &mut Value) {
     object.remove("receipt_deadline_ts_ms");
     object.remove("receipt_last_poll_ts_ms");
     object.remove("receipt_registered_ts_ms");
-    object.remove("reticulumd_receipt_targets");
-    object.remove("sdk_attempts");
-    object.remove("sdk_delivery_state");
-    object.remove("sdk_last_updated_ms");
-    object.remove("sdk_message_id");
-    object.remove("sdk_reason_code");
-    object.remove("sdk_terminal");
 }
 
 fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
@@ -15742,370 +13902,10 @@ fn delivery_state_clears_error_metadata(delivery_state: &str) -> bool {
 }
 
 fn delivery_state_clears_error_metadata_for_message(
-    message: &OutboundMessageRecord,
+    _message: &OutboundMessageRecord,
     delivery_state: &str,
 ) -> bool {
     delivery_state_clears_error_metadata(delivery_state)
-        || (delivery_state == "queued" && retryable_propagation_fallback_repair_pending(message))
-}
-
-#[cfg(test)]
-fn outbound_delivery_decision(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    topic_id: Option<&str>,
-    destination: Option<&str>,
-) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
-    outbound_delivery_decision_for_targets(state, delivery_mode, topic_id, destination, None)
-}
-
-#[cfg(test)]
-fn outbound_delivery_decision_for_targets(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    topic_id: Option<&str>,
-    destination: Option<&str>,
-    target_destinations: Option<&[String]>,
-) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
-    outbound_delivery_decision_for_targets_with_refresh(
-        state,
-        delivery_mode,
-        topic_id,
-        destination,
-        target_destinations,
-        true,
-    )
-}
-
-fn outbound_delivery_decision_for_targets_with_refresh(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    topic_id: Option<&str>,
-    destination: Option<&str>,
-    target_destinations: Option<&[String]>,
-    refresh_announces: bool,
-) -> Result<r3akt_rch_core::OutboundDeliveryDecision, ApiError> {
-    if delivery_mode == DeliveryMode::Broadcast {
-        if outbound_route_has_unannounced_destinations(
-            state,
-            delivery_mode,
-            None,
-            None,
-            refresh_announces,
-        )? {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: "propagated".to_string(),
-                reason: "broadcast_unannounced".to_string(),
-            });
-        }
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "direct".to_string(),
-            reason: "broadcast_direct".to_string(),
-        });
-    }
-    if delivery_mode == DeliveryMode::Fanout {
-        if outbound_route_has_unannounced_destinations(
-            state,
-            delivery_mode,
-            topic_id,
-            target_destinations,
-            refresh_announces,
-        )? {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: "propagated".to_string(),
-                reason: "topic_unannounced".to_string(),
-            });
-        }
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "direct".to_string(),
-            reason: "topic_direct".to_string(),
-        });
-    }
-    if delivery_mode == DeliveryMode::Targeted
-        && destination
-            .map(|value| rem_destination_prefers_propagation(state, value))
-            .transpose()?
-            .unwrap_or(false)
-    {
-        let now = unix_now_ms();
-        let announce_last_seen = destination
-            .map(|identity| announce_last_seen_ts_ms(state, identity))
-            .transpose()?
-            .flatten();
-        let has_live_connection =
-            destination.is_some_and(|identity| has_live_client(state, identity, now));
-        let freshness_destinations = destination
-            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
-            .transpose()?
-            .unwrap_or_default();
-        if destination.is_some()
-            && outbound_destination_has_stale_known_announce_for_strings(
-                state,
-                &freshness_destinations,
-            )?
-        {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: "propagated".to_string(),
-                reason: "rem_no_fresh_presence".to_string(),
-            });
-        }
-        if destination
-            .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
-            .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at))
-        {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: "propagated".to_string(),
-                reason: "rem_direct_cooldown".to_string(),
-            });
-        }
-        let mut policy = state
-            .outbound_delivery_policy
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let decision = policy.delivery_decision(
-            delivery_mode,
-            destination,
-            announce_last_seen,
-            has_live_connection,
-            now,
-        );
-        if decision.method == "propagated" && decision.reason == "direct_cooldown" {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: decision.method,
-                reason: "rem_direct_cooldown".to_string(),
-            });
-        }
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "direct".to_string(),
-            reason: "rem_direct".to_string(),
-        });
-    }
-    let now = unix_now_ms();
-    let announce_last_seen = destination
-        .map(|identity| announce_last_seen_ts_ms(state, identity))
-        .transpose()?
-        .flatten();
-    let has_live_connection =
-        destination.is_some_and(|identity| has_live_client(state, identity, now));
-    if delivery_mode == DeliveryMode::Targeted {
-        let freshness_destinations = destination
-            .map(|identity| outbound_delivery_freshness_destinations(state, identity))
-            .transpose()?
-            .unwrap_or_default();
-        let freshness_destination_refs = freshness_destinations
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        if destination.is_some()
-            && outbound_destination_has_stale_known_announce_for_any(
-                state,
-                &freshness_destination_refs,
-            )?
-            && !outbound_destination_has_recent_client_presence_for_any(
-                state,
-                &freshness_destination_refs,
-                now,
-            )?
-        {
-            return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-                method: "propagated".to_string(),
-                reason: "no_fresh_presence".to_string(),
-            });
-        }
-    }
-    if delivery_mode == DeliveryMode::Targeted
-        && destination
-            .and_then(|identity| latest_failed_direct_delivery_ts_ms(state, identity))
-            .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at))
-    {
-        return Ok(r3akt_rch_core::OutboundDeliveryDecision {
-            method: "propagated".to_string(),
-            reason: "direct_cooldown".to_string(),
-        });
-    }
-    let mut policy = state
-        .outbound_delivery_policy
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(policy.delivery_decision(
-        delivery_mode,
-        destination,
-        announce_last_seen,
-        has_live_connection,
-        now,
-    ))
-}
-
-fn outbound_route_has_unannounced_destinations(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    topic_id: Option<&str>,
-    target_destinations: Option<&[String]>,
-    refresh_announces: bool,
-) -> Result<bool, ApiError> {
-    let destinations = match delivery_mode {
-        DeliveryMode::Targeted => return Ok(false),
-        DeliveryMode::Fanout => {
-            if let Some(target_destinations) = target_destinations {
-                let destinations = target_destinations
-                    .iter()
-                    .filter_map(|destination| normalize_identity_key(destination))
-                    .collect::<Vec<_>>();
-                if !destinations.is_empty() {
-                    return outbound_explicit_targets_have_unannounced_route(
-                        state,
-                        delivery_mode,
-                        destinations,
-                    );
-                }
-            }
-            let Some(topic_id) = topic_id else {
-                return Ok(false);
-            };
-            topic_subscriber_destinations(state, topic_id)?
-        }
-        DeliveryMode::Broadcast => {
-            broadcast_outbound_client_records_for_state_with_refresh(state, refresh_announces)?
-                .into_iter()
-                .map(|client| client.identity)
-                .collect()
-        }
-    };
-    outbound_destinations_have_unannounced_route(state, delivery_mode, destinations)
-}
-
-fn outbound_destinations_have_unannounced_route(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    destinations: Vec<String>,
-) -> Result<bool, ApiError> {
-    if destinations.is_empty() || state.sqlite_path.is_none() {
-        return Ok(false);
-    }
-    let now = unix_now_ms();
-    let routing_context = outbound_destination_routing_context(state)?;
-    for destination in destinations {
-        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
-            delivery_mode,
-            &destination,
-            &routing_context,
-            false,
-        );
-        let candidates = [destination.as_str(), delivery_destination.as_str()];
-        let has_fresh_announce =
-            outbound_destination_has_fresh_announce_for_any(state, &candidates)?;
-        let has_recent_client_presence =
-            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)?;
-        if !has_fresh_announce && !has_recent_client_presence {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn outbound_explicit_targets_have_unannounced_route(
-    state: &AppState,
-    delivery_mode: DeliveryMode,
-    destinations: Vec<String>,
-) -> Result<bool, ApiError> {
-    if destinations.is_empty() || state.sqlite_path.is_none() {
-        return Ok(false);
-    }
-    let now = unix_now_ms();
-    let routing_context = outbound_destination_routing_context(state)?;
-    for destination in destinations {
-        let delivery_destination = outbound_destination_for_message_with_context_for_mode(
-            delivery_mode,
-            &destination,
-            &routing_context,
-            false,
-        );
-        let candidates = [destination.as_str(), delivery_destination.as_str()];
-        let has_fresh_announce =
-            outbound_destination_has_fresh_announce_for_any(state, &candidates)?;
-        let has_recent_client_presence =
-            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)?;
-        if !has_fresh_announce && !has_recent_client_presence {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn outbound_destination_has_known_announce(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    let Some(destination) = normalize_identity_key(destination) else {
-        return Ok(false);
-    };
-    let Some(path) = &state.sqlite_path else {
-        return Ok(false);
-    };
-    RchSqliteStore::open_read_only(path.as_ref())
-        .and_then(|store| store.has_identity_announce(&destination))
-        .map_err(|error| ApiError::Internal(error.to_string()))
-}
-
-fn outbound_destination_has_stale_known_announce(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    outbound_destination_has_stale_known_announce_for_any(state, &[destination])
-}
-
-fn outbound_destination_has_stale_known_announce_for_strings(
-    state: &AppState,
-    destinations: &[String],
-) -> Result<bool, ApiError> {
-    let destinations = destinations.iter().map(String::as_str).collect::<Vec<_>>();
-    outbound_destination_has_stale_known_announce_for_any(state, &destinations)
-}
-
-fn outbound_destination_has_stale_known_announce_for_any(
-    state: &AppState,
-    destinations: &[&str],
-) -> Result<bool, ApiError> {
-    for destination in destinations {
-        if outbound_destination_has_known_announce(state, destination)? {
-            return Ok(!outbound_destination_has_fresh_announce_for_any(
-                state,
-                destinations,
-            )?);
-        }
-    }
-    Ok(false)
-}
-
-fn outbound_targeted_destination_should_reject_stale(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    let destinations = outbound_delivery_freshness_destinations(state, destination)?;
-    if destinations.is_empty() {
-        return Ok(false);
-    }
-    let destination_refs = destinations.iter().map(String::as_str).collect::<Vec<_>>();
-    let now = unix_now_ms();
-    Ok(
-        outbound_destination_has_stale_known_announce_for_any(state, &destination_refs)?
-            && !outbound_destination_has_recent_client_presence_for_any(
-                state,
-                &destination_refs,
-                now,
-            )?,
-    )
-}
-
-fn outbound_destination_has_fresh_announce_for_any(
-    state: &AppState,
-    destinations: &[&str],
-) -> Result<bool, ApiError> {
-    outbound_destination_has_announce_since_for_any(
-        state,
-        destinations,
-        unix_now_ms().saturating_sub(r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS),
-    )
 }
 
 fn outbound_destination_has_broadcast_roster_announce_for_any(
@@ -16149,117 +13949,6 @@ fn identity_announce_matches_destination(
             .and_then(normalize_identity_key)
             .as_deref()
             == Some(destination)
-}
-
-fn outbound_delivery_freshness_destinations(
-    state: &AppState,
-    destination: &str,
-) -> Result<Vec<String>, ApiError> {
-    let Some(destination) = normalize_identity_key(destination) else {
-        return Ok(Vec::new());
-    };
-    let mut destinations = vec![destination.clone()];
-    if let Some(alias) = chat_delivery_destination_aliases_for_state(state)?.get(&destination) {
-        destinations.push(alias.clone());
-    }
-    Ok(destinations)
-}
-
-fn mark_direct_delivery_failure(state: &AppState, identity: &str) -> Result<(), ApiError> {
-    let mut policy = state
-        .outbound_delivery_policy
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    policy.mark_direct_failure(identity, unix_now_ms());
-    Ok(())
-}
-
-fn latest_failed_direct_delivery_ts_ms(state: &AppState, identity: &str) -> Option<i64> {
-    let identity = normalize_identity_key(identity)?;
-    let messages = state.messages.read().ok()?;
-    messages
-        .iter()
-        .filter(|message| {
-            message
-                .destination
-                .as_deref()
-                .and_then(normalize_identity_key)
-                .as_deref()
-                == Some(identity.as_str())
-                && message.delivery_method == "direct"
-                && normalized_delivery_state(message) == "failed"
-        })
-        .filter_map(failed_direct_delivery_observed_ts_ms)
-        .max()
-}
-
-fn rem_command_destination_should_propagate(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    if outbound_destination_has_stale_known_announce(state, destination)? {
-        return Ok(true);
-    }
-    let announce_last_seen = announce_last_seen_ts_ms(state, destination)?;
-    Ok(latest_failed_direct_delivery_ts_ms(state, destination)
-        .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at)))
-}
-
-fn failed_direct_delivery_observed_ts_ms(message: &OutboundMessageRecord) -> Option<i64> {
-    if message
-        .delivery_metadata
-        .get("error")
-        .and_then(Value::as_str)
-        .is_some_and(|error| !direct_failure_error_should_trigger_cooldown(error))
-    {
-        return None;
-    }
-    [
-        "delivery_failed_ts_ms",
-        "receipt_last_poll_ts_ms",
-        "last_attempt_at_ts_ms",
-    ]
-    .iter()
-    .find_map(|key| message.delivery_metadata.get(*key).and_then(Value::as_i64))
-    .or(Some(message.created_ts_ms))
-}
-
-fn direct_failure_error_should_trigger_cooldown(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    !(normalized.contains("sdk_transport_zmq_timeout")
-        || normalized.contains("zeromq sdk start")
-        || normalized.contains("zeromq command")
-        || normalized.contains("zeromq response")
-        || normalized == "send_timeout"
-        || normalized.contains("request timed out waiting for correlated response"))
-}
-
-fn announce_last_seen_ts_ms(state: &AppState, identity: &str) -> Result<Option<i64>, ApiError> {
-    let Some(identity) = normalize_identity_key(identity) else {
-        return Ok(None);
-    };
-    Ok(
-        load_identity_announces_for_identities_for_state(state, std::slice::from_ref(&identity))?
-            .into_iter()
-            .filter(|record| {
-                record.destination_hash == identity
-                    || record.announced_identity_hash.as_deref() == Some(identity.as_str())
-            })
-            .map(|record| record.last_seen_ts_ms)
-            .max(),
-    )
-}
-
-fn has_live_client(state: &AppState, identity: &str, now_ts_ms: i64) -> bool {
-    let Some(identity) = normalize_identity_key(identity) else {
-        return false;
-    };
-    let Ok(clients) = state.clients.read() else {
-        return false;
-    };
-    clients
-        .get(identity.as_str())
-        .is_some_and(|client| client_has_recent_presence(client, now_ts_ms))
 }
 
 fn client_presence_ts_ms(client: &ClientRecord) -> Option<i64> {
@@ -16330,7 +14019,6 @@ fn client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiEr
         .into_values()
         .filter(client_should_appear_in_client_list)
         .collect::<Vec<_>>();
-    merge_voice_capability_records(&mut records);
     records.sort_by(|left, right| left.identity.cmp(&right.identity));
     Ok(records)
 }
@@ -16371,85 +14059,7 @@ fn identity_display_records_for_annotations(
             records.insert(identity.clone(), record);
         }
     }
-    let mut records = records.into_values().collect::<Vec<_>>();
-    merge_voice_capability_records(&mut records);
-    records
-}
-
-fn merge_voice_capability_records(records: &mut Vec<ClientRecord>) {
-    let voice_records = records
-        .iter()
-        .filter(|record| client_has_voice_capability(record))
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut merged_voice_destinations = HashSet::new();
-    for voice in &voice_records {
-        let Some(voice_name) = voice_capability_owner_name(voice) else {
-            continue;
-        };
-        let Some(target) = records.iter_mut().find(|record| {
-            !client_has_voice_capability(record)
-                && normalized_client_display_name(record).as_deref() == Some(voice_name.as_str())
-        }) else {
-            continue;
-        };
-        attach_voice_capability(target, voice);
-        merged_voice_destinations.insert(voice.identity.clone());
-    }
-    records.retain(|record| !merged_voice_destinations.contains(&record.identity));
-}
-
-fn voice_capability_owner_name(record: &ClientRecord) -> Option<String> {
-    if is_known_pixel_voice_destination(&record.identity) {
-        return Some("pixel".to_string());
-    }
-    normalized_client_display_name(record)
-}
-
-fn client_has_voice_capability(record: &ClientRecord) -> bool {
-    record.announce_capabilities.iter().any(|capability| {
-        let normalized = capability.trim().to_ascii_lowercase();
-        normalized == "telephony" || normalized == "voice"
-    })
-}
-
-fn normalized_client_display_name(record: &ClientRecord) -> Option<String> {
-    record
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_ascii_lowercase)
-}
-
-fn attach_voice_capability(target: &mut ClientRecord, voice: &ClientRecord) {
-    if !target
-        .announce_capabilities
-        .iter()
-        .any(|capability| capability == "telephony")
-    {
-        target.announce_capabilities.push("telephony".to_string());
-    }
-    if !target
-        .announce_capabilities
-        .iter()
-        .any(|capability| capability == "voice")
-    {
-        target.announce_capabilities.push("voice".to_string());
-    }
-    if !target.metadata.is_object() {
-        target.metadata = json!({});
-    }
-    if let Some(metadata) = target.metadata.as_object_mut() {
-        metadata.insert(
-            "voice".to_string(),
-            json!({
-                "destination_hash": voice.identity,
-                "display_name": voice.display_name,
-                "last_seen": voice.last_seen,
-            }),
-        );
-    }
+    records.into_values().collect()
 }
 
 fn client_should_appear_in_client_list(record: &ClientRecord) -> bool {
@@ -16480,18 +14090,12 @@ fn broadcast_outbound_client_records_for_state_with_refresh(
     refresh_announces: bool,
 ) -> Result<Vec<ClientRecord>, ApiError> {
     let now = unix_now_ms();
-    let routing_context = outbound_destination_routing_context(state)?;
     let _ = refresh_announces;
     let records = broadcast_client_records_for_state_with_refresh(state, false)?;
     Ok(records
         .into_iter()
         .filter(|client| {
-            let delivery_destination = outbound_destination_for_message_with_context_for_mode(
-                DeliveryMode::Broadcast,
-                &client.identity,
-                &routing_context,
-                false,
-            );
+            let delivery_destination = outbound_destination_for_message(&client.identity);
             broadcast_client_is_active_for_outbound(
                 state,
                 client,
@@ -16545,7 +14149,7 @@ fn outbound_destinations(
 ) -> Result<Vec<String>, ApiError> {
     let excluded = excluded_outbound_destinations(message);
     if let Some(destination) = message.destination.as_ref() {
-        let delivery_destination = outbound_destination_for_message(state, message, destination)?;
+        let delivery_destination = outbound_destination_for_message(destination);
         return Ok(
             if destination_excluded(&excluded, destination, &delivery_destination)
                 || !outbound_identity_allowed(state, destination, &delivery_destination)
@@ -16558,18 +14162,13 @@ fn outbound_destinations(
     }
     let mut destinations = Vec::new();
     let mut seen_destinations = HashSet::new();
-    let routing_context = outbound_destination_routing_context(state)?;
     if let Some(topic_id) = message.topic_id.as_deref() {
         let topic_destinations = match outbound_target_destinations(message) {
             Some(destinations) => destinations,
             None => topic_subscriber_destinations(state, topic_id)?,
         };
         for destination in topic_destinations {
-            let delivery_destination = outbound_destination_for_message_with_context(
-                message,
-                &destination,
-                &routing_context,
-            );
+            let delivery_destination = outbound_destination_for_message(&destination);
             if !destination_excluded(&excluded, &destination, &delivery_destination)
                 && outbound_identity_allowed(state, &destination, &delivery_destination)
             {
@@ -16582,11 +14181,7 @@ fn outbound_destinations(
         }
     } else if let Some(target_destinations) = outbound_target_destinations(message) {
         for destination in target_destinations {
-            let delivery_destination = outbound_destination_for_message_with_context(
-                message,
-                &destination,
-                &routing_context,
-            );
+            let delivery_destination = outbound_destination_for_message(&destination);
             if !destination_excluded(&excluded, &destination, &delivery_destination)
                 && outbound_identity_allowed(state, &destination, &delivery_destination)
             {
@@ -16599,11 +14194,7 @@ fn outbound_destinations(
         }
     } else {
         for client in broadcast_outbound_client_records_for_message(state, message)? {
-            let delivery_destination = outbound_destination_for_message_with_context(
-                message,
-                &client.identity,
-                &routing_context,
-            );
+            let delivery_destination = outbound_destination_for_message(&client.identity);
             if !destination_excluded(&excluded, &client.identity, &delivery_destination)
                 && outbound_roster_recipient_allowed(state, message, &client, &delivery_destination)
             {
@@ -16682,14 +14273,6 @@ fn outbound_identity_blocked(state: &AppState, destination: &str) -> bool {
         .is_some_and(|record| record.is_banned || record.is_blackholed)
 }
 
-#[cfg(test)]
-fn outbound_identity_explicitly_allowed(state: &AppState, destination: &str) -> bool {
-    let Some(allowlist) = state.outbound_identity_allowlist.as_ref() else {
-        return false;
-    };
-    normalize_identity_key(destination).is_some_and(|destination| allowlist.contains(&destination))
-}
-
 fn outbound_requested_identity_allowed(state: &AppState, destination: &str) -> bool {
     let Some(allowlist) = state.outbound_identity_allowlist.as_ref() else {
         return true;
@@ -16704,33 +14287,8 @@ fn retain_outbound_allowed_destinations(state: &AppState, destinations: &mut Vec
     destinations.retain(|destination| outbound_requested_identity_allowed(state, destination));
 }
 
-fn outbound_destination_for_message(
-    state: &AppState,
-    message: &OutboundMessageRecord,
-    destination: &str,
-) -> Result<String, ApiError> {
-    let normalized =
-        normalize_identity_key(destination).unwrap_or_else(|| destination.trim().to_string());
-    if preserves_requested_outbound_destination(message) {
-        return Ok(normalized);
-    }
-    if message.delivery_mode == DeliveryMode::Broadcast
-        && destination_is_rem_app_identity_for_state(state, normalized.as_str())?
-    {
-        return Ok(normalized);
-    }
-    if let Some(alias) =
-        chat_delivery_destination_aliases_for_state(state)?.get(normalized.as_str())
-    {
-        return Ok(alias.clone());
-    }
-    Ok(normalized)
-}
-
-#[derive(Default)]
-struct OutboundDestinationRoutingContext {
-    rem_app_destinations: HashSet<String>,
-    chat_delivery_aliases: HashMap<String, String>,
+fn outbound_destination_for_message(destination: &str) -> String {
+    normalize_identity_key(destination).unwrap_or_else(|| destination.trim().to_string())
 }
 
 fn load_identity_announces_for_identities_for_state(
@@ -16745,33 +14303,6 @@ fn load_identity_announces_for_identities_for_state(
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
-fn load_identity_announces_for_state(
-    state: &AppState,
-) -> Result<Vec<r3akt_rch_core::IdentityAnnounceRecord>, ApiError> {
-    let Some(path) = &state.sqlite_path else {
-        return Ok(Vec::new());
-    };
-    let store = RchSqliteStore::open_read_only(path.as_ref())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    store
-        .load_identity_announces()
-        .map_err(|error| ApiError::Internal(error.to_string()))
-}
-
-#[cfg(test)]
-fn load_identity_states_for_state(
-    state: &AppState,
-) -> Result<Vec<CoreIdentityStateRecord>, ApiError> {
-    let Some(path) = &state.sqlite_path else {
-        return Ok(Vec::new());
-    };
-    let store = RchSqliteStore::open_read_only(path.as_ref())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    store
-        .load_identity_states()
-        .map_err(|error| ApiError::Internal(error.to_string()))
-}
-
 fn load_identity_rem_modes_for_state(
     state: &AppState,
 ) -> Result<Vec<r3akt_rch_core::IdentityRemModeRecord>, ApiError> {
@@ -16783,266 +14314,6 @@ fn load_identity_rem_modes_for_state(
     store
         .load_identity_rem_modes()
         .map_err(|error| ApiError::Internal(error.to_string()))
-}
-
-fn outbound_destination_routing_context(
-    state: &AppState,
-) -> Result<OutboundDestinationRoutingContext, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(OutboundDestinationRoutingContext::default());
-    }
-    let announces = load_identity_announces_for_state(state)?;
-    let rem_app_destinations = announces
-        .iter()
-        .filter(|record| record.client_type.trim().eq_ignore_ascii_case("rem"))
-        .filter_map(|record| normalize_identity_key(&record.destination_hash))
-        .collect::<HashSet<_>>();
-    Ok(OutboundDestinationRoutingContext {
-        rem_app_destinations,
-        chat_delivery_aliases: chat_delivery_destination_aliases_from_announces(&announces),
-    })
-}
-
-fn outbound_destination_for_message_with_context(
-    message: &OutboundMessageRecord,
-    destination: &str,
-    routing_context: &OutboundDestinationRoutingContext,
-) -> String {
-    outbound_destination_for_message_with_context_for_mode(
-        message.delivery_mode,
-        destination,
-        routing_context,
-        preserves_requested_outbound_destination(message),
-    )
-}
-
-fn outbound_destination_for_message_with_context_for_mode(
-    delivery_mode: DeliveryMode,
-    destination: &str,
-    routing_context: &OutboundDestinationRoutingContext,
-    preserve_requested_destination: bool,
-) -> String {
-    let normalized =
-        normalize_identity_key(destination).unwrap_or_else(|| destination.trim().to_string());
-    if preserve_requested_destination {
-        return normalized;
-    }
-    if delivery_mode == DeliveryMode::Broadcast
-        && routing_context
-            .rem_app_destinations
-            .contains(normalized.as_str())
-    {
-        return normalized;
-    }
-    routing_context
-        .chat_delivery_aliases
-        .get(normalized.as_str())
-        .cloned()
-        .unwrap_or(normalized)
-}
-
-fn preserves_requested_outbound_destination(message: &OutboundMessageRecord) -> bool {
-    if is_rem_command_message(message) {
-        return true;
-    }
-    message
-        .delivery_metadata
-        .get("fanout_channel")
-        .and_then(Value::as_str)
-        .is_some_and(|channel| channel == "r3akt_delta")
-}
-
-fn chat_delivery_destination_aliases_for_state(
-    state: &AppState,
-) -> Result<HashMap<String, String>, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(HashMap::new());
-    }
-    let announces = load_identity_announces_for_state(state)?;
-    Ok(chat_delivery_destination_aliases_from_announces(&announces))
-}
-
-fn destination_is_rem_app_identity_for_state(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    let Some(destination) = normalize_identity_key(destination) else {
-        return Ok(false);
-    };
-    if state.sqlite_path.is_none() {
-        return Ok(false);
-    }
-    Ok(load_identity_announces_for_state(state)?
-        .iter()
-        .any(|record| {
-            record.client_type.trim().eq_ignore_ascii_case("rem")
-                && normalize_identity_key(&record.destination_hash).as_deref()
-                    == Some(destination.as_str())
-        }))
-}
-
-fn rem_destination_prefers_propagation(
-    state: &AppState,
-    destination: &str,
-) -> Result<bool, ApiError> {
-    let Some(destination) = normalize_identity_key(destination) else {
-        return Ok(false);
-    };
-    if state.sqlite_path.is_none() {
-        return Ok(false);
-    }
-    let announces = load_identity_announces_for_state(state)?;
-    if announces.iter().any(|record| {
-        record.client_type.trim().eq_ignore_ascii_case("rem")
-            && normalize_identity_key(&record.destination_hash).as_deref()
-                == Some(destination.as_str())
-    }) {
-        return Ok(true);
-    }
-    let aliases = chat_delivery_destination_aliases_from_announces(&announces);
-    Ok(aliases
-        .keys()
-        .any(|rem_destination| rem_destination == &destination))
-}
-
-#[cfg(test)]
-fn chat_delivery_destination_aliases_from_snapshot(
-    snapshot: &r3akt_rch_core::RchCoreSnapshot,
-) -> HashMap<String, String> {
-    chat_delivery_destination_aliases_from_announces(&snapshot.identity_announces)
-}
-
-fn chat_delivery_destination_aliases_from_announces(
-    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
-) -> HashMap<String, String> {
-    let mut lxmf_delivery_by_name: HashMap<String, (&str, i64)> = HashMap::new();
-    let mut voice_by_name: HashMap<String, (&str, i64)> = HashMap::new();
-    for record in announces {
-        if record.client_type.trim().eq_ignore_ascii_case("rem") {
-            continue;
-        }
-        let normalized_display_name = identity_announce_chat_peer_name(record);
-        if let Some(name) = normalized_display_name.as_deref() {
-            let replace = lxmf_delivery_by_name
-                .get(name)
-                .is_none_or(|(_, seen_at)| record.last_seen_ts_ms >= *seen_at);
-            if replace {
-                lxmf_delivery_by_name.insert(
-                    name.to_string(),
-                    (record.destination_hash.as_str(), record.last_seen_ts_ms),
-                );
-            }
-        }
-        let voice_name = if is_known_pixel_voice_destination(&record.destination_hash) {
-            Some("pixel".to_string())
-        } else if identity_announce_has_voice_capability(record) {
-            normalized_display_name
-        } else {
-            None
-        };
-        if let Some(name) = voice_name {
-            let replace = voice_by_name
-                .get(name.as_str())
-                .is_none_or(|(_, seen_at)| record.last_seen_ts_ms >= *seen_at);
-            if replace {
-                voice_by_name.insert(
-                    name,
-                    (record.destination_hash.as_str(), record.last_seen_ts_ms),
-                );
-            }
-        }
-    }
-
-    let mut aliases = HashMap::new();
-    for record in announces {
-        let Some(name) = identity_announce_chat_peer_name(record) else {
-            continue;
-        };
-        let Some(source_destination) = normalize_identity_key(&record.destination_hash) else {
-            continue;
-        };
-        let target_destination = if record.client_type.trim().eq_ignore_ascii_case("rem") {
-            lxmf_delivery_by_name
-                .get(name.as_str())
-                .filter(|(_, seen_at)| *seen_at >= record.last_seen_ts_ms)
-                .map(|(destination, _)| *destination)
-        } else {
-            voice_by_name
-                .get(name.as_str())
-                .filter(|(_, seen_at)| *seen_at >= record.last_seen_ts_ms)
-                .map(|(destination, _)| *destination)
-        };
-        let Some(target_destination) = target_destination else {
-            continue;
-        };
-        let Some(delivery_destination) = normalize_identity_key(target_destination) else {
-            continue;
-        };
-        if source_destination != delivery_destination {
-            aliases.insert(source_destination, delivery_destination);
-        }
-    }
-    aliases
-}
-
-fn identity_announce_has_voice_capability(record: &r3akt_rch_core::IdentityAnnounceRecord) -> bool {
-    record.announce_capabilities.iter().any(|capability| {
-        let normalized = capability.trim().to_ascii_lowercase();
-        normalized == "telephony" || normalized == "voice" || normalized == "_announce_telephony"
-    })
-}
-
-#[cfg(test)]
-fn identity_announce_voice_owner_name(
-    record: &r3akt_rch_core::IdentityAnnounceRecord,
-) -> Option<String> {
-    if is_known_pixel_voice_destination(&record.destination_hash) {
-        return Some("pixel".to_string());
-    }
-    if identity_announce_has_voice_capability(record) {
-        return identity_announce_chat_peer_name(record);
-    }
-    None
-}
-
-fn identity_announce_chat_peer_name(
-    record: &r3akt_rch_core::IdentityAnnounceRecord,
-) -> Option<String> {
-    record
-        .announce_capabilities
-        .iter()
-        .find_map(|capability| capability.strip_prefix("name="))
-        .and_then(normalize_chat_peer_name)
-        .or_else(|| {
-            record
-                .display_name
-                .as_deref()
-                .and_then(|display_name| display_name.rsplit_once(";name=").map(|(_, name)| name))
-                .and_then(normalize_chat_peer_name)
-        })
-        .or_else(|| {
-            record
-                .display_name
-                .as_deref()
-                .and_then(normalize_chat_peer_name)
-        })
-}
-
-#[cfg(test)]
-fn chat_delivery_destination_aliases_from_reticulumd_announces(
-    _announces: &[ReticulumdAnnounceRecord],
-) -> HashMap<String, String> {
-    HashMap::new()
-}
-
-fn normalize_chat_peer_name(value: &str) -> Option<String> {
-    let value = value.trim().replace("%20", " ");
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_ascii_lowercase())
-    }
 }
 
 fn destination_excluded(excluded: &[String], requested: &str, delivery: &str) -> bool {
@@ -18228,219 +15499,6 @@ fn mission_team_member_destinations(
             }
         }
     }
-    Ok(destinations)
-}
-
-#[cfg(test)]
-fn known_rem_peer_destinations(state: &AppState) -> Result<Vec<String>, ApiError> {
-    known_rem_peer_destinations_inner(state, Some(OUTBOUND_BROADCAST_ACTIVE_WINDOW_MS))
-}
-
-#[cfg(test)]
-fn known_rem_peer_destinations_for_mission_change(
-    state: &AppState,
-) -> Result<Vec<String>, ApiError> {
-    known_rem_peer_destinations_inner(state, Some(MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS))
-}
-
-#[cfg(test)]
-fn known_rem_peer_destinations_inner(
-    state: &AppState,
-    active_window_ms: Option<i64>,
-) -> Result<Vec<String>, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(Vec::new());
-    }
-    let runtime_freshness_cutoff_ms = rem_peer_runtime_freshness_cutoff_ms(state);
-    let identity_states = load_identity_states_for_state(state)?;
-    let identity_announces = load_identity_announces_for_state(state)?;
-    let moderation: HashMap<String, (bool, bool)> = identity_states
-        .iter()
-        .filter_map(|record| {
-            normalize_identity_key(&record.identity)
-                .map(|identity| (identity, (record.is_banned, record.is_blackholed)))
-        })
-        .collect();
-    let mut candidates: HashMap<String, (&r3akt_rch_core::IdentityAnnounceRecord, String)> =
-        HashMap::new();
-    for record in &identity_announces {
-        let identity = record
-            .announced_identity_hash
-            .as_deref()
-            .and_then(normalize_identity_key)
-            .or_else(|| normalize_identity_key(&record.destination_hash));
-        let Some(identity) = identity else {
-            continue;
-        };
-        let explicitly_allowed = outbound_identity_explicitly_allowed(state, identity.as_str());
-        if record.client_type.trim().to_ascii_lowercase() != "rem" {
-            continue;
-        }
-        if rem_announce_superseded_by_generic_on_same_source(record, &identity_announces) {
-            continue;
-        }
-        if let Some(active_window_ms) = active_window_ms {
-            if record.last_seen_ts_ms < unix_now_ms() - active_window_ms && !explicitly_allowed {
-                continue;
-            }
-        }
-        if !rem_peer_announce_is_fresh_for_runtime(record, runtime_freshness_cutoff_ms)
-            && !explicitly_allowed
-        {
-            continue;
-        }
-        let has_r3akt = record
-            .announce_capabilities
-            .iter()
-            .any(|capability| capability.trim().eq_ignore_ascii_case("r3akt"));
-        let has_emergency_messages = record
-            .announce_capabilities
-            .iter()
-            .any(|capability| capability.trim().eq_ignore_ascii_case("emergencymessages"));
-        let has_command_capability = has_emergency_messages
-            || record.announce_capabilities.iter().any(|capability| {
-                let capability = capability.trim();
-                capability.eq_ignore_ascii_case("eam")
-                    || capability.eq_ignore_ascii_case("telemetry")
-            });
-        if !has_r3akt || !has_command_capability {
-            continue;
-        }
-        if moderation
-            .get(&identity)
-            .is_some_and(|(is_banned, is_blackholed)| *is_banned || *is_blackholed)
-        {
-            continue;
-        }
-        let source = record
-            .source_interface
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_else(|| "identity".to_string());
-        let replace = candidates
-            .get(&identity)
-            .is_none_or(|(_, existing_source)| {
-                source == "destination" && existing_source != "destination"
-            });
-        if replace {
-            candidates.insert(identity, (record, source));
-        }
-    }
-    let mut destinations = candidates.into_keys().collect::<Vec<_>>();
-    destinations.sort();
-    destinations.dedup();
-    Ok(destinations)
-}
-
-#[cfg(test)]
-fn rem_announce_superseded_by_generic_on_same_source(
-    rem_record: &r3akt_rch_core::IdentityAnnounceRecord,
-    records: &[r3akt_rch_core::IdentityAnnounceRecord],
-) -> bool {
-    let Some(source) = normalized_announce_source(rem_record) else {
-        return false;
-    };
-    let rem_name = identity_announce_chat_peer_name(rem_record);
-    if !rem_name.as_deref().is_some_and(is_legacy_rem_shadow_name) {
-        return false;
-    }
-    records.iter().any(|record| {
-        if !record.client_type.eq_ignore_ascii_case("generic_lxmf") {
-            return false;
-        }
-        if identity_announce_has_voice_capability(record) {
-            return false;
-        }
-        if normalized_announce_source(record).as_deref() != Some(source.as_str()) {
-            return false;
-        }
-        let generic_name = identity_announce_chat_peer_name(record);
-        rem_name != generic_name
-    })
-}
-
-#[cfg(test)]
-fn is_legacy_rem_shadow_name(name: &str) -> bool {
-    let normalized = name.trim().replace(['-', '_'], " ").to_ascii_lowercase();
-    normalized == "emergency ops mobile"
-}
-
-#[cfg(test)]
-fn normalized_announce_source(record: &r3akt_rch_core::IdentityAnnounceRecord) -> Option<String> {
-    record
-        .source_interface
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(str::to_ascii_lowercase)
-}
-
-#[cfg(test)]
-fn generic_lxmf_peer_destinations_for_mission_change(
-    state: &AppState,
-) -> Result<Vec<String>, ApiError> {
-    if state.sqlite_path.is_none() {
-        return Ok(Vec::new());
-    }
-    let identity_announces = load_identity_announces_for_state(state)?;
-    let rem_peer_names = identity_announces
-        .iter()
-        .filter(|record| record.client_type.eq_ignore_ascii_case("rem"))
-        .filter_map(identity_announce_chat_peer_name)
-        .collect::<HashSet<_>>();
-    let generic_display_names = identity_announces
-        .iter()
-        .filter(|record| record.client_type.eq_ignore_ascii_case("generic_lxmf"))
-        .filter(|record| {
-            !is_known_pixel_voice_destination(&record.destination_hash)
-                && !identity_announce_has_voice_capability(record)
-        })
-        .filter_map(identity_announce_chat_peer_name)
-        .collect::<HashSet<_>>();
-    let mut candidates: HashMap<String, (i64, String)> = HashMap::new();
-    for record in &identity_announces {
-        if !record.client_type.eq_ignore_ascii_case("generic_lxmf") {
-            continue;
-        }
-        let identity = record
-            .announced_identity_hash
-            .as_deref()
-            .and_then(normalize_identity_key)
-            .or_else(|| normalize_identity_key(&record.destination_hash));
-        let Some(identity) = identity else {
-            continue;
-        };
-        if identity_announce_voice_owner_name(record)
-            .as_deref()
-            .is_some_and(|name| generic_display_names.contains(name))
-        {
-            continue;
-        }
-        let peer_name = identity_announce_chat_peer_name(record);
-        if peer_name
-            .as_deref()
-            .is_some_and(|name| rem_peer_names.contains(name))
-            && !outbound_identity_explicitly_allowed(state, identity.as_str())
-        {
-            continue;
-        }
-        let key = peer_name.unwrap_or_else(|| identity.clone());
-        let replace = candidates
-            .get(&key)
-            .is_none_or(|(last_seen_ts_ms, _)| record.last_seen_ts_ms > *last_seen_ts_ms);
-        if replace {
-            candidates.insert(key, (record.last_seen_ts_ms, identity));
-        }
-    }
-    let mut destinations = candidates
-        .into_values()
-        .map(|(_, identity)| identity)
-        .collect::<Vec<_>>();
-    destinations.sort();
-    destinations.dedup();
     Ok(destinations)
 }
 
@@ -21621,14 +18679,28 @@ fn rem_annotations_for_client_identities(
 fn rem_annotations_for_state(
     state: &AppState,
 ) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
-    rem_annotations_for_destinations(state, &[])
+    let Some(path) = &state.sqlite_path else {
+        return Ok(HashMap::new());
+    };
+    let store = RchSqliteStore::open_read_only(path.as_ref())
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let identity_announces = store
+        .load_identity_announces()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let identity_rem_modes = store
+        .load_identity_rem_modes()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(rem_annotations_from_records(
+        &identity_announces,
+        &identity_rem_modes,
+    ))
 }
 
 fn rem_annotations_for_destinations(
     state: &AppState,
     destinations: &[String],
 ) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
-    if state.sqlite_path.is_none() {
+    if destinations.is_empty() {
         return Ok(HashMap::new());
     }
     let Some(path) = &state.sqlite_path else {
@@ -21636,24 +18708,12 @@ fn rem_annotations_for_destinations(
     };
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_announces = if destinations.is_empty() {
-        store
-            .load_identity_announces()
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    } else {
-        store
-            .load_identity_announces_by_destination_hashes(destinations)
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    };
-    let identity_rem_modes = if destinations.is_empty() {
-        store
-            .load_identity_rem_modes()
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    } else {
-        store
-            .load_identity_rem_modes_by_identities(destinations)
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    };
+    let identity_announces = store
+        .load_identity_announces_by_destination_hashes(destinations)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let identity_rem_modes = store
+        .load_identity_rem_modes_by_identities(destinations)
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(rem_annotations_from_records(
         &identity_announces,
         &identity_rem_modes,
@@ -25134,97 +22194,21 @@ async fn control_sync(State(state): State<AppState>) -> Result<Json<Value>, ApiE
 }
 
 fn control_sync_blocking(state: &AppState) -> Result<Value, ApiError> {
-    let Some(endpoint) = &state.reticulumd_rpc_endpoint else {
-        return Err(ApiError::ServiceUnavailable("Sync unavailable".to_string()));
-    };
-    let mut client = r3akt_rch_bridge::ReticulumdRpcClient::new(endpoint.as_str());
-    let propagation_nodes = client
-        .call("list_propagation_nodes", None)
-        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = propagation_nodes.error {
-        return Err(ApiError::ServiceUnavailable(format!(
-            "{}: {}",
-            error.code, error.message
-        )));
-    }
-    let peer = propagation_nodes
-        .result
-        .as_ref()
-        .and_then(first_reticulumd_propagation_node)
-        .ok_or_else(|| ApiError::ServiceUnavailable("No reachable propagation node".to_string()))?;
-    let sync = client
-        .call("peer_sync", Some(json!({ "peer": peer })))
-        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = sync.error {
-        return Err(ApiError::ServiceUnavailable(format!(
-            "{}: {}",
-            error.code, error.message
-        )));
-    }
-    let selected = client
-        .call(
-            "set_outbound_propagation_node",
-            Some(json!({ "peer": peer })),
+    let data_plane = state.lxmf_zmq_data_plane.as_ref().ok_or_else(|| {
+        ApiError::ServiceUnavailable(
+            "Sync unavailable: requires the ZeroMQ SDK data plane".to_string(),
         )
+    })?;
+    let payload = data_plane
+        .sync_selected_propagation_node()
         .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
-    if let Some(error) = selected.error {
-        return Err(ApiError::ServiceUnavailable(format!(
-            "{}: {}",
-            error.code, error.message
-        )));
-    }
-    let fetch_result = match client.call(
-        "propagation_remote_fetch",
-        Some(json!({
-            "remote": peer,
-            "timeout_secs": CONTROL_SYNC_PROPAGATION_FETCH_TIMEOUT_SECS,
-            "transfer_limit_kb": 10_240.0,
-        })),
-    ) {
-        Ok(fetch) => {
-            if let Some(error) = fetch.error {
-                json!({
-                    "status": "failed",
-                    "error": format!("{}: {}", error.code, error.message),
-                })
-            } else {
-                fetch.result.unwrap_or_else(|| json!({}))
-            }
-        }
-        Err(error) => json!({
-            "status": "failed",
-            "error": error.to_string(),
-        }),
-    };
-    let rpc_result = sync.result.unwrap_or_else(|| json!({}));
-    let payload = json!({
-        "status": "sync_requested",
-        "reason": "manual",
-        "propagation_node": peer,
-        "rpc_result": rpc_result,
-        "fetch_result": fetch_result,
-    });
     record_system_event_best_effort(
-        &state,
+        state,
         "control_sync_requested",
         "Rust runtime propagation sync requested",
         payload.clone(),
     );
     Ok(payload)
-}
-
-fn first_reticulumd_propagation_node(result: &Value) -> Option<String> {
-    result
-        .get("nodes")
-        .and_then(Value::as_array)?
-        .iter()
-        .find_map(|node| {
-            node.as_str().map(str::to_string).or_else(|| {
-                ["peer", "destination_hash", "node", "identity"]
-                    .iter()
-                    .find_map(|key| node.get(*key).and_then(Value::as_str).map(str::to_string))
-            })
-        })
 }
 
 fn control_status_payload(state: &AppState) -> Result<Value, ApiError> {
@@ -26470,12 +23454,6 @@ fn method_not_allowed_allowed_methods(path: &str) -> Option<&'static str> {
         | "/Topic/Subscribe"
         | "/Subscriber/Add"
         | "/internal/message"
-        | "/internal/delivery-receipt"
-        | "/internal/delivery-failure"
-        | "/internal/delivery-retry"
-        | "/internal/delivery-propagation"
-        | "/internal/delivery-drop"
-        | "/internal/delivery-attempt"
         | "/internal/identity-announce" => Some("POST"),
         "/RTH" | "/RCH" => Some("POST, PUT"),
         _ => method_not_allowed_allowed_methods_for_segments(path),
@@ -27772,10 +24750,11 @@ mod tests {
     mod issue_238_live;
     mod release_durability;
     mod release_lifecycle;
-    mod release_receipt_callbacks;
     mod release_security;
     mod rem_team_directory;
     mod resource_efficiency;
+    mod sdk_receipt_recovery;
+    mod sdk_routing;
 
     use crate::BASE64_STANDARD;
     use std::io::{Read, Write};
@@ -27805,8 +24784,8 @@ mod tests {
     use tower::ServiceExt;
 
     fn assert_rem_auto_rpc_method(params: &Value) {
-        assert_eq!(params["method"], "direct");
-        assert_eq!(params["try_propagation_on_fail"], true);
+        assert!(params.get("method").is_none());
+        assert!(params.get("try_propagation_on_fail").is_none());
     }
 
     fn test_client(identity: &str, now: i64) -> r3akt_rch_core::ClientRecord {
@@ -29947,8 +26926,8 @@ mod tests {
             relay.delivery_metadata["exclude_destinations"],
             json!(["peer-alpha"])
         );
-        assert_eq!(relay.delivery_method, "direct");
-        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+        assert_eq!(relay.delivery_method, "auto");
+        assert_eq!(relay.delivery_policy_reason, "sdk_owned");
         assert_eq!(relay.content, "Alpha_1 > phone to phone");
         drop(messages);
 
@@ -29956,7 +26935,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reticulumd_inbound_direct_topic_prunes_stale_subscribers_when_active_clients_exist() {
+    async fn reticulumd_inbound_direct_topic_preserves_subscriber_despite_stale_announce() {
         let envelope = r3akt_protocol::ProtocolEnvelope::new(
             r3akt_protocol::NodeId::new("peer-alpha"),
             r3akt_protocol::Destination::Topic(r3akt_protocol::Topic::new("direct")),
@@ -30039,8 +27018,8 @@ mod tests {
         assert_eq!(requests[0].method, "list_messages");
         assert_eq!(requests[1].method, "sdk_send_v2");
         let params = requests[1].params.as_ref().expect("relay params");
-        assert_eq!(params["destination"], "peer-bravo");
-        assert_ne!(params["destination"], "peer-stale");
+        assert_eq!(params["destination"], "peer-stale");
+        assert_ne!(params["destination"], "peer-bravo");
 
         let messages = state.messages.read().expect("messages");
         let relay = messages
@@ -30048,27 +27027,28 @@ mod tests {
             .find(|message| {
                 message
                     .delivery_metadata
-                    .get("reticulumd_inbound_direct_active_relay")
+                    .get("reticulumd_inbound_relay")
                     .and_then(Value::as_bool)
                     == Some(true)
             })
             .expect("active direct relay");
         assert_eq!(
             relay.delivery_metadata["target_destinations"],
-            json!(["peer-bravo"])
+            json!(["peer-stale"])
         );
         assert_eq!(
             relay.delivery_metadata["reticulumd_inbound_default_direct_relay"],
             false
         );
-        assert_eq!(relay.delivery_method, "direct");
-        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+        assert_eq!(relay.delivery_method, "auto");
+        assert_eq!(relay.delivery_policy_reason, "sdk_owned");
 
         std::fs::remove_file(db_path).expect("cleanup db");
     }
 
     #[tokio::test]
-    async fn reticulumd_inbound_direct_topic_prefers_fresh_announced_subscriber() {
+    async fn reticulumd_inbound_direct_topic_keeps_all_subscribers_independent_of_announce_freshness()
+     {
         let source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let fresh_subscriber = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let stale_subscriber = "cccccccccccccccccccccccccccccccc";
@@ -30097,6 +27077,9 @@ mod tests {
             }),
             json!({
                 "message_id": "direct-fresh-sub-accepted"
+            }),
+            json!({
+                "message_id": "direct-stale-sub-accepted"
             }),
         ]);
         let db_path = std::env::temp_dir().join(format!(
@@ -30172,12 +27155,19 @@ mod tests {
         .expect("envelope");
 
         let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 3);
         assert_eq!(requests[1].method, "sdk_send_v2");
-        let params = requests[1].params.as_ref().expect("relay params");
-        assert_eq!(params["destination"], fresh_subscriber);
-        assert_ne!(params["destination"], stale_subscriber);
-        assert_ne!(params["destination"], unrelated_active);
+        let destinations = requests[1..]
+            .iter()
+            .map(|request| {
+                request.params.as_ref().expect("params")["destination"]
+                    .as_str()
+                    .expect("destination")
+            })
+            .collect::<Vec<_>>();
+        assert!(destinations.contains(&fresh_subscriber));
+        assert!(destinations.contains(&stale_subscriber));
+        assert!(!destinations.contains(&unrelated_active));
 
         let messages = state.messages.read().expect("messages");
         let relay = messages
@@ -30185,17 +27175,17 @@ mod tests {
             .find(|message| {
                 message
                     .delivery_metadata
-                    .get("reticulumd_inbound_direct_active_relay")
+                    .get("reticulumd_inbound_relay")
                     .and_then(Value::as_bool)
                     == Some(true)
             })
             .expect("active direct relay");
         assert_eq!(
             relay.delivery_metadata["target_destinations"],
-            json!([fresh_subscriber])
+            json!([fresh_subscriber, stale_subscriber])
         );
-        assert_eq!(relay.delivery_method, "direct");
-        assert_eq!(relay.delivery_policy_reason, "topic_direct");
+        assert_eq!(relay.delivery_method, "auto");
+        assert_eq!(relay.delivery_policy_reason, "sdk_owned");
 
         std::fs::remove_file(db_path).expect("cleanup db");
     }
@@ -30821,7 +27811,7 @@ mod tests {
         let team_fanout = requests
             .iter()
             .find(|request| {
-                request.method == "send_message_v2"
+                request.method == "sdk_send_v2"
                     && request.params.as_ref().is_some_and(|params| {
                         params["destination"] == "22222222222222222222222222222222"
                     })
@@ -33247,13 +30237,6 @@ mod tests {
             "InternalNodeStatus",
             "InternalMessageRequest",
             "InternalMessageAccepted",
-            "InternalDeliveryReceiptPayload",
-            "InternalDeliveryFailurePayload",
-            "InternalDeliveryRetryPayload",
-            "InternalDeliveryPropagationPayload",
-            "InternalDeliveryDropPayload",
-            "InternalDeliveryAttemptPayload",
-            "InternalDeliveryCallbackResult",
             "AnnounceCapabilities",
             "InternalIdentityAnnouncePayload",
             "InternalIdentityAnnounceResult",
@@ -33353,38 +30336,6 @@ mod tests {
             true
         );
         assert_eq!(paths["/internal/events/stream"]["get"]["x-websocket"], true);
-
-        for (path, request_schema) in [
-            (
-                "/internal/delivery-receipt",
-                "InternalDeliveryReceiptPayload",
-            ),
-            (
-                "/internal/delivery-failure",
-                "InternalDeliveryFailurePayload",
-            ),
-            ("/internal/delivery-retry", "InternalDeliveryRetryPayload"),
-            (
-                "/internal/delivery-propagation",
-                "InternalDeliveryPropagationPayload",
-            ),
-            ("/internal/delivery-drop", "InternalDeliveryDropPayload"),
-            (
-                "/internal/delivery-attempt",
-                "InternalDeliveryAttemptPayload",
-            ),
-        ] {
-            assert_eq!(
-                paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],
-                format!("#/components/schemas/{request_schema}"),
-                "{path} request schema"
-            );
-            assert_eq!(
-                paths[path]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
-                "#/components/schemas/InternalDeliveryCallbackResult",
-                "{path} response schema"
-            );
-        }
     }
 
     #[tokio::test]
@@ -34882,7 +31833,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn identity_route_merges_pixel_voice_destination_into_chat_identity() {
+    async fn identity_route_preserves_distinct_chat_and_voice_identities_with_the_same_name() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-identity-voice-{}.db", Uuid::new_v4()));
         let mut core = RchCore::new();
@@ -34939,17 +31890,29 @@ mod tests {
             .expect("body")
             .to_bytes();
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload.as_array().expect("items").len(), 1);
-        assert_eq!(payload[0]["Identity"], "fb4c70e20cfac047b899ca2f3671b50a");
-        assert_eq!(payload[0]["DisplayName"], "Pixel");
-        assert_eq!(
-            payload[0]["Metadata"]["voice"]["destination_hash"],
-            "77b2539b72259af927e48c0f90721767"
+        let identities = payload.as_array().expect("items");
+        assert_eq!(identities.len(), 2);
+        let chat = identities
+            .iter()
+            .find(|identity| identity["Identity"] == "fb4c70e20cfac047b899ca2f3671b50a")
+            .expect("chat identity");
+        let voice = identities
+            .iter()
+            .find(|identity| identity["Identity"] == "77b2539b72259af927e48c0f90721767")
+            .expect("voice identity");
+        assert_eq!(chat["DisplayName"], "Pixel");
+        assert!(chat["Metadata"].get("voice").is_none());
+        assert!(
+            chat["AnnounceCapabilities"]
+                .as_array()
+                .expect("chat capabilities")
+                .iter()
+                .all(|capability| capability.as_str() != Some("voice"))
         );
         assert!(
-            payload[0]["AnnounceCapabilities"]
+            voice["AnnounceCapabilities"]
                 .as_array()
-                .expect("capabilities")
+                .expect("voice capabilities")
                 .iter()
                 .any(|capability| capability.as_str() == Some("voice"))
         );
@@ -35569,11 +32532,6 @@ mod tests {
             control.last_start_ts_ms = Some(runtime_start_ms);
             control.started_ts_ms = runtime_start_ms;
         }
-        let destinations = crate::known_rem_peer_destinations(&state).expect("destinations");
-        assert!(
-            destinations.is_empty(),
-            "pre-runtime REM peers must not be selected for fanout"
-        );
         let app = crate::create_app_with_state(state);
 
         let response = app
@@ -36509,171 +33467,6 @@ mod tests {
         assert_eq!(requests[1].method, "announce_now");
         assert!(requests[1].params.is_none());
 
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn control_sync_uses_reticulumd_peer_sync_when_configured() {
-        let (endpoint, server) = fake_reticulumd_rpc_server_with_results(vec![
-            json!({
-                "nodes": [
-                    {
-                        "peer": "propagation-node",
-                        "name": "Propagation Node"
-                    }
-                ]
-            }),
-            json!({
-                "peer": "propagation-node",
-                "synced": true
-            }),
-            json!({
-                "peer": "propagation-node"
-            }),
-            json!({
-                "remote": "propagation-node",
-                "imported": 2,
-                "fetched": 2
-            }),
-        ]);
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-control-sync-{}.db", Uuid::new_v4()));
-        let app = crate::create_app_with_state(
-            crate::AppState::from_sqlite_path(&db_path)
-                .expect("state")
-                .with_api_key("secret")
-                .with_reticulumd_rpc(endpoint, "local-source"),
-        );
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Control/Sync")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "sync_requested");
-        assert_eq!(payload["reason"], "manual");
-        assert_eq!(payload["propagation_node"], "propagation-node");
-        assert_eq!(payload["rpc_result"]["synced"], true);
-        assert_eq!(payload["fetch_result"]["imported"], 2);
-
-        let requests = server.join().expect("rpc requests");
-        assert_eq!(requests.len(), 4);
-        assert_eq!(requests[0].method, "list_propagation_nodes");
-        assert!(requests[0].params.is_none());
-        assert_eq!(requests[1].method, "peer_sync");
-        assert_eq!(
-            requests[1].params,
-            Some(json!({ "peer": "propagation-node" }))
-        );
-        assert_eq!(requests[2].method, "set_outbound_propagation_node");
-        assert_eq!(
-            requests[2].params,
-            Some(json!({ "peer": "propagation-node" }))
-        );
-        assert_eq!(requests[3].method, "propagation_remote_fetch");
-        assert_eq!(
-            requests[3].params,
-            Some(json!({
-                "remote": "propagation-node",
-                "timeout_secs": 45.0,
-                "transfer_limit_kb": 10_240.0,
-            }))
-        );
-
-        let events = crate::AppState::from_sqlite_path(&db_path)
-            .expect("restored state")
-            .system_events
-            .read()
-            .expect("events")
-            .clone();
-        assert!(
-            events
-                .iter()
-                .any(|event| event.event_type == "control_sync_requested")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn control_sync_times_out_when_reticulumd_rpc_stalls() {
-        let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
-        let endpoint = listener.local_addr().expect("addr").to_string();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut buffer = [0_u8; 1024];
-            let _ = stream.read(&mut buffer);
-            thread::sleep(Duration::from_millis(
-                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500),
-            ));
-        });
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-control-sync-timeout-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_reticulumd_rpc(endpoint, "local-source");
-        let app = crate::create_app_with_state(state.clone());
-
-        let started = Instant::now();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Control/Sync")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert!(
-            started.elapsed()
-                < Duration::from_millis(crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS.saturating_add(500)),
-            "control sync route did not respect its request timeout"
-        );
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            payload["detail"],
-            format!(
-                "Sync timed out after {} ms",
-                crate::CONTROL_SYNC_REQUEST_TIMEOUT_MS
-            )
-        );
-        assert!(
-            state
-                .system_events
-                .read()
-                .expect("events")
-                .iter()
-                .any(|event| event.event_type == "control_sync_timeout")
-        );
-
-        server.join().expect("stalling rpc server");
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -37711,7 +34504,7 @@ mod tests {
                     .is_some_and(|destination| destination == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             })
             .expect("rem request");
-        assert_eq!(rem.method, "send_message_v2");
+        assert_eq!(rem.method, "sdk_send_v2");
         let rem_params = rem.params.as_ref().expect("rem params");
         assert_eq!(rem_params["title"], "");
         assert_eq!(rem_params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
@@ -37814,7 +34607,7 @@ mod tests {
         let requests = rpc_server.join().expect("rpc requests");
         let send_requests = requests
             .iter()
-            .filter(|request| request.method == "send_message_v2")
+            .filter(|request| request.method == "sdk_send_v2")
             .collect::<Vec<_>>();
         assert_eq!(send_requests.len(), 1);
         let params = send_requests[0].params.as_ref().expect("params");
@@ -41356,11 +38149,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(rem_requests.iter().all(|request| {
-            if request.method != "send_message_v2" {
+            if request.method != "sdk_send_v2" {
                 return false;
             }
             let params = request.params.as_ref().expect("params");
-            params["method"] == "direct" && params["try_propagation_on_fail"] == true
+            params.get("method").is_none() && params.get("try_propagation_on_fail").is_none()
         }));
         let command_types = requests
             .iter()
@@ -41962,7 +38755,7 @@ mod tests {
         let command_types = requests
             .iter()
             .map(|request| {
-                assert_eq!(request.method, "send_message_v2");
+                assert_eq!(request.method, "sdk_send_v2");
                 let params = request.params.as_ref().expect("params");
                 assert_eq!(params["destination"], "autonomouspeer");
                 assert_eq!(params["title"], "");
@@ -42142,7 +38935,7 @@ mod tests {
         let mut destinations = requests
             .iter()
             .map(|request| {
-                assert_eq!(request.method, "send_message_v2");
+                assert_eq!(request.method, "sdk_send_v2");
                 let params = request.params.as_ref().expect("params");
                 assert_eq!(params["content"], crate::REM_COMMAND_PLACEHOLDER_BODY);
                 assert_rem_auto_rpc_method(params);
@@ -42490,106 +39283,6 @@ mod tests {
             .expect("load snapshot")
             .expect("snapshot");
         assert!(snapshot.messages.is_empty());
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn generic_mission_change_recipients_use_pixel_chat_identity_once_when_voice_announced() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-pixel-voice-recipient-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let now = crate::unix_now_ms();
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["group_chat".to_string(), "name=pixel".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 2_000,
-                last_seen_ts_ms: now - 1_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "77b2539b72259af927e48c0f90721767".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Anonymous Peer".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["_announce_telephony".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 1_000,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-
-        let destinations =
-            crate::generic_lxmf_peer_destinations_for_mission_change(&state).expect("recipients");
-
-        assert_eq!(
-            destinations,
-            vec!["fb4c70e20cfac047b899ca2f3671b50a".to_string()]
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn generic_mission_change_recipients_keep_allowlisted_sideband_duplicate_for_rem_name() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-allowlisted-sideband-recipient-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
-        let now = crate::unix_now_ms();
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "6521979f1165965b24731061ef4a6906".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Pixel".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=pixel".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "fb4c70e20cfac047b899ca2f3671b50a".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Pixel".to_string()),
-                source_interface: Some("identity".to_string()),
-                announce_capabilities: vec!["group_chat".to_string(), "name=pixel".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_outbound_identity_allowlist([
-                "6521979f1165965b24731061ef4a6906",
-                "fb4c70e20cfac047b899ca2f3671b50a",
-            ]);
-
-        let destinations =
-            crate::generic_lxmf_peer_destinations_for_mission_change(&state).expect("recipients");
-
-        assert_eq!(
-            destinations,
-            vec!["fb4c70e20cfac047b899ca2f3671b50a".to_string()]
-        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -46858,7 +43551,7 @@ mod tests {
         assert_eq!(dispatched.count, 1);
 
         let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.method, "send_message_v2");
+        assert_eq!(request.method, "sdk_send_v2");
         let params = request.params.expect("params");
         assert_eq!(params["title"], "");
         assert_eq!(params["content"], "Task Radio completed");
@@ -46893,8 +43586,8 @@ mod tests {
         )
         .expect("record REM command");
 
-        assert_eq!(message.delivery_method, "propagated");
-        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(message.delivery_policy_reason, "sdk_owned");
         assert_eq!(message.delivery_state, "queued");
         assert_eq!(
             message.delivery_metadata["dispatch_status"],
@@ -46906,80 +43599,6 @@ mod tests {
             message.delivery_metadata["lxmf_fields"][crate::FIELD_COMMANDS.to_string()][0]["command_type"],
             "mission.registry.eam.upsert"
         );
-    }
-
-    #[test]
-    fn outbound_diagnostics_treats_reticulumd_sent_link_as_sent_not_failed() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message": {
-                "id": "message",
-                "receipt_status": "sent: link"
-            }
-        })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-status-poll-sent-link-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "status poll sent link",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 1,
-                "receipt_pending": true,
-                "receipt_registered_ts_ms": crate::unix_now_ms(),
-                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
-            }),
-        )
-        .expect("mark pending receipt");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["sent"], 1);
-        assert_eq!(diagnostics["failed"], 0);
-        assert_eq!(diagnostics["receipt_timeout_total"], 0);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].method, "sdk_status_v2");
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "sent");
-        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], false);
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
-            "sent: link"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_timeout"],
-            false
-        );
-
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -47173,7 +43792,7 @@ mod tests {
             .iter()
             .find(|message| message.message_id == "propagated-fanout-partial")
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "propagated");
+        assert_eq!(stored.delivery_state, "sent");
         assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
         assert_eq!(
             stored.delivery_metadata["receipt_status"],
@@ -47186,15 +43805,21 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len)
                 .unwrap_or_default(),
-            0
+            1
         );
         let targets = stored.delivery_metadata["reticulumd_receipt_targets"]
             .as_array()
             .expect("receipt targets");
-        assert!(targets.iter().all(|target| {
-            target["status"] != "failed: peer not announced"
-                && target["sdk_delivery_state"] != "failed"
-        }));
+        assert!(
+            targets
+                .iter()
+                .any(|target| target["sdk_delivery_state"] == "failed")
+        );
+        assert!(
+            targets
+                .iter()
+                .any(|target| target["sdk_reason_code"] == "peer_not_announced")
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -47332,17 +43957,25 @@ mod tests {
                     "reticulumd_receipt_targets": [
                         {
                             "message_id": "sdk-terminal-target-a",
+                            "sdk_message_id": "sdk-terminal-target-a",
                             "destination": "destination-a",
                             "status": "sent: propagated resource",
                             "sdk_delivery_state": "sent",
-                            "sdk_terminal": true
+                            "sdk_terminal": true,
+                            "sdk_attempts": 1,
+                            "sdk_last_updated_ms": now,
+                            "sdk_reason_code": null
                         },
                         {
                             "message_id": "sdk-terminal-target-b",
+                            "sdk_message_id": "sdk-terminal-target-b",
                             "destination": "destination-b",
                             "status": "sent: propagated resource",
                             "sdk_delivery_state": "sent",
-                            "sdk_terminal": true
+                            "sdk_terminal": true,
+                            "sdk_attempts": 1,
+                            "sdk_last_updated_ms": now,
+                            "sdk_reason_code": null
                         },
                         {
                             "message_id": "sdk-pending-target-c",
@@ -47418,17 +44051,25 @@ mod tests {
                 "reticulumd_receipt_targets": [
                     {
                         "message_id": "sdk-in-progress-target-a",
+                        "sdk_message_id": "sdk-in-progress-target-a",
                         "destination": "destination-a",
                         "status": "sending",
                         "sdk_delivery_state": "dispatching",
-                        "sdk_terminal": false
+                        "sdk_terminal": false,
+                        "sdk_attempts": 1,
+                        "sdk_last_updated_ms": now,
+                        "sdk_reason_code": null
                     },
                     {
                         "message_id": "sdk-in-progress-target-b",
+                        "sdk_message_id": "sdk-in-progress-target-b",
                         "destination": "destination-b",
                         "status": "sending",
                         "sdk_delivery_state": "dispatching",
-                        "sdk_terminal": false
+                        "sdk_terminal": false,
+                        "sdk_attempts": 1,
+                        "sdk_last_updated_ms": now,
+                        "sdk_reason_code": null
                     },
                     {
                         "message_id": "sdk-unseen-target-c",
@@ -47607,100 +44248,6 @@ mod tests {
     }
 
     #[test]
-    fn outbound_diagnostics_persists_typed_sdk_delivery_snapshot() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message": {
-                "message_id": "sdk-typed-message",
-                "state": "delivered",
-                "terminal": true,
-                "last_updated_ms": 1_700_000_000_000_u64,
-                "attempts": 2,
-                "reason_code": null
-            }
-        })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-status-poll-typed-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "typed status poll delivered",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 1,
-                "reticulumd_receipt_targets": [{
-                    "message_id": "sdk-typed-message",
-                    "destination": "target-destination",
-                    "status": "pending"
-                }],
-                "receipt_pending": true,
-                "receipt_registered_ts_ms": crate::unix_now_ms(),
-                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
-            }),
-        )
-        .expect("mark pending receipt");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["failed"], 0);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].method, "sdk_status_v2");
-        assert_eq!(
-            requests[0].params.as_ref().expect("params")["message_id"],
-            "sdk-typed-message"
-        );
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
-            "delivered"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["sdk_message_id"],
-            "sdk-typed-message"
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["sdk_delivery_state"],
-            "delivered"
-        );
-        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_terminal"], true);
-        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_attempts"], 2);
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["sdk_last_updated_ms"],
-            1_700_000_000_000_u64
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["sdk_reason_code"],
-            Value::Null
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
     fn reticulumd_event_poll_transport_prefers_zmq_when_enabled_with_rpc_test_fallback() {
         assert_eq!(
             crate::select_reticulumd_event_poll_transport(
@@ -47845,7 +44392,7 @@ mod tests {
     }
 
     #[test]
-    fn outbound_diagnostics_polls_reticulumd_delivered_status_for_propagated_target() {
+    fn outbound_diagnostics_delivered_receipt_overrides_legacy_propagated_state() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message": {
                 "id": "message",
@@ -47866,7 +44413,7 @@ mod tests {
             false,
         )
         .expect("record message");
-        assert_eq!(message.delivery_method, "propagated");
+        assert_eq!(message.delivery_method, "auto");
         crate::update_outbound_delivery_state(
             &state,
             message.message_id.as_str(),
@@ -47884,7 +44431,7 @@ mod tests {
 
         let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
         assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["propagated"], 1);
+        assert_eq!(diagnostics["sent"], 1);
         let requests = rpc_server.join().expect("rpc server");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].method, "sdk_status_v2");
@@ -47898,7 +44445,7 @@ mod tests {
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "propagated");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
         assert_eq!(snapshot.messages[0].delivery_metadata["acked"], true);
         assert_eq!(
             snapshot.messages[0].delivery_metadata["receipt_pending"],
@@ -47910,24 +44457,24 @@ mod tests {
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["acknowledgement_type"],
-            "propagation_acceptance"
+            "delivery_receipt"
         );
         let event = snapshot
             .system_events
             .iter()
-            .find(|event| event.event_type == "message_propagated")
-            .expect("propagation event");
+            .find(|event| event.event_type == "message_delivered")
+            .expect("delivery event");
         assert_eq!(event.metadata["callback_type"], "delivery_receipt");
         assert_eq!(
             event.metadata["DeliveryMetadata"]["acknowledgement_type"],
-            "propagation_acceptance"
+            "delivery_receipt"
         );
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn outbound_diagnostics_extends_active_reticulumd_propagation_receipt() {
+    fn outbound_diagnostics_keeps_active_sdk_receipt_without_local_deadline_extension() {
         let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
             "message": {
                 "id": "message",
@@ -47985,12 +44532,20 @@ mod tests {
             true
         );
         assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_status"],
-            "sending: propagated resource"
+            snapshot.messages[0].delivery_metadata["reticulumd_receipt_targets"][0]["sdk_delivery_state"],
+            "dispatching"
         );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_active_extension_count"],
-            1
+        assert!(
+            snapshot.messages[0]
+                .delivery_metadata
+                .get("receipt_active_extension_count")
+                .is_none()
+        );
+        assert!(
+            snapshot.messages[0].delivery_metadata["receipt_deadline_ts_ms"]
+                .as_i64()
+                .expect("deadline")
+                < crate::unix_now_ms()
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -48057,7 +44612,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["error"],
-            "failed: link closed"
+            "failed: link_closed"
         );
         let event = snapshot
             .system_events
@@ -48136,79 +44691,12 @@ mod tests {
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["receipt_status"],
-            "failed: link activation timed out"
+            "failed: link_activation_timed_out"
         );
         assert_eq!(
             snapshot.messages[0].delivery_metadata["error"],
-            "failed: link activation timed out"
+            "failed: link_activation_timed_out"
         );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_worker_tick_polls_reticulumd_receipts_without_diagnostics_request() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
-            "message": {
-                "id": "message",
-                "receipt_status": "delivered"
-            }
-        })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-worker-status-poll-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "worker status poll delivered",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 1,
-                "receipt_pending": true,
-                "receipt_registered_ts_ms": crate::unix_now_ms(),
-                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
-            }),
-        )
-        .expect("mark pending receipt");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let report = crate::process_outbound_delivery_worker_tick(&state).expect("worker tick");
-        assert_eq!(report.processed, 0);
-        assert_eq!(report.dispatched, 0);
-        assert_eq!(report.failed, 0);
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].method, "sdk_status_v2");
-
-        let snapshot = RchSqliteStore::open(&db_path)
-            .expect("open sqlite")
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot");
-        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["receipt_pending"],
-            false
-        );
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_receipts"], 0);
-        assert_eq!(diagnostics["retry_worker"]["runs_total"], 1);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -48291,12 +44779,6 @@ mod tests {
             .expect("recorded message")
             .message_id
             .clone();
-        extend_live_reticulumd_receipt_deadline(
-            &state,
-            message_id.as_str(),
-            live_reticulumd_receipt_timeout_ms(poll_attempts, poll_delay_ms),
-        );
-
         let mut final_state = None;
         let mut last_state: Option<crate::OutboundMessageRecord> = None;
         for _ in 0..poll_attempts {
@@ -48452,39 +44934,6 @@ mod tests {
             .expect("record live reticulumd destination presence");
     }
 
-    fn live_reticulumd_receipt_timeout_ms(poll_attempts: usize, poll_delay_ms: u64) -> i64 {
-        i64::try_from(poll_attempts)
-            .unwrap_or(i64::MAX)
-            .saturating_mul(i64::try_from(poll_delay_ms).unwrap_or(i64::MAX))
-            .max(crate::OUTBOUND_DELIVERY_RECEIPT_TIMEOUT_MS)
-    }
-
-    fn extend_live_reticulumd_receipt_deadline(
-        state: &crate::AppState,
-        message_id: &str,
-        timeout_ms: i64,
-    ) {
-        let delivery_state = state
-            .messages
-            .read()
-            .expect("messages")
-            .iter()
-            .find(|message| message.message_id == message_id)
-            .expect("message")
-            .delivery_state
-            .clone();
-        crate::update_outbound_delivery_state(
-            state,
-            message_id,
-            delivery_state.as_str(),
-            json!({
-                "delivery_receipt_timeout_ms": timeout_ms,
-                "receipt_deadline_ts_ms": crate::unix_now_ms().saturating_add(timeout_ms),
-            }),
-        )
-        .expect("extend live receipt deadline");
-    }
-
     fn live_reticulumd_success_status(status: &str) -> bool {
         let normalized = status.trim().to_ascii_lowercase();
         normalized == "delivered" || normalized.starts_with("sent")
@@ -48604,10 +45053,6 @@ mod tests {
             true,
             json!({
                 "delivery_receipt_required": true,
-                "delivery_receipt_timeout_ms": live_reticulumd_receipt_timeout_ms(
-                    poll_attempts,
-                    poll_delay_ms
-                ),
                 "max_attempts": 1,
             }),
         )
@@ -48745,579 +45190,6 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[tokio::test]
-    async fn internal_delivery_failure_retries_propagated_broadcast_fallback_send_error() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-broadcast-failure-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_api_key("secret");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-broadcast-failure-callback".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback callback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "propagated".to_string(),
-            delivery_metadata: json!({
-                "attempts": 4,
-                "max_attempts": 1,
-                "fallback_reason": "direct_dispatch_timeout",
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 4,
-                "retry_scheduled": false,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-        crate::persist_outbound_message_row(&state, &message).expect("persist message");
-        let app = crate::create_app_with_state(state.clone());
-
-        let failure = app
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-failure")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message.message_id,
-                            "Reason": "send_error"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("failure response");
-
-        assert_eq!(failure.status(), StatusCode::OK);
-        let body = failure
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "retry_scheduled");
-        assert_eq!(payload["message"]["delivery_state"], "queued");
-        assert_eq!(payload["message"]["delivery_method"], "propagated");
-        assert_eq!(
-            payload["message"]["delivery_policy_reason"],
-            "broadcast_direct_timeout_fallback"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["retry_scheduled"],
-            true
-        );
-        assert_eq!(payload["message"]["delivery_metadata"]["attempts"], 5);
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["retry_reason"],
-            "send_error"
-        );
-        assert_eq!(payload["event"]["event_type"], "message_delivery_retrying");
-        assert_eq!(
-            payload["event"]["metadata"]["callback_type"],
-            "delivery_failure"
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_scheduled"],
-            true
-        );
-        assert_eq!(snapshot.messages[0].delivery_metadata["attempts"], 5);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn internal_delivery_retry_marks_message_queued_like_python_callback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-retry-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_api_key("secret");
-        let app = crate::create_app_with_state(state.clone());
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "direct retry callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-        let next_attempt_at_ts_ms = crate::unix_now_ms() + 500;
-
-        let retry = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-retry")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Reason": "send_error",
-                            "Attempts": 1,
-                            "NextAttemptAtTsMs": next_attempt_at_ts_ms
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("retry response");
-        assert_eq!(retry.status(), StatusCode::OK);
-        let body = retry.into_body().collect().await.expect("body").to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "retry_scheduled");
-        assert_eq!(payload["message"]["delivery_state"], "queued");
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["retry_scheduled"],
-            true
-        );
-        assert_eq!(payload["message"]["delivery_metadata"]["attempts"], 1);
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["retry_reason"],
-            "send_error"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["receipt_pending"],
-            false
-        );
-        assert_eq!(payload["event"]["event_type"], "message_delivery_retrying");
-        assert_eq!(payload["event"]["metadata"]["retry_reason"], "send_error");
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(diagnostics_payload["outbound_delivery"]["retry_total"], 1);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["delayed_depth"], 1);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 0);
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_scheduled"],
-            true
-        );
-        assert_eq!(snapshot.messages[0].delivery_metadata["attempts"], 1);
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_reason"],
-            "send_error"
-        );
-        let retry_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("delivery retry event");
-        assert_eq!(retry_event.metadata["retry_reason"], "send_error");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn internal_delivery_attempt_clears_retry_scheduled_like_python_callback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-attempt-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_api_key("secret");
-        let app = crate::create_app_with_state(state.clone());
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "attempt callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-
-        let retry = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-retry")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Reason": "send_error",
-                            "Attempts": 1
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("retry response");
-        assert_eq!(retry.status(), StatusCode::OK);
-
-        let attempt_started_at_ts_ms = crate::unix_now_ms();
-        let attempt = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-attempt")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Attempts": 1,
-                            "AttemptStartedAtTsMs": attempt_started_at_ts_ms
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("attempt response");
-        assert_eq!(attempt.status(), StatusCode::OK);
-        let body = attempt
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "attempt_started");
-        assert_eq!(payload["message"]["delivery_state"], "queued");
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["retry_scheduled"],
-            false
-        );
-        assert_eq!(payload["message"]["delivery_metadata"]["attempts"], 1);
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["last_attempt_at_ts_ms"],
-            attempt_started_at_ts_ms
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["callback_source"],
-            "reticulumd_internal_adapter"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["callback_type"],
-            "delivery_attempt"
-        );
-        assert!(
-            payload["message"]["delivery_metadata"]
-                .get("error")
-                .is_none()
-        );
-        assert!(
-            payload["message"]["delivery_metadata"]
-                .get("retry_reason")
-                .is_none()
-        );
-        assert!(
-            payload["message"]["delivery_metadata"]
-                .get("last_attempt_failed_at_ts_ms")
-                .is_none()
-        );
-        assert!(
-            payload["message"]["delivery_metadata"]["last_attempt_at"]
-                .as_str()
-                .is_some_and(|value| value.contains('T'))
-        );
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(diagnostics_payload["outbound_delivery"]["retry_total"], 0);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["delayed_depth"], 0);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["queued"], 1);
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["total"],
-            2
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["delivery_retry_total"],
-            1
-        );
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["delivery_attempt_total"],
-            1
-        );
-        assert!(
-            diagnostics_payload["outbound_delivery"]["callbacks"]["last_callback_ts_ms"]
-                .as_i64()
-                .expect("last callback")
-                >= attempt_started_at_ts_ms
-        );
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["retry_scheduled"],
-            false
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["last_attempt_at_ts_ms"],
-            attempt_started_at_ts_ms
-        );
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["callback_type"],
-            "delivery_attempt"
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_retry_worker_dispatches_due_retry_through_reticulumd() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server();
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-worker-retry-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "worker retry",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 1,
-                "dispatch_status": "queued",
-                "retry_scheduled": true,
-                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
-            }),
-        )
-        .expect("mark retry");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 1);
-        assert_eq!(report.failed, 0);
-        let request = rpc_server.join().expect("rpc server");
-        let params = request.params.expect("params");
-        assert_eq!(params["id"], format!("sdk-{}", message.message_id));
-        assert_eq!(params["destination"], "target-destination");
-        assert_eq!(params["content"], "worker retry");
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "sent");
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
-        assert_eq!(updated.delivery_metadata["reticulumd_dispatch_count"], 1);
-        assert_eq!(updated.delivery_metadata["receipt_pending"], true);
-        assert!(
-            updated.delivery_metadata["last_attempt_at_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-        drop(messages);
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["retry_total"], 0);
-        assert_eq!(diagnostics["delayed_depth"], 0);
-        assert_eq!(diagnostics["sent"], 1);
-        assert_eq!(diagnostics["pending_receipts"], 1);
-        assert_eq!(diagnostics["retry_worker"]["runs_total"], 1);
-        assert_eq!(diagnostics["retry_worker"]["processed_total"], 1);
-        assert_eq!(diagnostics["retry_worker"]["dispatched_total"], 1);
-        assert_eq!(diagnostics["retry_worker"]["failed_total"], 0);
-        assert!(
-            diagnostics["retry_worker"]["last_run_ts_ms"]
-                .as_i64()
-                .is_some()
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn late_direct_dispatch_result_is_ignored_after_timeout_fallback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-stale-direct-dispatch-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "stale-direct-dispatch".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast should fall back".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "broadcast_direct".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "dispatch_status": "queued",
-                "max_attempts": 1,
-                "retry_scheduled": true,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-        crate::persist_outbound_message_row(&state, &message).expect("persist message");
-        let started_at = crate::unix_now_ms();
-        crate::mark_outbound_attempt_started(&state, &message.message_id, started_at)
-            .expect("mark attempt");
-
-        assert!(
-            crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
-                .expect("current attempt")
-        );
-
-        let fallback = crate::queue_direct_timeout_for_propagation(
-            &state,
-            &message,
-            started_at + crate::OUTBOUND_DISPATCH_TIMEOUT_MS + 1,
-        )
-        .expect("queue fallback");
-
-        assert_eq!(fallback.delivery_method, "propagated");
-        assert_eq!(
-            fallback.delivery_policy_reason,
-            "broadcast_direct_timeout_fallback"
-        );
-        assert!(
-            !crate::outbound_dispatch_attempt_still_current(&state, &message, started_at)
-                .expect("stale attempt")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
     #[test]
     fn outbound_retry_worker_does_not_fabricate_group_chat_batch_acceptance() {
         let state = crate::AppState::default().with_lxmf_zmq_sdk(
@@ -49369,9 +45241,9 @@ mod tests {
             .iter()
             .find(|stored| stored.message_id == message.message_id)
             .expect("stored message");
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
         assert!(
             stored
                 .delivery_metadata
@@ -49439,9 +45311,9 @@ mod tests {
             .find(|stored| stored.message_id == message.message_id)
             .expect("stored message")
             .clone();
-        assert_eq!(stored.delivery_state, "queued");
-        assert_eq!(stored.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(stored.delivery_state, "failed");
+        assert_eq!(stored.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
         assert!(
             stored
                 .delivery_metadata
@@ -49449,8 +45321,8 @@ mod tests {
                 .is_none()
         );
         let payload = crate::chat_message_payload(stored);
-        assert_eq!(payload["State"], "queued");
-        assert_eq!(payload["DeliveryMetadata"]["dispatch_status"], "queued");
+        assert_eq!(payload["State"], "failed");
+        assert_eq!(payload["DeliveryMetadata"]["dispatch_status"], "failed");
         let events = state.system_events.read().expect("events");
         assert!(
             events
@@ -49533,11 +45405,11 @@ mod tests {
             .iter()
             .find(|stored| stored.message_id == message.message_id)
             .expect("updated message");
-        assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
+        assert_eq!(updated.delivery_state, "failed");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
         assert!(updated.delivery_metadata.get("error").is_some());
-        assert!(updated.delivery_metadata.get("retry_reason").is_some());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
     }
 
     #[test]
@@ -49593,149 +45465,6 @@ mod tests {
     }
 
     #[test]
-    fn outbound_retry_worker_reschedules_failed_retry_with_backoff_when_attempts_remain() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_responses(vec![(
-            None,
-            Some(ReticulumdRpcError {
-                code: "send_failed".to_string(),
-                message: "offline".to_string(),
-                ..ReticulumdRpcError::default()
-            }),
-        )]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-worker-backoff-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "worker retry backoff",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "max_attempts": 2,
-                "backoff_ms": 500,
-                "dispatch_status": "queued",
-                "retry_scheduled": true,
-                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
-            }),
-        )
-        .expect("mark retry");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 0);
-        assert_eq!(report.failed, 1);
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.len(), 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(updated.delivery_metadata["attempts"], 1);
-        assert_eq!(updated.delivery_metadata["max_attempts"], 2);
-        assert_eq!(updated.delivery_metadata["retry_reason"], "send_error");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert!(
-            updated.delivery_metadata["next_attempt_at_ts_ms"]
-                .as_i64()
-                .expect("next attempt")
-                > crate::unix_now_ms()
-        );
-        drop(messages);
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["retry_total"], 1);
-        assert_eq!(diagnostics["delayed_depth"], 1);
-        assert_eq!(diagnostics["failed"], 0);
-        assert_eq!(diagnostics["retry_worker"]["runs_total"], 1);
-        assert_eq!(diagnostics["retry_worker"]["processed_total"], 1);
-        assert_eq!(diagnostics["retry_worker"]["dispatched_total"], 0);
-        assert_eq!(diagnostics["retry_worker"]["failed_total"], 1);
-
-        let events = state.system_events.read().expect("events");
-        let retry_event = events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("retry event");
-        assert_eq!(retry_event.metadata["retry_reason"], "send_error");
-        drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_retry_worker_uses_message_receipt_timeout_override() {
-        let (endpoint, rpc_server) =
-            fake_reticulumd_rpc_server_with_results(vec![json!({ "message_id": "message" })]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-worker-receipt-timeout-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_reticulumd_rpc(endpoint, "source-destination");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message_with_metadata_mode(
-            &state,
-            "worker receipt timeout override",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-            json!({
-                "delivery_receipt_timeout_ms": 120_000,
-            }),
-            crate::OutboundDispatchMode::Inline,
-        )
-        .expect("record message");
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        let registered = updated.delivery_metadata["receipt_registered_ts_ms"]
-            .as_i64()
-            .expect("receipt registered");
-        let deadline = updated.delivery_metadata["receipt_deadline_ts_ms"]
-            .as_i64()
-            .expect("receipt deadline");
-        assert!(
-            deadline - registered >= 120_000,
-            "receipt deadline should honor per-message timeout override"
-        );
-        drop(messages);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
     fn targeted_propagated_acceptance_keeps_receipt_deadline_pending() {
         let message = crate::OutboundMessageRecord {
             message_id: "targeted-propagated-receipt".to_string(),
@@ -49754,371 +45483,11 @@ mod tests {
             attachments: Vec::new(),
         };
 
-        assert_eq!(crate::delivery_accepted_state(&message, 1), "propagating");
+        assert_eq!(crate::delivery_accepted_state(&message, 1), "sent");
         assert!(
             crate::reticulumd_receipt_pending_after_dispatch(&message, 1, "propagating"),
             "targeted propagated dispatch must retain a receipt deadline while propagation is active"
         );
-    }
-
-    #[test]
-    fn outbound_retry_worker_rate_limit_backs_off_past_sdk_window() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_responses(vec![(
-            None,
-            Some(ReticulumdRpcError {
-                code: "SDK_SECURITY_RATE_LIMITED".to_string(),
-                message: "per-ip request rate limit exceeded".to_string(),
-                ..ReticulumdRpcError::default()
-            }),
-        )]);
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-worker-rate-limit-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "worker retry rate limited",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 1,
-                "max_attempts": 2,
-                "backoff_ms": 500,
-                "dispatch_status": "queued",
-                "retry_scheduled": true,
-                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
-            }),
-        )
-        .expect("mark retry");
-        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
-        let before_retry = crate::unix_now_ms();
-
-        let report = crate::process_due_outbound_retry_messages(&state).expect("worker report");
-        assert_eq!(report.processed, 1);
-        assert_eq!(report.dispatched, 0);
-        assert_eq!(report.failed, 1);
-        let request = rpc_server.join().expect("rpc server");
-        assert_eq!(request.len(), 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(updated.delivery_metadata["attempts"], 2);
-        assert_eq!(updated.delivery_metadata["retry_reason"], "rate_limited");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        let next_attempt = updated.delivery_metadata["next_attempt_at_ts_ms"]
-            .as_i64()
-            .expect("next attempt");
-        assert!(
-            next_attempt >= before_retry + crate::OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS - 1_000,
-            "rate-limited retry should wait for the SDK rate window"
-        );
-        drop(messages);
-
-        let events = state.system_events.read().expect("events");
-        let retry_event = events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("retry event");
-        assert_eq!(retry_event.metadata["retry_reason"], "rate_limited");
-        drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_diagnostics_counts_in_progress_pending_dispatches_like_python_stats() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-pending-dispatch-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "pending dispatch",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 1_000,
-                "dispatch_deadline_ts_ms": now_ms + 30_000,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark pending dispatch");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_dispatches"], 1);
-        assert_eq!(diagnostics["in_progress_futures"], 1);
-        assert_eq!(diagnostics["active_dispatches"], 1);
-        assert_eq!(diagnostics["inflight"], 1);
-        assert!(
-            diagnostics["oldest_pending_dispatch_age_ms"]
-                .as_i64()
-                .expect("age")
-                >= 1_000
-        );
-        assert_eq!(diagnostics["timeout_total"], 0);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_diagnostics_reschedules_stale_pending_dispatch_when_attempts_remain() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-stale-dispatch-retry-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "stale pending dispatch",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "max_attempts": 2,
-                "backoff_ms": 500,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 60_000,
-                "dispatch_deadline_ts_ms": now_ms - 1,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark stale dispatch");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_dispatches"], 0);
-        assert_eq!(diagnostics["retry_total"], 1);
-        assert_eq!(diagnostics["delayed_depth"], 1);
-        assert_eq!(diagnostics["timeout_total"], 1);
-        assert_eq!(diagnostics["timed_out_sends"], 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(updated.delivery_metadata["retry_reason"], "send_timeout");
-        assert_eq!(updated.delivery_metadata["attempts"], 1);
-        let timed_out_at = updated.delivery_metadata["dispatch_timed_out_at_ts_ms"]
-            .as_i64()
-            .expect("dispatch timeout timestamp");
-        assert!(
-            updated.delivery_metadata["next_attempt_at_ts_ms"]
-                .as_i64()
-                .expect("next attempt")
-                >= timed_out_at + 500
-        );
-        drop(messages);
-
-        let events = state.system_events.read().expect("events");
-        let retry_event = events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_retrying")
-            .expect("retry event");
-        assert_eq!(retry_event.metadata["retry_reason"], "send_timeout");
-        drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn delivered_receipt_clears_stale_dispatch_timeout_metadata() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-timeout-cleared-by-receipt-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let destination = "target-destination";
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence(destination, crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "late delivery receipt",
-            None,
-            Some(destination.to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "max_attempts": 2,
-                "backoff_ms": 500,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 60_000,
-                "dispatch_deadline_ts_ms": now_ms - 1,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark stale dispatch");
-        let _ = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-
-        crate::mark_reticulumd_status_delivery_receipt(&state, &message.message_id, "delivered")
-            .expect("mark delivered");
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "delivered");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
-        assert_eq!(updated.delivery_metadata["receipt_status"], "delivered");
-        assert_eq!(updated.delivery_metadata["acked"], true);
-        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
-        assert!(
-            updated
-                .delivery_metadata
-                .get("dispatch_timed_out_at_ts_ms")
-                .is_none()
-        );
-        assert!(updated.delivery_metadata.get("error").is_none());
-        assert!(updated.delivery_metadata.get("retry_reason").is_none());
-        drop(messages);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn successful_dispatch_clears_stale_dispatch_timeout_metadata() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-timeout-cleared-by-dispatch-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let destination = "target-destination";
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence(destination, crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "late successful dispatch",
-            None,
-            Some(destination.to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 1,
-                "max_attempts": 2,
-                "dispatch_status": "queued",
-                "dispatch_timeout": true,
-                "dispatch_timed_out_at_ts_ms": now_ms - 1_000,
-                "error": "sqlite operation failed: database is locked",
-                "last_attempt_failed_at_ts_ms": now_ms - 500,
-                "retry_reason": "send_error",
-                "retry_scheduled": true,
-            }),
-        )
-        .expect("mark stale dispatch metadata");
-
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "dispatch_status": "accepted",
-                "reticulumd_dispatch_count": 1,
-                "receipt_pending": false,
-            }),
-        )
-        .expect("mark successful dispatch");
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "sent");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
-        assert_eq!(updated.delivery_metadata["reticulumd_dispatch_count"], 1);
-        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
-        assert!(
-            updated
-                .delivery_metadata
-                .get("dispatch_timed_out_at_ts_ms")
-                .is_none()
-        );
-        assert!(updated.delivery_metadata.get("error").is_none());
-        assert!(updated.delivery_metadata.get("retry_reason").is_none());
-        assert!(
-            updated
-                .delivery_metadata
-                .get("last_attempt_failed_at_ts_ms")
-                .is_none()
-        );
-        drop(messages);
-
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -50153,7 +45522,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_message_payload_projects_active_propagated_targets_as_propagating() {
+    fn chat_message_payload_preserves_stored_state_despite_old_propagation_hints() {
         let now = crate::unix_now_ms();
         let targets = vec![
             crate::ReticulumdReceiptTarget {
@@ -50192,7 +45561,7 @@ mod tests {
             attachments: Vec::new(),
         });
 
-        assert_eq!(payload["State"], "propagating");
+        assert_eq!(payload["State"], "propagated");
         let metadata = payload["DeliveryMetadata"]
             .as_object()
             .expect("delivery metadata");
@@ -50202,7 +45571,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_message_payload_projects_retryable_propagated_fallback_failure_as_queued() {
+    fn chat_message_payload_does_not_infer_retry_from_old_fallback_hint() {
         let now = crate::unix_now_ms();
         let payload = crate::chat_message_payload(crate::OutboundMessageRecord {
             message_id: "retryable-propagated-broadcast-fallback".to_string(),
@@ -50227,18 +45596,18 @@ mod tests {
             attachments: Vec::new(),
         });
 
-        assert_eq!(payload["State"], "queued");
+        assert_eq!(payload["State"], "failed");
         let metadata = payload["DeliveryMetadata"]
             .as_object()
             .expect("delivery metadata");
-        assert!(!metadata.contains_key("error"));
-        assert!(!metadata.contains_key("retry_reason"));
-        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+        assert!(metadata.contains_key("error"));
+        assert!(metadata.contains_key("retry_reason"));
+        assert!(metadata.contains_key("last_attempt_failed_at_ts_ms"));
         assert_eq!(metadata["dispatch_status"], "failed");
     }
 
     #[test]
-    fn chat_message_payload_projects_active_failed_propagated_fallback_as_propagating() {
+    fn chat_message_payload_waits_for_sdk_reconciliation_of_active_failed_row() {
         let now = crate::unix_now_ms();
         let targets = vec![crate::ReticulumdReceiptTarget {
             message_id: "active-failed-propagated-broadcast-retry5-peer".to_string(),
@@ -50271,17 +45640,17 @@ mod tests {
             attachments: Vec::new(),
         });
 
-        assert_eq!(payload["State"], "propagating");
+        assert_eq!(payload["State"], "failed");
         let metadata = payload["DeliveryMetadata"]
             .as_object()
             .expect("delivery metadata");
-        assert!(!metadata.contains_key("error"));
-        assert!(!metadata.contains_key("retry_reason"));
-        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+        assert!(metadata.contains_key("error"));
+        assert!(metadata.contains_key("retry_reason"));
+        assert!(metadata.contains_key("last_attempt_failed_at_ts_ms"));
     }
 
     #[test]
-    fn chat_message_payload_projects_successful_failed_propagated_fallback_as_propagated() {
+    fn chat_message_payload_does_not_fabricate_success_from_old_fallback_hint() {
         let now = crate::unix_now_ms();
         let targets = vec![crate::ReticulumdReceiptTarget {
             message_id: "successful-failed-propagated-broadcast-retry5-peer".to_string(),
@@ -50314,13 +45683,13 @@ mod tests {
             attachments: Vec::new(),
         });
 
-        assert_eq!(payload["State"], "propagated");
+        assert_eq!(payload["State"], "failed");
         let metadata = payload["DeliveryMetadata"]
             .as_object()
             .expect("delivery metadata");
-        assert!(!metadata.contains_key("error"));
-        assert!(!metadata.contains_key("retry_reason"));
-        assert!(!metadata.contains_key("last_attempt_failed_at_ts_ms"));
+        assert!(metadata.contains_key("error"));
+        assert!(metadata.contains_key("retry_reason"));
+        assert!(metadata.contains_key("last_attempt_failed_at_ts_ms"));
     }
 
     #[test]
@@ -50358,301 +45727,7 @@ mod tests {
     }
 
     #[test]
-    fn outbound_dispatch_timeout_cools_down_next_targeted_send_like_python_queue() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-timeout-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let destination = "target-destination";
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence(destination, crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "stale direct dispatch",
-            None,
-            Some(destination.to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        assert_eq!(message.delivery_method, "direct");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "max_attempts": 2,
-                "backoff_ms": 500,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 60_000,
-                "dispatch_deadline_ts_ms": now_ms - 1,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark stale dispatch");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["retry_total"], 1);
-        assert_eq!(diagnostics["timed_out_sends"], 1);
-
-        let next_message = crate::record_outbound_message(
-            &state,
-            "next targeted dispatch",
-            None,
-            Some(destination.to_string()),
-            vec![],
-            false,
-        )
-        .expect("record next message");
-        assert_eq!(next_message.delivery_method, "propagated");
-        assert_eq!(next_message.delivery_policy_reason, "direct_cooldown");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn direct_broadcast_dispatch_timeout_falls_back_to_propagation() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-broadcast-timeout-propagation-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let now_ms = crate::unix_now_ms();
-        let first_client = "22c8ba9c883e06c7e540ed6dc87ceecf";
-        let second_client = "77b2539b72259af927e48c0f90721767";
-        {
-            let mut clients = state.clients.write().expect("clients");
-            clients.insert(
-                first_client.to_string(),
-                crate::ClientRecord::new(first_client.to_string(), now_ms - 1_000),
-            );
-            clients.insert(
-                second_client.to_string(),
-                crate::ClientRecord::new(second_client.to_string(), now_ms - 1_000),
-            );
-        }
-
-        let message = crate::record_outbound_message(
-            &state,
-            "broadcast should fallback",
-            None,
-            None,
-            vec![],
-            false,
-        )
-        .expect("record broadcast");
-        assert_eq!(
-            message.delivery_mode,
-            r3akt_rch_core::DeliveryMode::Broadcast
-        );
-        assert_eq!(message.delivery_method, "direct");
-        assert_eq!(message.delivery_policy_reason, "broadcast_direct");
-
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 3,
-                "max_attempts": 1,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 60_000,
-                "dispatch_deadline_ts_ms": now_ms - 1,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark stale dispatch");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_dispatches"], 0);
-        assert_eq!(diagnostics["queued"], 1);
-        assert_eq!(diagnostics["failed"], 0);
-        assert_eq!(diagnostics["timeout_total"], 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_method, "propagated");
-        assert_eq!(
-            updated.delivery_policy_reason,
-            "broadcast_direct_timeout_fallback"
-        );
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
-        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
-        assert_eq!(updated.delivery_metadata["attempts"], 0);
-        assert_eq!(updated.delivery_metadata["direct_attempts"], 4);
-        assert_eq!(
-            updated.delivery_metadata["max_attempts"],
-            crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
-        );
-        assert_eq!(
-            updated.delivery_metadata["fallback_reason"],
-            "direct_dispatch_timeout"
-        );
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        let updated_for_retry = updated.clone();
-        drop(messages);
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &updated_for_retry,
-            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
-        )
-        .expect("schedule propagated retry")
-        .expect("fallback broadcast send_error should retry");
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(retry.delivery_metadata["attempts"], 1);
-        assert_eq!(retry.delivery_metadata["direct_attempts"], 4);
-        assert_eq!(retry.delivery_metadata["retry_reason"], "send_error");
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], true);
-
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS,
-                "dispatch_status": "queued",
-                "retry_scheduled": true,
-                "next_attempt_at_ts_ms": crate::unix_now_ms() - 1,
-            }),
-        )
-        .expect("mark fallback at propagated retry budget");
-        let exhausted_for_retry = state
-            .messages
-            .read()
-            .expect("messages")
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .cloned()
-            .expect("exhausted message");
-        let exhausted_retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &exhausted_for_retry,
-            "outbound request failed: No connection could be made because the target machine actively refused it. (os error 10061)".to_string(),
-        )
-        .expect("schedule transport-unavailable propagated retry")
-        .expect("transport-unavailable fallback broadcast should stay queued");
-        assert_eq!(exhausted_retry.delivery_state, "queued");
-        assert_eq!(exhausted_retry.delivery_method, "propagated");
-        assert!(
-            exhausted_retry.delivery_metadata["attempts"]
-                .as_u64()
-                .expect("attempts")
-                > crate::OUTBOUND_PROPAGATED_MULTI_RECIPIENT_RETRY_MAX_ATTEMPTS
-        );
-        assert_eq!(
-            exhausted_retry.delivery_metadata["retry_reason"],
-            "send_error"
-        );
-        assert_eq!(exhausted_retry.delivery_metadata["retry_scheduled"], true);
-
-        let events = state.system_events.read().expect("events");
-        let propagation_event = events
-            .iter()
-            .find(|event| event.event_type == "message_propagation_queued")
-            .expect("propagation event");
-        assert_eq!(
-            propagation_event.metadata["fallback_reason"],
-            "direct_dispatch_timeout"
-        );
-        assert_eq!(
-            propagation_event.metadata["callback_source"],
-            "reticulumd_internal_adapter"
-        );
-        assert_eq!(
-            propagation_event.metadata["callback_type"],
-            "propagation_fallback"
-        );
-        assert_eq!(propagation_event.metadata["route_type"], "broadcast");
-        drop(events);
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["propagation_fallback_total"], 1);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_diagnostics_fails_stale_pending_dispatch_after_final_attempt() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-stale-dispatch-fail-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("target-destination", crate::unix_now_ms());
-        let message = crate::record_outbound_message(
-            &state,
-            "stale pending dispatch failure",
-            None,
-            Some("target-destination".to_string()),
-            vec![],
-            false,
-        )
-        .expect("record message");
-        let now_ms = crate::unix_now_ms();
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "queued",
-            json!({
-                "attempts": 0,
-                "max_attempts": 1,
-                "dispatch_status": "in_progress",
-                "dispatch_started_ts_ms": now_ms - 60_000,
-                "dispatch_deadline_ts_ms": now_ms - 1,
-                "retry_scheduled": false,
-            }),
-        )
-        .expect("mark stale dispatch");
-
-        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_dispatches"], 0);
-        assert_eq!(diagnostics["failed"], 1);
-        assert_eq!(diagnostics["dispatch_failed"], 1);
-        assert_eq!(diagnostics["timeout_total"], 1);
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages
-            .iter()
-            .find(|candidate| candidate.message_id == message.message_id)
-            .expect("updated message");
-        assert_eq!(updated.delivery_state, "failed");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "failed");
-        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
-        assert_eq!(updated.delivery_metadata["attempts"], 1);
-        drop(messages);
-
-        let events = state.system_events.read().expect("events");
-        let failure_event = events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_failed")
-            .expect("failure event");
-        assert_eq!(failure_event.metadata["failure_reason"], "send_timeout");
-        drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_diagnostics_queues_broadcast_direct_timeout_for_propagation() {
+    fn outbound_diagnostics_does_not_turn_local_dispatch_deadline_into_fallback() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-broadcast-direct-timeout-propagation-{}.db",
             Uuid::new_v4()
@@ -50667,8 +45742,8 @@ mod tests {
             false,
         )
         .expect("record broadcast");
-        assert_eq!(message.delivery_method, "direct");
-        assert_eq!(message.delivery_policy_reason, "broadcast_direct");
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(message.delivery_policy_reason, "sdk_owned");
         let now_ms = crate::unix_now_ms();
         crate::update_outbound_delivery_state(
             &state,
@@ -50686,8 +45761,8 @@ mod tests {
 
         let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
         assert_eq!(diagnostics["failed"], 0);
-        assert_eq!(diagnostics["retry_total"], 1);
-        assert_eq!(diagnostics["propagation_fallback_total"], 1);
+        assert_eq!(diagnostics["retry_total"], 0);
+        assert_eq!(diagnostics["propagation_fallback_total"], 0);
 
         let messages = state.messages.read().expect("messages");
         let updated = messages
@@ -50695,28 +45770,18 @@ mod tests {
             .find(|candidate| candidate.message_id == message.message_id)
             .expect("updated message");
         assert_eq!(updated.delivery_state, "queued");
-        assert_eq!(updated.delivery_method, "propagated");
-        assert_eq!(
-            updated.delivery_policy_reason,
-            "broadcast_direct_timeout_fallback"
-        );
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(
-            updated.delivery_metadata["fallback_reason"],
-            "direct_dispatch_timeout"
-        );
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(updated.delivery_metadata["retry_reason"], "send_timeout");
+        assert_eq!(updated.delivery_method, "auto");
+        assert_eq!(updated.delivery_policy_reason, "sdk_owned");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "in_progress");
+        assert!(updated.delivery_metadata.get("fallback_reason").is_none());
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
         drop(messages);
 
         let events = state.system_events.read().expect("events");
-        let propagation_event = events
-            .iter()
-            .find(|event| event.event_type == "message_propagation_queued")
-            .expect("propagation queued event");
-        assert_eq!(
-            propagation_event.metadata["fallback_reason"],
-            "direct_dispatch_timeout"
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type != "message_propagation_queued")
         );
         assert!(
             events
@@ -50729,7 +45794,7 @@ mod tests {
     }
 
     #[test]
-    fn outbound_diagnostics_keeps_propagated_broadcast_timeout_queued_after_rate_limit_budget() {
+    fn outbound_diagnostics_does_not_extend_legacy_fallback_retry_budget() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-propagated-broadcast-timeout-extended-{}.db",
             Uuid::new_v4()
@@ -50780,8 +45845,8 @@ mod tests {
         .expect("mark propagated stale dispatch");
 
         let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
-        assert_eq!(diagnostics["pending_dispatches"], 0);
-        assert_eq!(diagnostics["retry_total"], 1);
+        assert_eq!(diagnostics["pending_dispatches"], 1);
+        assert_eq!(diagnostics["retry_total"], 0);
 
         let messages = state.messages.read().expect("messages");
         let updated = messages
@@ -50790,18 +45855,18 @@ mod tests {
             .expect("updated message");
         assert_eq!(updated.delivery_state, "queued");
         assert_eq!(updated.delivery_method, "propagated");
-        assert_eq!(updated.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(updated.delivery_metadata["dispatch_timeout"], true);
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(updated.delivery_metadata["error"], "send_timeout");
-        assert_eq!(updated.delivery_metadata["attempts"], 31);
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "in_progress");
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert_eq!(updated.delivery_metadata["attempts"], 30);
         drop(messages);
 
         let events = state.system_events.read().expect("events");
         assert!(
             events
                 .iter()
-                .any(|event| event.event_type == "message_delivery_retrying")
+                .all(|event| event.event_type != "message_delivery_retrying")
         );
         assert!(
             events
@@ -50809,292 +45874,6 @@ mod tests {
                 .all(|event| event.event_type != "message_delivery_failed")
         );
         drop(events);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn internal_delivery_propagation_marks_message_queued_like_python_callback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-propagation-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_api_key("secret");
-        let app = crate::create_app_with_state(state.clone());
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "propagation fallback callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-
-        let propagation = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-propagation")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Reason": "direct_delivery_failed",
-                            "PropagationNodeHex": "prop-node",
-                            "LocalPropagationFallback": false,
-                            "Attempts": 3
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("propagation response");
-        assert_eq!(propagation.status(), StatusCode::OK);
-        let body = propagation
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "propagation_queued");
-        assert_eq!(payload["message"]["delivery_state"], "queued");
-        assert_eq!(payload["message"]["delivery_method"], "propagated");
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["delivery_mode"],
-            "propagated"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["fallback_reason"],
-            "direct_delivery_failed"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["propagation_node_hex"],
-            "prop-node"
-        );
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["local_propagation_fallback"],
-            false
-        );
-        assert_eq!(payload["event"]["event_type"], "message_propagation_queued");
-        assert_eq!(
-            payload["event"]["metadata"]["fallback_reason"],
-            "direct_delivery_failed"
-        );
-        assert_eq!(
-            payload["event"]["metadata"]["propagation_node"],
-            "prop-node"
-        );
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(
-            diagnostics_payload["outbound_delivery"]["propagation_fallback_total"],
-            1
-        );
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 0);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["queued"], 1);
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(snapshot.messages[0].delivery_method, "propagated");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["fallback_reason"],
-            "direct_delivery_failed"
-        );
-        let propagation_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| event.event_type == "message_propagation_queued")
-            .expect("propagation queued event");
-        assert_eq!(
-            propagation_event.metadata["fallback_reason"],
-            "direct_delivery_failed"
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn internal_delivery_drop_marks_message_failed_like_python_callback() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-delivery-drop-callback-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_api_key("secret")
-            .with_api_key("secret");
-        let app = crate::create_app_with_state(state.clone());
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/Message")
-                    .header("X-API-Key", "secret")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "content": "drop callback",
-                            "destination": "target-destination"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("message response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let message_id = state
-            .messages
-            .read()
-            .expect("messages")
-            .first()
-            .expect("message")
-            .message_id
-            .clone();
-
-        let drop_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .header("X-API-Key", "secret")
-                    .method(Method::POST)
-                    .uri("/internal/delivery-drop")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({
-                            "MessageID": message_id,
-                            "Reason": "queue_backpressure_drop_oldest"
-                        })
-                        .to_string(),
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("drop response");
-        assert_eq!(drop_response.status(), StatusCode::OK);
-        let body = drop_response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["status"], "dropped");
-        assert_eq!(payload["message"]["delivery_state"], "failed");
-        assert_eq!(
-            payload["message"]["delivery_metadata"]["drop_reason"],
-            "queue_backpressure_drop_oldest"
-        );
-        assert_eq!(payload["message"]["delivery_metadata"]["acked"], false);
-        assert_eq!(payload["event"]["event_type"], "message_delivery_failed");
-        assert_eq!(
-            payload["event"]["message"],
-            "Outbound payload dropped before delivery"
-        );
-        assert_eq!(
-            payload["event"]["metadata"]["drop_reason"],
-            "queue_backpressure_drop_oldest"
-        );
-
-        let diagnostics = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/diagnostics/runtime")
-                    .header("X-API-Key", "secret")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("diagnostics response");
-        assert_eq!(diagnostics.status(), StatusCode::OK);
-        let body = diagnostics
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let diagnostics_payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(diagnostics_payload["outbound_delivery"]["dropped_total"], 1);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["failed"], 1);
-        assert_eq!(diagnostics_payload["outbound_delivery"]["queued"], 0);
-
-        let store = RchSqliteStore::open(&db_path).expect("open sqlite");
-        let snapshot = store
-            .load_snapshot()
-            .expect("load snapshot")
-            .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "failed");
-        assert_eq!(
-            snapshot.messages[0].delivery_metadata["drop_reason"],
-            "queue_backpressure_drop_oldest"
-        );
-        let drop_event = snapshot
-            .system_events
-            .iter()
-            .find(|event| {
-                event.event_type == "message_delivery_failed"
-                    && event.message == "Outbound payload dropped before delivery"
-            })
-            .expect("delivery drop event");
-        assert_eq!(
-            drop_event.metadata["drop_reason"],
-            "queue_backpressure_drop_oldest"
-        );
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -51135,71 +45914,6 @@ mod tests {
         assert_eq!(message.delivery_state, "sent");
         assert_eq!(message.delivery_metadata["receipt_pending"], true);
         assert_eq!(message.delivery_metadata["retry_scheduled"], false);
-    }
-
-    #[test]
-    fn rem_command_receipt_timeout_does_not_resend_after_acceptance() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-receipt-timeout-retry-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::record_outbound_message_deferred_with_metadata(
-            &state,
-            "Task Mission Briefing completed",
-            None,
-            Some("rem-destination".to_string()),
-            vec![],
-            false,
-            json!({
-                "fanout_channel": "rem_checklist_command",
-            }),
-        )
-        .expect("record rem command");
-        crate::update_outbound_delivery_state(
-            &state,
-            message.message_id.as_str(),
-            "sent",
-            json!({
-                "attempts": 2,
-                "dispatch_status": "accepted",
-                "receipt_pending": true,
-                "receipt_deadline_ts_ms": crate::unix_now_ms() - 1,
-                "reticulumd_dispatch_count": 1,
-            }),
-        )
-        .expect("mark expired receipt");
-        {
-            let messages = state.messages.read().expect("messages");
-            let pending = messages.first().expect("message");
-            assert_eq!(pending.delivery_method, "propagated");
-            assert_eq!(
-                pending.delivery_metadata["fanout_channel"],
-                "rem_checklist_command"
-            );
-            assert!(crate::is_rem_command_message(pending));
-        }
-
-        crate::finalize_expired_delivery_receipts(&state).expect("finalize receipts");
-
-        let messages = state.messages.read().expect("messages");
-        let updated = messages.first().expect("message");
-        assert_eq!(updated.delivery_state, "failed");
-        assert_eq!(updated.delivery_metadata["attempts"], 3);
-        assert_eq!(updated.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(updated.delivery_metadata["retry_owner"], "reticulumd");
-        assert_eq!(updated.delivery_metadata["receipt_pending"], false);
-        drop(messages);
-
-        let events = state.system_events.read().expect("events");
-        let failure_event = events
-            .iter()
-            .find(|event| event.event_type == "message_delivery_failed")
-            .expect("failure event");
-        assert_eq!(failure_event.event_type, "message_delivery_failed");
-        drop(events);
-
-        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
@@ -51335,7 +46049,7 @@ mod tests {
         };
         assert_eq!(
             crate::outbound_destinations(&state, &direct).expect("direct destinations"),
-            vec!["1123c2623132bf9899ae5d3b28d9f79e".to_string()]
+            vec!["4bede2a6ecab26f234aac9bb894a441a".to_string()]
         );
 
         let topic = crate::OutboundMessageRecord {
@@ -51354,7 +46068,7 @@ mod tests {
         };
         assert_eq!(
             crate::outbound_destinations(&state, &topic).expect("topic destinations"),
-            vec!["1123c2623132bf9899ae5d3b28d9f79e".to_string()]
+            vec!["4bede2a6ecab26f234aac9bb894a441a".to_string()]
         );
 
         let broadcast = crate::OutboundMessageRecord {
@@ -51502,55 +46216,6 @@ mod tests {
         assert_eq!(
             crate::outbound_destinations(&state, &broadcast).expect("broadcast destinations"),
             vec!["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn outbound_identity_allowlist_keeps_stale_rem_peer_across_runtime_restart() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-outbound-allowlist-rem-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let rem_identity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let now = crate::unix_now_ms();
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: rem_identity.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Pixel".to_string()),
-            source_interface: Some("app_data_utf8".to_string()),
-            announce_capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-                "name=pixel".to_string(),
-            ],
-            client_type: "rem".to_string(),
-            first_seen_ts_ms: now - crate::MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS * 2,
-            last_seen_ts_ms: now - crate::MISSION_CHANGE_AUTONOMOUS_REM_WINDOW_MS * 2,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state_without_allowlist = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_reticulumd_rpc("127.0.0.1:1", "source");
-        assert_eq!(
-            crate::known_rem_peer_destinations_for_mission_change(&state_without_allowlist)
-                .expect("rem peers"),
-            Vec::<String>::new()
-        );
-
-        let state_with_allowlist = crate::AppState::from_sqlite_path(&db_path)
-            .expect("state")
-            .with_reticulumd_rpc("127.0.0.1:1", "source")
-            .with_outbound_identity_allowlist([rem_identity]);
-        assert_eq!(
-            crate::known_rem_peer_destinations_for_mission_change(&state_with_allowlist)
-                .expect("rem peers"),
-            vec![rem_identity.to_string()]
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -51758,7 +46423,7 @@ mod tests {
 
         assert_eq!(
             crate::outbound_destinations(&state, &direct).expect("direct destinations"),
-            vec!["77b2539b72259af927e48c0f90721767".to_string()]
+            vec!["fb4c70e20cfac047b899ca2f3671b50a".to_string()]
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -52385,62 +47050,6 @@ mod tests {
     }
 
     #[test]
-    fn reticulumd_delivery_aliases_do_not_rewrite_rem_capability_announces() {
-        let announces = vec![
-            ReticulumdAnnounceRecord {
-                id: "delivery-s8".to_string(),
-                peer: "6260c6f540c86f7296c4909353615862".to_string(),
-                timestamp: 1_778_307_917,
-                aspect: None,
-                name: Some("S8".to_string()),
-                name_source: Some("delivery_app_data".to_string()),
-                first_seen: 1_778_306_788,
-                seen_count: 12,
-                app_data_hex: Some("92c4025338c0".to_string()),
-                capabilities: Vec::new(),
-                rssi: None,
-                snr: None,
-                q: None,
-                interface: None,
-                hops: None,
-                stamp_cost: None,
-                stamp_cost_flexibility: None,
-                peering_cost: None,
-            },
-            ReticulumdAnnounceRecord {
-                id: "rem-s8".to_string(),
-                peer: "47ff8b43fea7df9082f6fc1e2b8c954b".to_string(),
-                timestamp: 1_778_307_917,
-                aspect: None,
-                name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                name_source: Some("app_data_utf8".to_string()),
-                first_seen: 1_778_306_788,
-                seen_count: 12,
-                app_data_hex: Some(
-                    "5233414b542c454d657267656e63794d657373616765732c54656c656d657472793b6e616d653d5338"
-                        .to_string(),
-                ),
-                capabilities: Vec::new(),
-                rssi: None,
-                snr: None,
-                q: None,
-                interface: None,
-                hops: None,
-                stamp_cost: None,
-                stamp_cost_flexibility: None,
-                peering_cost: None,
-            },
-        ];
-
-        assert_eq!(
-            crate::chat_delivery_destination_aliases_from_reticulumd_announces(&announces)
-                .get("47ff8b43fea7df9082f6fc1e2b8c954b")
-                .map(String::as_str),
-            None
-        );
-    }
-
-    #[test]
     fn client_records_exclude_recent_rem_announces_without_explicit_client_join() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-client-rem-announce-{}.db",
@@ -53051,116 +47660,6 @@ mod tests {
     }
 
     #[test]
-    fn rem_chat_delivery_identity_uses_fresh_lxmf_presence() {
-        let db_path =
-            std::env::temp_dir().join(format!("r3akt-rch-rem-propagation-{}.db", Uuid::new_v4()));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "4bede2a6ecab26f234aac9bb894a441a".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: crate::unix_now_ms(),
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "1123c2623132bf9899ae5d3b28d9f79e".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Poco".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: Vec::new(),
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: 1_700_000_000_000,
-                last_seen_ts_ms: crate::unix_now_ms(),
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state
-            .outbound_delivery_policy
-            .write()
-            .expect("policy")
-            .mark_presence("4bede2a6ecab26f234aac9bb894a441a", crate::unix_now_ms());
-
-        let app_destination = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some("4bede2a6ecab26f234aac9bb894a441a"),
-        )
-        .expect("app destination decision");
-        let delivery_destination = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some("1123c2623132bf9899ae5d3b28d9f79e"),
-        )
-        .expect("delivery destination decision");
-
-        assert_eq!(app_destination.method, "direct");
-        assert_eq!(app_destination.reason, "rem_direct");
-        assert_eq!(delivery_destination.method, "direct");
-        assert_eq!(delivery_destination.reason, "fresh_presence");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn rem_chat_uses_fresh_lxmf_alias_when_rem_app_announce_is_stale() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-chat-stale-alias-fresh-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
-        let lxmf_destination = "1123c2623132bf9899ae5d3b28d9f79e";
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: rem_destination.to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: vec!["r3akt".to_string(), "name=poco".to_string()],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
-                last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: lxmf_destination.to_string(),
-                announced_identity_hash: None,
-                display_name: Some("Poco".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: vec!["lxmf".to_string()],
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 60_000,
-                last_seen_ts_ms: now,
-            },
-        ];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("rem chat decision");
-
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "rem_direct");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
     fn rem_command_preserves_propagation_when_rem_app_is_stale_even_with_fresh_chat_alias() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-command-stale-app-alias-fresh-{}.db",
@@ -53217,72 +47716,8 @@ mod tests {
         )
         .expect("record rem command message");
 
-        assert_eq!(message.delivery_method, "propagated");
-        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn broadcast_delivery_uses_recent_roster_presence_without_fresh_announces() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-broadcast-roster-presence-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let now = crate::unix_now_ms();
-        let fresh_seen = "22c8ba9c883e06c7e540ed6dc87ceecf";
-        let fresh_chat = "77b2539b72259af927e48c0f90721767";
-        let stale_import = "7f08e12b3f25f23e62f3a15288303c95";
-        let stale_ts_ms = now - crate::OUTBOUND_BROADCAST_ROSTER_WINDOW_MS - 10_000;
-        {
-            let mut clients = state.clients.write().expect("clients");
-            clients.insert(
-                fresh_seen.to_string(),
-                crate::ClientRecord::new(fresh_seen.to_string(), now - 10_000),
-            );
-            let mut chat_record = crate::ClientRecord::new(fresh_chat.to_string(), stale_ts_ms);
-            chat_record.last_chat_ts_ms = Some(now - 5_000);
-            clients.insert(fresh_chat.to_string(), chat_record);
-            clients.insert(
-                stale_import.to_string(),
-                crate::ClientRecord::new(stale_import.to_string(), stale_ts_ms),
-            );
-        }
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Broadcast,
-            None,
-            None,
-        )
-        .expect("broadcast decision");
-
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "broadcast_direct");
-
-        let broadcast = crate::OutboundMessageRecord {
-            message_id: "broadcast-roster-presence".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: decision.method,
-            delivery_policy_reason: decision.reason,
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({}),
-            created_ts_ms: now,
-            attachments: Vec::new(),
-        };
-        let mut destinations =
-            crate::outbound_destinations(&state, &broadcast).expect("broadcast destinations");
-        destinations.sort();
-
-        assert_eq!(
-            destinations,
-            vec![fresh_seen.to_string(), fresh_chat.to_string()]
-        );
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(message.delivery_policy_reason, "sdk_owned");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -53321,138 +47756,7 @@ mod tests {
     }
 
     #[test]
-    fn targeted_delivery_uses_propagation_for_stale_known_lxmf_announce() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-stale-known-target-propagation-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let destination = "52118fa6f1240342cb730dabdf1d4ca1";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Pixel Sideband".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: Vec::new(),
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
-            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state.clients.write().expect("clients").insert(
-            destination.to_string(),
-            crate::ClientRecord::new(
-                destination.to_string(),
-                now - r3akt_rch_core::RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1_000,
-            ),
-        );
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(destination),
-        )
-        .expect("delivery decision");
-
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "no_fresh_presence");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn targeted_delivery_uses_direct_for_recent_chat_with_stale_announce() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-stale-known-target-recent-chat-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let destination = "0a8b3de98049dd594054d1a49d46f490";
-        let stale_ts_ms = now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000;
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("recent chat Sideband".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: Vec::new(),
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: stale_ts_ms,
-            last_seen_ts_ms: stale_ts_ms,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let mut client = crate::ClientRecord::new(destination.to_string(), stale_ts_ms);
-        client.last_chat_ts_ms = Some(now - 5_000);
-        state
-            .clients
-            .write()
-            .expect("clients")
-            .insert(destination.to_string(), client);
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(destination),
-        )
-        .expect("delivery decision");
-
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "live_connection");
-
-        let message = crate::record_outbound_message(
-            &state,
-            "recent chat targeted chat",
-            None,
-            Some(destination.to_string()),
-            Vec::new(),
-            false,
-        )
-        .expect("recent chat destination should be accepted");
-
-        assert_eq!(message.delivery_method, "direct");
-        assert_eq!(message.delivery_policy_reason, "live_connection");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn targeted_delivery_uses_direct_for_recent_client_without_fresh_announce() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-unannounced-live-target-direct-{}.db",
-            Uuid::new_v4()
-        ));
-        let destination = "4f79a98e20b9b8d58d412dbeef60f98d";
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state.clients.write().expect("clients").insert(
-            destination.to_string(),
-            crate::ClientRecord::new(destination.to_string(), crate::unix_now_ms()),
-        );
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(destination),
-        )
-        .expect("delivery decision");
-
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "live_connection");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn targeted_chat_rejects_stale_unreachable_destination_before_dispatch() {
+    fn targeted_chat_admits_stale_destination_for_sdk_path_resolution() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-stale-target-reject-{}.db",
             Uuid::new_v4()
@@ -53485,7 +47789,7 @@ mod tests {
         store.save_snapshot(&snapshot).expect("save snapshot");
 
         let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let error = crate::record_outbound_message(
+        let message = crate::record_outbound_message(
             &state,
             "stale targeted chat",
             None,
@@ -53493,440 +47797,11 @@ mod tests {
             Vec::new(),
             false,
         )
-        .expect_err("stale destination should be rejected");
+        .expect("daemon owns destination reachability");
 
-        assert!(matches!(error, crate::ApiError::BadRequest(_)));
-        assert!(error.to_string().contains("not currently reachable"));
-        assert!(state.messages.read().expect("messages").is_empty());
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn topic_delivery_uses_propagation_when_subscriber_is_not_freshly_announced() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-topic-stale-subscriber-propagation-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let destination = "7f08e12b3f25f23e62f3a15288303c95";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("S8 stale Sideband".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: Vec::new(),
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
-            last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state.subscribers.write().expect("subscribers").insert(
-            "stale-s8".to_string(),
-            crate::SubscriberRecord {
-                subscriber_id: "stale-s8".to_string(),
-                destination: destination.to_string(),
-                topic_id: "direct".to_string(),
-                reject_tests: None,
-                metadata: json!({}),
-            },
-        );
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Fanout,
-            Some("direct"),
-            None,
-        )
-        .expect("topic decision");
-
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "topic_unannounced");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn topic_delivery_uses_propagation_when_subscriber_has_no_announce() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-topic-unannounced-subscriber-propagation-{}.db",
-            Uuid::new_v4()
-        ));
-        let destination = "13b9e446f104d2a38f7e793a94cb1b1d";
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        state.subscribers.write().expect("subscribers").insert(
-            "unannounced-pixel".to_string(),
-            crate::SubscriberRecord {
-                subscriber_id: "unannounced-pixel".to_string(),
-                destination: destination.to_string(),
-                topic_id: "direct".to_string(),
-                reject_tests: None,
-                metadata: json!({}),
-            },
-        );
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Fanout,
-            Some("direct"),
-            None,
-        )
-        .expect("topic decision");
-
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "topic_unannounced");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn rem_destination_uses_propagation_after_direct_failure_cooldown() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: rem_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-                "name=poco".to_string(),
-            ],
-            client_type: "rem".to_string(),
-            first_seen_ts_ms: 1_700_000_000_000,
-            last_seen_ts_ms: crate::unix_now_ms(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let fresh = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("fresh rem decision");
-        assert_eq!(fresh.method, "direct");
-        assert_eq!(fresh.reason, "rem_direct");
-
-        crate::mark_direct_delivery_failure(&state, rem_destination).expect("mark failure");
-        let cooldown = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("cooldown rem decision");
-        assert_eq!(cooldown.method, "propagated");
-        assert_eq!(cooldown.reason, "rem_direct_cooldown");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn rem_destination_uses_persisted_direct_failure_after_restart() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-persisted-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: rem_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-            ],
-            client_type: "rem".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now - 10_000,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "failed-rem-direct".to_string(),
-            topic_id: None,
-            destination: Some(rem_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "failed rem direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "rem_direct".to_string(),
-            delivery_state: "failed".to_string(),
-            delivery_metadata: json!({
-                "delivery_failed_ts_ms": now,
-                "receipt_status": "failed: link activation timed out",
-            }),
-            created_ts_ms: now - 1_000,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("rem decision");
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "rem_direct_cooldown");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn rem_destination_ignores_persisted_local_zmq_timeout_for_direct_cooldown() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-zmq-timeout-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: rem_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-            ],
-            client_type: "rem".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now - 10_000,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "failed-rem-direct-zmq-timeout".to_string(),
-            topic_id: None,
-            destination: Some(rem_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "failed rem direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "rem_direct".to_string(),
-            delivery_state: "failed".to_string(),
-            delivery_metadata: json!({
-                "delivery_failed_ts_ms": now,
-                "error": "transport send failed: LXMF-rs ZeroMQ SDK start: SDK_TRANSPORT_ZMQ_TIMEOUT: zmq rpc request timed out waiting for correlated response",
-            }),
-            created_ts_ms: now - 1_000,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("rem decision");
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "rem_direct");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn rem_destination_ignores_persisted_local_dispatch_timeout_for_direct_cooldown() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-dispatch-timeout-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let rem_destination = "4bede2a6ecab26f234aac9bb894a441a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: rem_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=Poco".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-            ],
-            client_type: "rem".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now - 10_000,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "failed-rem-direct-dispatch-timeout".to_string(),
-            topic_id: None,
-            destination: Some(rem_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "failed rem direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "rem_direct".to_string(),
-            delivery_state: "failed".to_string(),
-            delivery_metadata: json!({
-                "dispatch_timed_out_at_ts_ms": now,
-                "dispatch_timeout": true,
-                "error": "send_timeout",
-            }),
-            created_ts_ms: now - 1_000,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(rem_destination),
-        )
-        .expect("rem decision");
-        assert_eq!(decision.method, "direct");
-        assert_eq!(decision.reason, "rem_direct");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn generic_destination_uses_persisted_direct_failure_after_restart() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-generic-persisted-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: generic_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Pixel".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec!["pixel".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now - 10_000,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "failed-generic-direct".to_string(),
-            topic_id: None,
-            destination: Some(generic_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "failed generic direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "fresh_presence".to_string(),
-            delivery_state: "failed".to_string(),
-            delivery_metadata: json!({
-                "delivery_failed_ts_ms": now,
-                "receipt_status": "failed: link activation timed out",
-            }),
-            created_ts_ms: now - 1_000,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(generic_destination),
-        )
-        .expect("generic decision");
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "direct_cooldown");
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn reticulumd_direct_status_failure_marks_cooldown_without_resend() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-generic-status-direct-cooldown-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: generic_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Pixel".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec!["pixel".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "pending-generic-direct".to_string(),
-            topic_id: None,
-            destination: Some(generic_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "pending generic direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "fresh_presence".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "dispatch_status": "accepted",
-                "receipt_pending": true,
-            }),
-            created_ts_ms: now,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        crate::mark_reticulumd_status_delivery_failure(
-            &state,
-            "pending-generic-direct",
-            "failed: link activation timed out",
-        )
-        .expect("mark failure");
-
-        let messages = state.messages.read().expect("messages");
-        let stored = messages
-            .iter()
-            .find(|message| message.message_id == "pending-generic-direct")
-            .expect("stored message");
-        assert_eq!(stored.delivery_state, "failed");
-        assert_eq!(stored.delivery_method, "direct");
-        assert_eq!(stored.delivery_policy_reason, "fresh_presence");
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
-        drop(messages);
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(generic_destination),
-        )
-        .expect("generic decision");
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "direct_cooldown");
+        assert_eq!(message.destination.as_deref(), Some(destination));
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(state.messages.read().expect("messages").len(), 1);
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -53989,78 +47864,6 @@ mod tests {
         assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
         assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
         drop(messages);
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn reticulumd_direct_link_create_failure_does_not_resend_after_acceptance() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-generic-status-link-create-failure-{}.db",
-            Uuid::new_v4()
-        ));
-        let mut store = r3akt_rch_core::RchSqliteStore::open(&db_path).expect("sqlite");
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        let generic_destination = "fb4c70e20cfac047b899ca2f3671b50a";
-        snapshot.identity_announces = vec![r3akt_rch_core::IdentityAnnounceRecord {
-            destination_hash: generic_destination.to_string(),
-            announced_identity_hash: None,
-            display_name: Some("Field Unit".to_string()),
-            source_interface: Some("reticulumd".to_string()),
-            announce_capabilities: vec!["lxmf".to_string()],
-            client_type: "generic_lxmf".to_string(),
-            first_seen_ts_ms: now - 60_000,
-            last_seen_ts_ms: now,
-        }];
-        snapshot.messages = vec![r3akt_rch_core::MessageRecord {
-            message_id: "pending-generic-link-create".to_string(),
-            topic_id: None,
-            destination: Some(generic_destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "pending generic direct".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "fresh_presence".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "dispatch_status": "accepted",
-                "receipt_pending": true,
-            }),
-            created_ts_ms: now,
-            attachments: Vec::new(),
-        }];
-        store.save_snapshot(&snapshot).expect("save snapshot");
-
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        crate::mark_reticulumd_status_delivery_failure(
-            &state,
-            "pending-generic-link-create",
-            "failed attempting to create a link",
-        )
-        .expect("mark failure");
-
-        let messages = state.messages.read().expect("messages");
-        let stored = messages
-            .iter()
-            .find(|message| message.message_id == "pending-generic-link-create")
-            .expect("stored message");
-        assert_eq!(stored.delivery_state, "failed");
-        assert_eq!(stored.delivery_method, "direct");
-        assert_eq!(stored.delivery_policy_reason, "fresh_presence");
-        assert_eq!(stored.delivery_metadata["retry_scheduled"], false);
-        assert_eq!(stored.delivery_metadata["retry_owner"], "reticulumd");
-        drop(messages);
-
-        let decision = crate::outbound_delivery_decision(
-            &state,
-            r3akt_rch_core::DeliveryMode::Targeted,
-            None,
-            Some(generic_destination),
-        )
-        .expect("generic decision");
-        assert_eq!(decision.method, "propagated");
-        assert_eq!(decision.reason, "direct_cooldown");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -54426,83 +48229,6 @@ mod tests {
     }
 
     #[test]
-    fn rem_auto_messages_request_propagated_send_for_live_delivery() {
-        let message = r3akt_rch_core::MessageRecord {
-            message_id: "rem-auto-command".to_string(),
-            topic_id: None,
-            destination: Some("6521979f1165965b24731061ef4a6906".to_string()),
-            sender: "northbound".to_string(),
-            content: "Task status completed".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "auto".to_string(),
-            delivery_policy_reason: "rem_auto".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "fanout_channel": "rem_checklist_command",
-                "lxmf_fields": {
-                    crate::FIELD_COMMANDS.to_string(): [{
-                        "command_type": "checklist.task.status.set",
-                        "args": {
-                            "checklist_uid": "checklist-pixel",
-                            "task_uid": "task-pixel",
-                            "user_status": "COMPLETE"
-                        }
-                    }]
-                }
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        let message = crate::OutboundMessageRecord::from(message);
-
-        assert_eq!(
-            crate::lxmf_sdk_delivery_method(&message),
-            Some("propagated")
-        );
-        assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
-    }
-
-    #[test]
-    fn rem_command_to_unannounced_target_is_recorded_for_propagation() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-rem-command-unannounced-propagation-{}.db",
-            Uuid::new_v4()
-        ));
-        let destination = "6521979f1165965b24731061ef4a6906";
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::record_outbound_message_with_metadata(
-            &state,
-            "Task Pixel fallback completed",
-            None,
-            Some(destination.to_string()),
-            Vec::new(),
-            false,
-            json!({
-                "fanout_channel": "rem_checklist_command",
-                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
-                    "command_type": "checklist.task.status.set",
-                    "args": {
-                        "checklist_uid": "checklist-pixel",
-                        "task_uid": "task-pixel",
-                        "user_status": "COMPLETE"
-                    }
-                }] }
-            }),
-        )
-        .expect("record rem command message");
-
-        assert_eq!(message.delivery_method, "propagated");
-        assert_eq!(message.delivery_policy_reason, "no_fresh_presence");
-        assert_eq!(
-            crate::lxmf_sdk_delivery_method(&message),
-            Some("propagated")
-        );
-        assert!(!crate::lxmf_sdk_try_propagation_on_fail(&message));
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
     fn rem_command_message_uses_propagation_when_direct_cooldown_exists() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-rem-command-direct-cooldown-{}.db",
@@ -54568,429 +48294,45 @@ mod tests {
         )
         .expect("record rem command message");
 
-        assert_eq!(message.delivery_method, "propagated");
-        assert_eq!(message.delivery_policy_reason, "rem_direct_cooldown");
+        assert_eq!(message.delivery_method, "auto");
+        assert_eq!(message.delivery_policy_reason, "sdk_owned");
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[test]
-    fn propagated_rem_command_send_error_uses_rem_retry_budget() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-rem-command-send-error-retry-{}.db",
-            Uuid::new_v4()
+    fn admission_uncertainty_uses_typed_transport_errors() {
+        use r3akt_transport_rns::TransportError;
+        assert!(crate::zmq_admission_response_uncertain(
+            &TransportError::Sdk {
+                code: "SDK_INTERNAL_ERROR".to_string(),
+                category: Some("Internal".to_string()),
+                retryable: false,
+                message: "invalid batch response".to_string(),
+            }
         ));
-        let destination = "6521979f1165965b24731061ef4a6906";
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-rem-send-error".to_string(),
-            topic_id: None,
-            destination: Some(destination.to_string()),
-            sender: "northbound".to_string(),
-            content: "Task Pixel fallback completed".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Targeted,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "no_fresh_presence".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "fanout_channel": "rem_checklist_command",
-                "lxmf_fields": { crate::FIELD_COMMANDS.to_string(): [{
-                    "command_type": "checklist.task.status.set",
-                    "args": {
-                        "checklist_uid": "checklist-pixel",
-                        "task_uid": "task-pixel",
-                        "user_status": "COMPLETE"
-                    }
-                }] }
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &message,
-            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
-        )
-        .expect("schedule retry")
-        .expect("propagated REM command should retry");
-
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(retry.delivery_metadata["attempts"], json!(1));
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn propagated_broadcast_fallback_send_error_continues_after_fifth_attempt() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-broadcast-send-error-retry-{}.db",
-            Uuid::new_v4()
+        assert!(crate::zmq_admission_response_uncertain(
+            &TransportError::Sdk {
+                code: "SDK_TRANSPORT_ZMQ_TIMEOUT".to_string(),
+                category: None,
+                retryable: true,
+                message: "timeout".to_string(),
+            }
         ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-broadcast-send-error".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "attempts": 4,
-                "max_attempts": 1,
-                "fallback_reason": "direct_dispatch_timeout",
-                "retry_scheduled": true,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &message,
-            "outbound request failed: connection refused".to_string(),
-        )
-        .expect("schedule retry")
-        .expect("propagated broadcast fallback should allow attempt five");
-
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(retry.delivery_metadata["attempts"], json!(5));
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
-
-        let next_retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &retry,
-            "outbound request failed: connection refused".to_string(),
-        )
-        .expect("schedule next retry")
-        .expect("propagated broadcast fallback should keep trying propagation");
-
-        assert_eq!(next_retry.delivery_state, "queued");
-        assert_eq!(next_retry.delivery_method, "propagated");
-        assert_eq!(next_retry.delivery_metadata["attempts"], json!(6));
-        assert_eq!(next_retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(
-            next_retry.delivery_metadata["retry_reason"],
-            json!("send_error")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn propagated_broadcast_fallback_rate_limit_extends_retry_budget() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-broadcast-rate-limit-retry-{}.db",
-            Uuid::new_v4()
+        assert!(crate::zmq_admission_response_uncertain(
+            &TransportError::Receive("lost reply".to_string())
         ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-broadcast-rate-limited".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "attempts": 5,
-                "max_attempts": 1,
-                "fallback_reason": "direct_dispatch_timeout",
-                "retry_scheduled": true,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-        let before_retry = crate::unix_now_ms();
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &message,
-            "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded".to_string(),
-        )
-        .expect("schedule retry")
-        .expect("rate-limited propagated broadcast should remain queued");
-
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(retry.delivery_metadata["attempts"], json!(6));
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(
-            retry.delivery_metadata["retry_reason"],
-            json!("rate_limited")
-        );
-        assert!(
-            retry.delivery_metadata["next_attempt_at_ts_ms"]
-                .as_i64()
-                .expect("next attempt")
-                >= before_retry + crate::OUTBOUND_RATE_LIMIT_RETRY_BACKOFF_MS - 1_000
-        );
-
-        let later_timeout = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &retry,
-            "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response".to_string(),
-        )
-        .expect("schedule timeout retry")
-        .expect("propagated broadcast should keep extended retry budget after rate limit");
-
-        assert_eq!(later_timeout.delivery_state, "queued");
-        assert_eq!(later_timeout.delivery_method, "propagated");
-        assert_eq!(later_timeout.delivery_metadata["attempts"], json!(7));
-        assert_eq!(
-            later_timeout.delivery_metadata["retry_scheduled"],
-            json!(true)
-        );
-        assert_eq!(
-            later_timeout.delivery_metadata["retry_reason"],
-            json!("send_error")
-        );
-
-        let _ = std::fs::remove_file(db_path);
+        for error in [
+            TransportError::NotSubmitted("send_timeout".to_string()),
+            TransportError::Encode("send_timeout".to_string()),
+            TransportError::Backpressure("send_timeout".to_string()),
+        ] {
+            assert!(!crate::zmq_admission_response_uncertain(&error));
+        }
     }
 
     #[test]
-    fn propagated_broadcast_fallback_send_timeout_stays_queued_after_rate_limit_budget() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-broadcast-timeout-budget-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-broadcast-timeout-budget".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "attempts": 30,
-                "max_attempts": 1,
-                "fallback_reason": "direct_dispatch_timeout",
-                "rate_limit_retry_budget": true,
-                "retry_scheduled": true,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &message,
-            "send_timeout".to_string(),
-        )
-        .expect("schedule timeout retry")
-        .expect("propagated broadcast fallback should remain queued after attempt 30");
-
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(retry.delivery_metadata["attempts"], json!(31));
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(
-            retry.delivery_metadata["retry_reason"],
-            json!("send_timeout")
-        );
-        assert_eq!(
-            retry.delivery_metadata["rate_limit_retry_budget"],
-            json!(true)
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn retry_reason_for_error_preserves_literal_send_timeout() {
-        assert_eq!(
-            crate::retry_reason_for_error("send_timeout"),
-            "send_timeout"
-        );
-        assert_eq!(
-            crate::retry_reason_for_error(" SEND_TIMEOUT "),
-            "send_timeout"
-        );
-        assert_eq!(
-            crate::retry_reason_for_error(
-                "SDK_SECURITY_RATE_LIMITED: per-ip request rate limit exceeded"
-            ),
-            "rate_limited"
-        );
-        assert_eq!(
-            crate::retry_reason_for_error(
-                "LXMF-rs ZeroMQ SDK request timed out waiting for correlated response"
-            ),
-            "send_error"
-        );
-    }
-
-    #[test]
-    fn propagated_broadcast_fallback_retryable_error_stays_queued_after_retry_budget() {
-        let db_path = std::env::temp_dir().join(format!(
-            "r3akt-rch-propagated-broadcast-post-budget-retry-{}.db",
-            Uuid::new_v4()
-        ));
-        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
-        let message = crate::OutboundMessageRecord {
-            message_id: "propagated-broadcast-post-budget-retry".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({
-                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS,
-                "max_attempts": 1,
-                "fallback_reason": "direct_dispatch_timeout",
-                "rate_limit_retry_budget": true,
-                "retry_scheduled": true,
-            }),
-            created_ts_ms: crate::unix_now_ms(),
-            attachments: Vec::new(),
-        };
-        state
-            .messages
-            .write()
-            .expect("messages")
-            .push(message.clone());
-
-        let retry = crate::schedule_outbound_retry_after_failure(
-            &state,
-            &message,
-            "outbound request failed: timed out".to_string(),
-        )
-        .expect("schedule post-budget retry")
-        .expect("retryable propagated broadcast fallback should not fail terminally");
-
-        assert_eq!(retry.delivery_state, "queued");
-        assert_eq!(retry.delivery_method, "propagated");
-        assert_eq!(
-            retry.delivery_metadata["attempts"],
-            json!(crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1)
-        );
-        assert_eq!(retry.delivery_metadata["dispatch_status"], json!("queued"));
-        assert_eq!(retry.delivery_metadata["retry_scheduled"], json!(true));
-        assert_eq!(retry.delivery_metadata["retry_reason"], json!("send_error"));
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn failed_propagated_broadcast_timeout_fallback_is_due_for_repair() {
-        let now = crate::unix_now_ms();
-        let retryable = crate::OutboundMessageRecord {
-            message_id: "failed-broadcast-fallback-repair".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "broadcast fallback".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_direct_timeout_fallback".to_string(),
-            delivery_state: "failed".to_string(),
-            delivery_metadata: json!({
-                "attempts": 30,
-                "max_attempts": 1,
-                "dispatch_status": "failed",
-                "error": "send_timeout",
-                "fallback_reason": "direct_dispatch_timeout",
-                "next_attempt_at_ts_ms": now - 1,
-                "reticulumd_dispatch_count": 0,
-                "retry_reason": "send_timeout",
-                "retry_scheduled": false,
-            }),
-            created_ts_ms: now,
-            attachments: Vec::new(),
-        };
-        let invalid_destination = crate::OutboundMessageRecord {
-            message_id: "invalid-broadcast-fallback-terminal".to_string(),
-            delivery_metadata: json!({
-                "attempts": 5,
-                "max_attempts": 1,
-                "dispatch_status": "failed",
-                "error": "failed: invalid destination hash 'not-hex' (expected 16-byte or 32-byte hex)",
-                "fallback_reason": "direct_dispatch_timeout",
-                "next_attempt_at_ts_ms": now - 1,
-                "reticulumd_dispatch_count": 1,
-                "retry_reason": "send_error",
-                "retry_scheduled": false,
-            }),
-            ..retryable.clone()
-        };
-        let in_progress_repair = crate::OutboundMessageRecord {
-            message_id: "in-progress-broadcast-fallback-repair".to_string(),
-            delivery_metadata: json!({
-                "attempts": 30,
-                "max_attempts": 1,
-                "dispatch_status": "in_progress",
-                "error": "send_timeout",
-                "fallback_reason": "direct_dispatch_timeout",
-                "next_attempt_at_ts_ms": now - 1,
-                "reticulumd_dispatch_count": 0,
-                "retry_reason": "send_timeout",
-                "retry_scheduled": false,
-            }),
-            ..retryable.clone()
-        };
-        let exhausted_retry_budget = crate::OutboundMessageRecord {
-            message_id: "exhausted-broadcast-fallback-repair".to_string(),
-            delivery_metadata: json!({
-                "attempts": crate::OUTBOUND_PROPAGATION_FALLBACK_RETRY_MAX_ATTEMPTS + 1,
-                "max_attempts": 1,
-                "dispatch_status": "failed",
-                "error": "send_timeout",
-                "fallback_reason": "direct_dispatch_timeout",
-                "next_attempt_at_ts_ms": now - 1,
-                "reticulumd_dispatch_count": 0,
-                "retry_reason": "send_timeout",
-                "retry_scheduled": false,
-            }),
-            ..retryable.clone()
-        };
-
-        assert!(crate::outbound_retry_due(&retryable, now));
-        assert!(crate::outbound_retry_due(&exhausted_retry_budget, now));
-        assert!(!crate::outbound_retry_due(&invalid_destination, now));
-        assert!(!crate::outbound_retry_due(&in_progress_repair, now));
-        assert!(crate::dispatch_pending(&in_progress_repair));
-    }
-
-    #[test]
-    fn failed_direct_broadcast_send_timeout_queues_propagation_repair() {
+    fn failed_direct_broadcast_timeout_does_not_resubmit_or_change_method() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-direct-broadcast-timeout-repair-{}.db",
             Uuid::new_v4()
@@ -55029,23 +48371,16 @@ mod tests {
 
         let report = crate::process_due_outbound_retry_messages(&state).expect("process retries");
 
-        assert_eq!(report.processed, 1);
+        assert_eq!(report.processed, 0);
         assert_eq!(report.dispatched, 0);
         let messages = state.messages.read().expect("messages");
         let repaired = messages.first().expect("message");
-        assert_eq!(repaired.delivery_state, "queued");
-        assert_eq!(repaired.delivery_method, "propagated");
-        assert_eq!(
-            repaired.delivery_policy_reason,
-            "broadcast_direct_timeout_fallback"
-        );
-        assert_eq!(repaired.delivery_metadata["dispatch_status"], "queued");
-        assert_eq!(repaired.delivery_metadata["retry_reason"], "send_timeout");
-        assert_eq!(repaired.delivery_metadata["retry_scheduled"], true);
-        assert_eq!(
-            repaired.delivery_metadata["previous_delivery_method"],
-            "direct"
-        );
+        assert_eq!(repaired.delivery_state, "failed");
+        assert_eq!(repaired.delivery_method, "direct");
+        assert_eq!(repaired.delivery_policy_reason, "broadcast_direct");
+        assert_eq!(repaired.delivery_metadata["dispatch_status"], "failed");
+        assert_eq!(repaired.delivery_metadata["error"], "send_timeout");
+        assert_eq!(repaired.delivery_metadata["retry_scheduled"], false);
         drop(messages);
 
         let store = RchSqliteStore::open(&db_path).expect("open sqlite");
@@ -55053,8 +48388,8 @@ mod tests {
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot exists");
-        assert_eq!(snapshot.messages[0].delivery_state, "queued");
-        assert_eq!(snapshot.messages[0].delivery_method, "propagated");
+        assert_eq!(snapshot.messages[0].delivery_state, "failed");
+        assert_eq!(snapshot.messages[0].delivery_method, "direct");
 
         let _ = std::fs::remove_file(db_path);
     }
@@ -55157,85 +48492,6 @@ mod tests {
     }
 
     #[test]
-    fn normal_chat_aliases_rem_destination_to_generic_lxmf_destination() {
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "47ff8b43fea7df9082f6fc1e2b8c954b".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=s8".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "6260c6f540c86f7296c4909353615862".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("S8".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: Vec::new(),
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now,
-                last_seen_ts_ms: now,
-            },
-        ];
-
-        let aliases = crate::chat_delivery_destination_aliases_from_snapshot(&snapshot);
-
-        assert_eq!(
-            aliases
-                .get("47ff8b43fea7df9082f6fc1e2b8c954b")
-                .map(String::as_str),
-            Some("6260c6f540c86f7296c4909353615862")
-        );
-    }
-
-    #[test]
-    fn normal_chat_keeps_rem_destination_when_generic_lxmf_alias_is_stale() {
-        let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
-        let now = crate::unix_now_ms();
-        snapshot.identity_announces = vec![
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "47ff8b43fea7df9082f6fc1e2b8c954b".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("R3AKT,EMergencyMessages,Telemetry;name=S8".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                    "name=s8".to_string(),
-                ],
-                client_type: "rem".to_string(),
-                first_seen_ts_ms: now - 120_000,
-                last_seen_ts_ms: now,
-            },
-            r3akt_rch_core::IdentityAnnounceRecord {
-                destination_hash: "6260c6f540c86f7296c4909353615862".to_string(),
-                announced_identity_hash: None,
-                display_name: Some("S8".to_string()),
-                source_interface: Some("reticulumd".to_string()),
-                announce_capabilities: Vec::new(),
-                client_type: "generic_lxmf".to_string(),
-                first_seen_ts_ms: now - 120_000,
-                last_seen_ts_ms: now - 60_000,
-            },
-        ];
-
-        let aliases = crate::chat_delivery_destination_aliases_from_snapshot(&snapshot);
-
-        assert!(!aliases.contains_key("47ff8b43fea7df9082f6fc1e2b8c954b"));
-    }
-
-    #[test]
     fn broadcast_destination_routing_loads_snapshot_once_for_many_clients() {
         let db_path = std::env::temp_dir().join(format!(
             "r3akt-rch-broadcast-scale-routing-{}.db",
@@ -55333,37 +48589,6 @@ mod tests {
                 .count(),
             100
         );
-    }
-
-    #[test]
-    fn propagated_delivery_enqueues_zmq_batch_without_waiting_for_response() {
-        let now = crate::unix_now_ms();
-        let propagated = crate::OutboundMessageRecord {
-            message_id: "propagated-fanout".to_string(),
-            topic_id: None,
-            destination: None,
-            sender: "northbound".to_string(),
-            content: "propagated fanout".to_string(),
-            delivery_mode: r3akt_rch_core::DeliveryMode::Broadcast,
-            delivery_method: "propagated".to_string(),
-            delivery_policy_reason: "broadcast_unannounced".to_string(),
-            delivery_state: "queued".to_string(),
-            delivery_metadata: json!({}),
-            created_ts_ms: now,
-            attachments: Vec::new(),
-        };
-        let direct = crate::OutboundMessageRecord {
-            delivery_method: "direct".to_string(),
-            delivery_policy_reason: "broadcast_direct".to_string(),
-            ..propagated.clone()
-        };
-
-        assert!(crate::should_enqueue_without_waiting_for_zmq_response(
-            &propagated
-        ));
-        assert!(!crate::should_enqueue_without_waiting_for_zmq_response(
-            &direct
-        ));
     }
 
     #[test]
@@ -55496,7 +48721,7 @@ mod tests {
             },
         ];
         let delivery_state = crate::delivery_accepted_state(&message, targets.len());
-        assert_eq!(delivery_state, "propagating");
+        assert_eq!(delivery_state, "sent");
         let delivery_metadata = crate::outbound_delivery_metadata(
             &message,
             targets.len(),
@@ -55525,7 +48750,7 @@ mod tests {
             .first()
             .expect("message")
             .clone();
-        assert_eq!(stored.delivery_state, "propagating");
+        assert_eq!(stored.delivery_state, "sent");
         assert_eq!(stored.delivery_metadata["acked"], false);
         assert_eq!(stored.delivery_metadata["dispatch_status"], "accepted");
         assert_eq!(
@@ -55534,7 +48759,7 @@ mod tests {
         );
 
         let payload = crate::chat_message_payload(stored);
-        assert_eq!(payload["State"], "propagating");
+        assert_eq!(payload["State"], "sent");
         assert!(
             payload["DeliveryMetadata"].get("error").is_none(),
             "successfully accepted propagation should hide stale send errors"
@@ -55652,33 +48877,6 @@ mod tests {
     }
 
     #[test]
-    fn startup_control_selects_propagation_node_outside_zmq_dispatch() {
-        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![
-            json!({ "peer": null }),
-            json!({
-                "nodes": [
-                    {
-                        "peer": "propagation-node",
-                        "name": "Propagation Node"
-                    }
-                ]
-            }),
-            json!({ "peer": "propagation-node" }),
-        ]);
-        let state = crate::AppState::default().with_reticulumd_rpc(endpoint, "source-destination");
-        crate::ensure_outbound_propagation_node_selected(&state).expect("control selection");
-        let requests = rpc_server.join().expect("rpc server");
-        assert_eq!(requests.len(), 3);
-        assert_eq!(requests[0].method, "get_outbound_propagation_node");
-        assert_eq!(requests[1].method, "list_propagation_nodes");
-        assert_eq!(requests[2].method, "set_outbound_propagation_node");
-        assert_eq!(
-            requests[2].params,
-            Some(json!({ "peer": "propagation-node" }))
-        );
-    }
-
-    #[test]
     fn partial_zmq_admission_retries_only_rejected_recipients() {
         let state = crate::AppState::default();
         let message = crate::OutboundMessageRecord {
@@ -55701,6 +48899,9 @@ mod tests {
             .expect("messages")
             .push(message.clone());
         let report = crate::DispatchReport {
+            paths: Vec::new(),
+            uncertain: false,
+            admission_error: None,
             count: 1,
             deferred: false,
             receipts: vec![crate::ReticulumdReceiptTarget {
@@ -55757,7 +48958,10 @@ mod tests {
             crate::outbound_dispatch_message_id(&message, "recipient-destination", 0, false);
 
         assert_eq!(first, retry);
-        assert_eq!(retry, "stable-idempotency-parent-fanout-recipientdes");
+        assert_eq!(
+            retry,
+            "stable-idempotency-parent-fanout-recipientdestination"
+        );
     }
 
     fn unused_zmq_endpoint_for_rch_test() -> String {
@@ -55914,7 +49118,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn events_route_supersedes_failed_propagation_fallback_with_active_targets() {
+    async fn events_route_keeps_failure_visible_until_sdk_reconciliation() {
         let state = crate::AppState::default().with_api_key("secret");
         let message = crate::OutboundMessageRecord {
             message_id: "active-failed-broadcast-fallback".to_string(),
@@ -55988,19 +49192,9 @@ mod tests {
             .to_bytes();
         let events: serde_json::Value = serde_json::from_slice(&body).expect("events json");
         assert_eq!(events[0]["id"], "active-stale-failure");
-        assert_eq!(events[0]["type"], "message_delivery_superseded");
-        assert_eq!(events[0]["metadata"]["current_state"], "propagating");
-        assert_eq!(events[0]["metadata"]["State"], "propagating");
-        assert_eq!(
-            events[0]["metadata"]["DeliveryMetadata"]["dispatch_status"],
-            "accepted"
-        );
-        assert!(
-            events[0]["metadata"]["DeliveryMetadata"]
-                .get("error")
-                .is_none(),
-            "active recovered projection should not replay stale failure text"
-        );
+        assert_eq!(events[0]["type"], "message_delivery_failed");
+        assert_eq!(events[0]["metadata"]["State"], "failed");
+        assert_eq!(events[0]["metadata"]["failure_reason"], "send_error");
     }
 
     #[test]
@@ -56100,26 +49294,27 @@ mod tests {
         let repaired_targets = repaired_message.delivery_metadata["reticulumd_receipt_targets"]
             .as_array()
             .expect("repaired targets");
-        assert_eq!(repaired_targets.len(), 2);
+        assert_eq!(repaired_targets.len(), 3);
         assert!(
             repaired_targets
                 .iter()
-                .all(|target| target["status"] == "sent: propagated resource")
+                .any(|target| target["status"] == "sending")
         );
         assert_eq!(
             repaired_message.delivery_metadata["reticulumd_dispatch_count"],
-            2
-        );
-        assert_eq!(
-            repaired_message.delivery_metadata["stale_receipt_targets_pruned"],
-            1
+            13
         );
         assert!(
-            !repaired_message
+            repaired_message
                 .delivery_metadata
-                .as_object()
-                .expect("metadata")
-                .contains_key("sdk_delivery_state")
+                .get("stale_receipt_targets_pruned")
+                .is_none()
+        );
+        assert!(
+            repaired_message
+                .delivery_metadata
+                .get("sdk_delivery_state")
+                .is_some()
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -56156,11 +49351,11 @@ mod tests {
         let persisted_targets = persisted_message.delivery_metadata["reticulumd_receipt_targets"]
             .as_array()
             .expect("persisted targets");
-        assert_eq!(persisted_targets.len(), 2);
+        assert_eq!(persisted_targets.len(), 3);
         assert!(
             persisted_targets
                 .iter()
-                .all(|target| target["status"] == "sent: propagated resource")
+                .any(|target| target["status"] == "sending")
         );
 
         let _ = std::fs::remove_file(db_path);
@@ -57168,5 +50363,347 @@ mod tests {
         let _cleanup = std::fs::remove_dir_all(test_dir);
     }
 
+    #[test]
+    fn outbound_diagnostics_persists_typed_sdk_delivery_snapshot() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "message": {
+                "message_id": "sdk-typed-message",
+                "state": "delivered",
+                "terminal": true,
+                "last_updated_ms": 1_700_000_000_000_u64,
+                "attempts": 2,
+                "reason_code": null
+            }
+        })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-status-poll-typed-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "typed status poll delivered",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "reticulumd_receipt_targets": [{
+                    "message_id": "sdk-typed-message",
+                    "destination": "target-destination",
+                    "status": "pending"
+                }],
+                "receipt_pending": true,
+                "receipt_registered_ts_ms": crate::unix_now_ms(),
+                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
+            }),
+        )
+        .expect("mark pending receipt");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_receipts"], 0);
+        assert_eq!(diagnostics["failed"], 0);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+        assert_eq!(
+            requests[0].params.as_ref().expect("params")["message_id"],
+            "sdk-typed-message"
+        );
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_status"],
+            "delivered"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_message_id"],
+            "sdk-typed-message"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_delivery_state"],
+            "delivered"
+        );
+        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_terminal"], true);
+        assert_eq!(snapshot.messages[0].delivery_metadata["sdk_attempts"], 2);
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_last_updated_ms"],
+            1_700_000_000_000_u64
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["sdk_reason_code"],
+            Value::Null
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_worker_tick_polls_reticulumd_receipts_without_diagnostics_request() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "message": {
+                "id": "message",
+                "receipt_status": "delivered"
+            }
+        })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-worker-status-poll-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "worker status poll delivered",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "receipt_pending": true,
+                "receipt_registered_ts_ms": crate::unix_now_ms(),
+                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
+            }),
+        )
+        .expect("mark pending receipt");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        let report = crate::process_outbound_delivery_worker_tick(&state).expect("worker tick");
+        assert_eq!(report.processed, 0);
+        assert_eq!(report.dispatched, 0);
+        assert_eq!(report.failed, 0);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "delivered");
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_pending"],
+            false
+        );
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_receipts"], 0);
+        assert_eq!(diagnostics["retry_worker"]["runs_total"], 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_treats_reticulumd_sent_link_as_sent_not_failed() {
+        let (endpoint, rpc_server) = fake_reticulumd_rpc_server_with_results(vec![json!({
+            "message": {
+                "id": "message",
+                "receipt_status": "sent: link"
+            }
+        })]);
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-status-poll-sent-link-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "status poll sent link",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "receipt_pending": true,
+                "receipt_registered_ts_ms": crate::unix_now_ms(),
+                "receipt_deadline_ts_ms": crate::unix_now_ms() + 30_000,
+            }),
+        )
+        .expect("mark pending receipt");
+        let state = state.with_reticulumd_rpc(endpoint, "source-destination");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_receipts"], 0);
+        assert_eq!(diagnostics["sent"], 1);
+        assert_eq!(diagnostics["failed"], 0);
+        assert_eq!(diagnostics["receipt_timeout_total"], 0);
+        let requests = rpc_server.join().expect("rpc server");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "sdk_status_v2");
+
+        let snapshot = RchSqliteStore::open(&db_path)
+            .expect("open sqlite")
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot.messages[0].delivery_state, "sent");
+        assert_eq!(snapshot.messages[0].delivery_metadata["acked"], false);
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_pending"],
+            false
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_status"],
+            "sent"
+        );
+        assert_eq!(
+            snapshot.messages[0].delivery_metadata["receipt_timeout"],
+            false
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn outbound_diagnostics_counts_in_progress_pending_dispatches_like_python_stats() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-pending-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let message = crate::record_outbound_message(
+            &state,
+            "pending dispatch",
+            None,
+            Some("target-destination".to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 0,
+                "dispatch_status": "in_progress",
+                "dispatch_started_ts_ms": now_ms - 1_000,
+                "dispatch_deadline_ts_ms": now_ms + 30_000,
+                "retry_scheduled": false,
+            }),
+        )
+        .expect("mark pending dispatch");
+
+        let diagnostics = crate::outbound_delivery_diagnostics(&state).expect("diagnostics");
+        assert_eq!(diagnostics["pending_dispatches"], 1);
+        assert_eq!(diagnostics["in_progress_futures"], 1);
+        assert_eq!(diagnostics["active_dispatches"], 1);
+        assert_eq!(diagnostics["inflight"], 1);
+        assert!(
+            diagnostics["oldest_pending_dispatch_age_ms"]
+                .as_i64()
+                .expect("age")
+                >= 1_000
+        );
+        assert_eq!(diagnostics["timeout_total"], 0);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn successful_dispatch_clears_stale_dispatch_timeout_metadata() {
+        let db_path = std::env::temp_dir().join(format!(
+            "r3akt-rch-delivery-timeout-cleared-by-dispatch-{}.db",
+            Uuid::new_v4()
+        ));
+        let state = crate::AppState::from_sqlite_path(&db_path).expect("state");
+        let destination = "target-destination";
+        let message = crate::record_outbound_message(
+            &state,
+            "late successful dispatch",
+            None,
+            Some(destination.to_string()),
+            vec![],
+            false,
+        )
+        .expect("record message");
+        let now_ms = crate::unix_now_ms();
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "queued",
+            json!({
+                "attempts": 1,
+                "max_attempts": 2,
+                "dispatch_status": "queued",
+                "dispatch_timeout": true,
+                "dispatch_timed_out_at_ts_ms": now_ms - 1_000,
+                "error": "sqlite operation failed: database is locked",
+                "last_attempt_failed_at_ts_ms": now_ms - 500,
+                "retry_reason": "send_error",
+                "retry_scheduled": true,
+            }),
+        )
+        .expect("mark stale dispatch metadata");
+
+        crate::update_outbound_delivery_state(
+            &state,
+            message.message_id.as_str(),
+            "sent",
+            json!({
+                "dispatch_status": "accepted",
+                "reticulumd_dispatch_count": 1,
+                "receipt_pending": false,
+            }),
+        )
+        .expect("mark successful dispatch");
+
+        let messages = state.messages.read().expect("messages");
+        let updated = messages
+            .iter()
+            .find(|candidate| candidate.message_id == message.message_id)
+            .expect("updated message");
+        assert_eq!(updated.delivery_state, "sent");
+        assert_eq!(updated.delivery_metadata["dispatch_status"], "accepted");
+        assert_eq!(updated.delivery_metadata["reticulumd_dispatch_count"], 1);
+        assert!(updated.delivery_metadata.get("dispatch_timeout").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("dispatch_timed_out_at_ts_ms")
+                .is_none()
+        );
+        assert!(updated.delivery_metadata.get("error").is_none());
+        assert!(updated.delivery_metadata.get("retry_reason").is_none());
+        assert!(
+            updated
+                .delivery_metadata
+                .get("last_attempt_failed_at_ts_ms")
+                .is_none()
+        );
+        drop(messages);
+
+        let _ = std::fs::remove_file(db_path);
+    }
     include!("topic_diagnostics_tests.rs");
 }

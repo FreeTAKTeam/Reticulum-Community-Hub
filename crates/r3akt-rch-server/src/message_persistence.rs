@@ -1,8 +1,7 @@
 use super::{
-    ApiError, AppState, CoreMessageRecord, OutboundMessageRecord, Value,
-    clear_success_superseded_delivery_metadata, delivery_state_clears_error_metadata,
-    merge_delivery_metadata, normalized_delivery_state, persist_outbound_message_row,
-    with_core_store_write,
+    ApiError, AppState, OutboundMessageRecord, Value, clear_success_superseded_delivery_metadata,
+    delivery_state_clears_error_metadata, merge_delivery_metadata, normalized_delivery_state,
+    persist_outbound_message_row,
 };
 use std::ops::{Deref, DerefMut};
 
@@ -52,29 +51,7 @@ impl<'a> Update<'a> {
         {
             return None;
         }
-        Self::for_callback(state, target)
-    }
-
-    /// Legacy callbacks do not carry an attempt token. Apply their existing
-    /// transition only while the current record still permits dispatch updates.
-    pub fn for_callback(
-        state: &'a AppState,
-        target: &'a mut OutboundMessageRecord,
-    ) -> Option<Self> {
         dispatch_update_allowed(target).then(|| Self::new(state, target))
-    }
-
-    /// A propagation acknowledgment cannot weaken a delivery confirmation;
-    /// a later delivery confirmation may still upgrade acknowledged propagation.
-    pub fn for_receipt(
-        state: &'a AppState,
-        target: &'a mut OutboundMessageRecord,
-        propagation_ack: bool,
-    ) -> Option<Self> {
-        if propagation_ack && normalized_delivery_state(target) == "delivered" {
-            return None;
-        }
-        Some(Self::new(state, target))
     }
 
     pub fn commit(self) -> Result<OutboundMessageRecord, ApiError> {
@@ -142,29 +119,4 @@ impl DerefMut for Update<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.candidate
     }
-}
-
-pub(super) fn commit_batch(
-    state: &AppState,
-    messages: &mut [OutboundMessageRecord],
-    changed: &[OutboundMessageRecord],
-) -> Result<(), ApiError> {
-    if changed.is_empty() {
-        return Ok(());
-    }
-    let records = changed
-        .iter()
-        .cloned()
-        .map(CoreMessageRecord::from)
-        .collect::<Vec<_>>();
-    with_core_store_write(state, |store| store.upsert_messages(&records))?;
-    for candidate in changed {
-        if let Some(target) = messages
-            .iter_mut()
-            .find(|record| record.message_id == candidate.message_id)
-        {
-            *target = candidate.clone();
-        }
-    }
-    Ok(())
 }

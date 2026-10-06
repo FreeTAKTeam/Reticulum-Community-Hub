@@ -30,6 +30,6 @@ fn zmq_data_plane_reports_expired_requests_before_session_startup() {
     assert_eq!(stats.queue_depth, 0);
     assert!(matches!(
         response_rx.try_recv().expect("explicit expiry response"),
-        Err(TransportError::Receive(message)) if message.contains("expired in the actor queue")
+        Err(TransportError::NotSubmitted(message)) if message.contains("expired in the actor queue")
     ));
 }

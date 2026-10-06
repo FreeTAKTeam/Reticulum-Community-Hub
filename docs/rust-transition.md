@@ -200,6 +200,15 @@ Release blockers cleared in the latest parity pass:
 - ZeroMQ is the permanent LXMF data plane for send, ordered batch acceptance,
   delivery status, and event traffic. RPC is an optional administration
   channel and must not be called from HTTP delivery or fanout hot paths.
+- Outbound path resolution uses destination-keyed LXMF SDK controls. Unknown
+  paths trigger daemon discovery; stored announce history never chooses routes,
+  next hops, transport methods or alternate destinations. RCH retains application
+  recipient selection, moderation and its pre-admission queue. The SDK owns
+  admitted delivery states and transport fallback. Local receipt deadlines,
+  name-based recipient merging, phone-specific destination overrides and the
+  six `/internal/delivery-*` mutation callbacks have been removed without
+  compatibility shims. See the [issue 247 plan](goals/issue-247-sdk-routing/PLAN.md)
+  for the authority boundary and validation requirements.
 - Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
   `81344ae1eccc79612fe933efe990c8da55809254` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655). The matching
