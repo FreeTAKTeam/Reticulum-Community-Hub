@@ -85,3 +85,16 @@ allocation attribution, aggregate event/response byte admission and overnight
 2 GiB memory-pressure acceptance remain open. Verify upstream tests/lint, daemon
 build/runtime, then pin RCH and all workflows to the exact pushed upstream SHA,
 re-run the committed server release gate and push the existing follow-up PR.
+
+
+### Follow-up review disposition
+
+POST correctness and maintainability reviews found the bounded source changes
+aligned with the follow-up contract. Independent verification confirms three
+persisted Delivered receipts across restart, all 100,007 original raw rows,
+matching dependency/workflow pins and binary hashes, per-service limits and
+zero process exits. The maintainability review identified three current
+packaging/transition baseline descriptions still naming the old daemon SHA;
+those references now match `81344ae1eccc79612fe933efe990c8da55809254`.
+Historical published release evidence retains its original pins. Production
+overnight/reclaim acceptance remains unproven; #242 and #655 stay open.
