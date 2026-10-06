@@ -1024,7 +1024,7 @@ impl AppState {
         let path = path.as_ref().to_path_buf();
         let mut store = RchSqliteStore::open_admin(&path)?;
         store.prune_telemetry_records(reticulumd_source)?;
-        let snapshot = store.load_snapshot()?;
+        let snapshot = store.load_snapshot_without_identity_announces()?;
         let mut state = Self {
             messages: Arc::default(),
             sqlite_path: Some(Arc::new(path)),
@@ -18262,14 +18262,12 @@ async fn list_chat_messages(
     let topic_id = normalize_optional_text(query.topic_id);
     let destination = normalize_optional_text(query.destination);
     let source = normalize_optional_text(query.source);
-    let mut messages = state
+    let messages = state
         .messages
         .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .clone();
-    messages.sort_by(|left, right| right.created_ts_ms.cmp(&left.created_ts_ms));
-    let payload = messages
-        .into_iter()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut selected = messages
+        .iter()
         .filter(|message| {
             message_visible_in_chat(message)
                 && direction
@@ -18285,7 +18283,12 @@ async fn list_chat_messages(
                     .as_deref()
                     .is_none_or(|value| message.sender.as_str() == value)
         })
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| right.created_ts_ms.cmp(&left.created_ts_ms));
+    let payload = selected
+        .into_iter()
         .take(limit)
+        .cloned()
         .map(chat_message_payload)
         .collect::<Vec<_>>();
     Ok(Json(json!(payload)))
@@ -21395,10 +21398,10 @@ fn with_r3akt_core<T>(
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let snapshot = store
-        .load_r3akt_read_snapshot()
+        .load_permission_read_snapshot()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut core = RchCore::from_snapshot(snapshot.clone())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut core =
+        RchCore::from_snapshot(snapshot).map_err(|error| ApiError::Internal(error.to_string()))?;
     let result = f(&mut core)?;
     record_sqlite_latency(state, started.elapsed());
     Ok(result)
@@ -21423,9 +21426,12 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
     if is_read_only {
         let store = RchSqliteStore::open_read_only(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let snapshot = store
-            .load_r3akt_read_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let snapshot = if r3akt_http_read_without_announces(command_type) {
+            store.load_r3akt_http_read_snapshot()
+        } else {
+            store.load_r3akt_read_snapshot()
+        }
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
         let mut core = RchCore::from_snapshot(snapshot)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let outcome = core.handle_command(&command);
@@ -21462,6 +21468,24 @@ fn r3akt_command_is_read_only(command_type: &str) -> bool {
             command_type,
             "mission.registry.eam.latest" | "mission.registry.eam.team.summary"
         )
+}
+
+fn r3akt_http_read_without_announces(command_type: &str) -> bool {
+    matches!(
+        command_type,
+        "mission.registry.asset.get"
+            | "mission.registry.eam.get"
+            | "mission.registry.eam.latest"
+            | "mission.registry.eam.team.summary"
+            | "mission.registry.mission.get"
+            | "mission.registry.rights.mission_access.list"
+            | "mission.registry.rights.subjects.list"
+            | "mission.registry.skill.list"
+            | "mission.registry.task_skill_requirement.list"
+            | "mission.registry.team.get"
+            | "mission.registry.team_member.get"
+            | "mission.registry.team_member_skill.list"
+    )
 }
 
 fn r3akt_command_outcome_value(
@@ -24748,6 +24772,7 @@ mod tests {
     mod field_commands;
     #[path = "issue_238_live.rs"]
     mod issue_238_live;
+    mod memory_readers;
     mod release_durability;
     mod release_lifecycle;
     mod release_security;

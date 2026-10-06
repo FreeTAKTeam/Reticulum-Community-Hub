@@ -19,6 +19,7 @@ mod sqlite_announces;
 pub use sqlite_announces::IdentityAnnounceSummary;
 mod sqlite_commands;
 mod sqlite_marker_idempotency;
+mod sqlite_read_snapshots;
 mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
@@ -2180,6 +2181,13 @@ impl RchSqliteStore {
     }
 
     fn load_r3akt_read_snapshot_rows(&self) -> Result<RchCoreSnapshot, RchCoreError> {
+        self.load_r3akt_read_snapshot_rows_with_announces(true)
+    }
+
+    fn load_r3akt_read_snapshot_rows_with_announces(
+        &self,
+        include_identity_announces: bool,
+    ) -> Result<RchCoreSnapshot, RchCoreError> {
         let topics = self
             .load_payload_rows::<TopicRecord>("SELECT payload FROM rch_topics ORDER BY topic_id")?;
         let subscribers = self.load_payload_rows::<SubscriberRecord>(
@@ -2188,9 +2196,13 @@ impl RchSqliteStore {
         let clients = self.load_payload_rows::<ClientRecord>(
             "SELECT payload FROM rch_clients ORDER BY identity",
         )?;
-        let identity_announces = self.load_payload_rows::<IdentityAnnounceRecord>(
-            "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
-        )?;
+        let identity_announces = if include_identity_announces {
+            self.load_payload_rows::<IdentityAnnounceRecord>(
+                "SELECT payload FROM rch_identity_announces ORDER BY destination_hash",
+            )?
+        } else {
+            Vec::new()
+        };
         let identity_states = self.load_payload_rows::<IdentityStateRecord>(
             "SELECT payload FROM rch_identity_states ORDER BY identity",
         )?;
@@ -2539,7 +2551,7 @@ impl RchSqliteStore {
             )?;
             snapshot
         } else {
-            self.load_r3akt_read_snapshot()?
+            self.load_r3akt_http_read_snapshot()?
         };
         let core = RchCore::from_snapshot(snapshot)?;
         Ok(json!({ "missions": core.limited_mission_values(args) }))
