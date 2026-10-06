@@ -33,6 +33,16 @@ The matching preview.13 publication is described in
 [its release notes](release-notes-v3.0.0-preview.13.md); package acceptance
 requires successful builds and independent public-download verification.
 
+## Linux AMD64 testing scope
+
+The existing release workflow supports Linux AMD64 server-only testing
+candidates, as documented in [packaging instructions](../packaging/README.md).
+The scope changes platform selection, not the package contents or validation
+requirements. The archive still includes the pinned daemon, UI, and TAK service.
+Verify its public checksum, embedded source identities, and runtime smoke
+before reporting package acceptance. Production memory, swap, and reply-delay
+acceptance remains a separate test on the affected host.
+
 ## LXMF-rs v0.12.0 Integration (preview.11 historical)
 
 The preview.11 dependency, CI, and packaged-daemon baseline was LXMF-rs `v0.12.0`

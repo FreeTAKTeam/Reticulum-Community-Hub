@@ -23,11 +23,20 @@ when a GitHub release is published. Server package names include the resolved
 release version, for example
 `rch-rust-full-windows-x64-v3.0.0-preview.11.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
-Manual workflow runs default to `v3.0.0-preview.13` and can override that label
+Manual workflow runs default to `v3.0.0-preview.15` and can override that label
 with the `release_version` input. While `main` remains the default branch,
 GitHub does not expose `workflow_dispatch` for workflows that only exist on
 `rust-next`, so the release workflow also runs on relevant `rust-next` pushes
 to validate packaging before the default-branch cutover.
+
+For a Linux AMD64 server testing candidate, set `linux_amd64_only=true` on a
+manual run or include `<!-- rch-release: linux-amd64-only -->` in the published
+release body. This builds the full Linux AMD64 archive and its checksum, with
+the pinned daemon, UI, and TAK service; desktop and other platform jobs are
+skipped. Published releases own asset builds; pushing a tag alone no longer
+starts a duplicate package build. Normal releases retain the full matrix.
+See [preview.15 testing notes](../docs/release-notes-v3.0.0-preview.15.md)
+for the #247 candidate scope, upgrade steps, and production acceptance limits.
 
 Latest staging evidence before the macOS and Raspberry Pi 64 matrix expansion:
 `Build Rust Release Packages` run `26696071364`

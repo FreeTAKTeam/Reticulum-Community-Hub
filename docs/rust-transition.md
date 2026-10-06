@@ -72,9 +72,13 @@ capabilities.
   macOS arm64, Linux AMD64, and Linux Raspberry Pi 64 server archives
   containing `r3akt-rch-server`, `r3akt-tak-service`, the shared UI bundle,
   service helpers, templates, and checksums. Server archive filenames include
-  the resolved release version from the GitHub release tag, pushed tag, or
+  the resolved release version from the GitHub release tag or
   manual workflow input, and `release-manifest.json` records that version with
   the Git ref and commit SHA used for the build.
+  Linux AMD64 server testing candidates can select `linux_amd64_only` on a
+  manual run or the release-body marker documented in `packaging/README.md`.
+  This retains the complete server payload and skips other package jobs.
+  Publishing a release triggers its asset build; a tag push alone does not.
 - Desktop packages are built from `apps/rch-desktop` with Tauri. The app loads
   the shared Vue UI and starts `r3akt-rch-server` as a managed sidecar on
   `127.0.0.1:8000`; CI currently emits Windows x64 NSIS and Linux x64 AppImage
