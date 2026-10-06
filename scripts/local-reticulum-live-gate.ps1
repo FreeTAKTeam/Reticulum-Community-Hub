@@ -312,6 +312,13 @@ try {
         }
     }
 
+    if ($IncludeZmqEventPoll -and -not $ZmqLoadOnly) {
+        $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_issue_238_zmq_imports_announces_and_inbound_message_when_configured", "--", "--nocapture")
+        if ($cargoExit -ne 0) {
+            exit $cargoExit
+        }
+    }
+
     if ($IncludeZmqLoad) {
         $cargoExit = Invoke-CargoGate -Arguments @("+$RustToolchain", "test", "-p", "r3akt-rch-server", "live_reticulumd_zmq_load_delivers_to_local_clients_when_configured", "--", "--ignored", "--nocapture")
         if ($cargoExit -ne 0) {

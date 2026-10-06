@@ -803,7 +803,7 @@ async fn accepted_moderation_reports_success_when_optional_enrichment_is_malform
     let database = Connection::open(directory.join("state.db")).expect("DB");
     database
         .execute(
-            "INSERT INTO rch_identity_announces (destination_hash, payload) VALUES (?1, ?2)",
+            "INSERT INTO rch_identity_announces (destination_hash, payload, last_seen_ts_ms) VALUES (?1, ?2, 0)",
             rusqlite::params!["unrelated-peer", vec![0xc1_u8]],
         )
         .expect("malformed unrelated annotation");

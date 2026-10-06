@@ -84,8 +84,11 @@ capabilities.
 
 ## Current Validation Snapshot
 
-The dated evidence below is historical. The next preview.11 candidate's gates
-and artifact evidence are maintained in
+The dated evidence below is historical. The preview.12 testing candidate pairs
+RCH with the issue #241 daemon fixes; see its
+[release notes](release-notes-v3.0.0-preview.12.md) and
+[sustained-runtime evidence](issue-241-sustained-polling.md). Preview.11's gates
+and artifact evidence remain in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
@@ -197,9 +200,9 @@ Release blockers cleared in the latest parity pass:
 - ZeroMQ is the permanent LXMF data plane for send, ordered batch acceptance,
   delivery status, and event traffic. RPC is an optional administration
   channel and must not be called from HTTP delivery or fanout hot paths.
-- Production library dependencies use released LXMF `0.12.0` from an immutable Git revision; a clean server build does not require a sibling checkout.
+- Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
-  `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755` (`v0.12.0`). The matching
+  `67e63710986111fbf671dd3cf823d57615f8596f` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242). The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.

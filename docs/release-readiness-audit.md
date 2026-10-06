@@ -13,10 +13,30 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
-## LXMF-rs v0.12.0 Integration
+## Issue #238 development baseline
 
-The current dependency, CI, and packaged-daemon baseline is LXMF-rs `v0.12.0`
-at commit `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`. The lockfile resolves
+Development dependencies and CI now use LXMF-rs `0.13.0` plus the ZeroMQ
+connection/response, restart-cursor recovery and storage-contention reactor fixes plus the indexed propagation-mark lookup for #242 at `67e63710986111fbf671dd3cf823d57615f8596f`.
+This includes a daemon response-writer fix; pairing the new RCH SDK with an
+unpatched old daemon does not provide the complete fix. See
+[the issue evidence](issue-238-inbound-zmq.md) for fresh validation and limits.
+The preview.11 release evidence below remains a historical record.
+
+## Issue #242 development qualification
+
+The current source adds bounded announce imports/diagnostics and schema-4
+projections, plus the pinned daemon propagation-mark index. See
+[resource evidence and upgrade instructions](issue-242-resource-efficiency.md).
+This development qualification does not supersede the published preview.12
+artifact record or establish production resolution under a 2 GiB memory limit.
+The matching preview.13 publication is described in
+[its release notes](release-notes-v3.0.0-preview.13.md); package acceptance
+requires successful builds and independent public-download verification.
+
+## LXMF-rs v0.12.0 Integration (preview.11 historical)
+
+The preview.11 dependency, CI, and packaged-daemon baseline was LXMF-rs `v0.12.0`
+at commit `20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755`. Its lockfile resolved
 `lxmf-reference`, `lxmf-wire`, `lxmf-sdk`, `reticulum-rs-core`, and
 `reticulum-rs-rpc` to `0.12.0`. The runtime manifest records SDK contract
 release `v2.6` and the identity import, activation, and discovery operations
@@ -152,3 +172,15 @@ before stable `v3.0.0`:
   label `rust-next`.
 - Continue broad parity hardening for less common Python edge cases listed in
   `README.md` and `docs/release-contract-matrix.json`.
+
+## Preview.12 matching testing publication
+
+The user authorized a matching RCH testing prerelease after the standalone
+reticulumd rch241.2 publication. [Preview.12 release notes](release-notes-v3.0.0-preview.12.md)
+record the paired source and deployment scope. Backend source is unchanged
+from the qualified issue #241 pair. The existing release workflow must build
+all five server and two desktop packages at the new source tag before package
+readiness is claimed. Public download checksums, all server source manifests
+and fresh downloaded Linux inbound persistence are publication acceptance;
+native desktop interaction and the original production trigger remain separate
+unproven acceptance. This does not change the stable-release gates above.

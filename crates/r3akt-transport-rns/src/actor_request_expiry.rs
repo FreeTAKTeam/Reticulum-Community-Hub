@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use super::*;
 
 #[test]
-fn zmq_data_plane_drops_expired_requests_before_session_startup() {
+fn zmq_data_plane_reports_expired_requests_before_session_startup() {
     let (send_tx, send_rx) = mpsc::sync_channel(1);
     let (control_tx, control_rx) = mpsc::sync_channel(1);
     let (response_tx, response_rx) = mpsc::channel();
@@ -29,7 +29,7 @@ fn zmq_data_plane_drops_expired_requests_before_session_startup() {
     assert_eq!(stats.expired_total, 1);
     assert_eq!(stats.queue_depth, 0);
     assert!(matches!(
-        response_rx.try_recv(),
-        Err(mpsc::TryRecvError::Disconnected)
+        response_rx.try_recv().expect("explicit expiry response"),
+        Err(TransportError::Receive(message)) if message.contains("expired in the actor queue")
     ));
 }

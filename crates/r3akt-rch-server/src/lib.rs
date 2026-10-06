@@ -750,7 +750,8 @@ impl AppState {
         let command_endpoint = command_endpoint.into();
         let response_endpoint = response_endpoint.into();
         let request_timeout = if cfg!(test) {
-            Duration::from_millis(100)
+            // The RPC deadline includes both local socket handshakes and scheduling.
+            Duration::from_millis(250)
         } else {
             Duration::from_secs(3)
         };
@@ -785,7 +786,8 @@ impl AppState {
         let command_endpoint = command_endpoint.into();
         let response_endpoint = response_endpoint.into();
         let request_timeout = if cfg!(test) {
-            Duration::from_millis(100)
+            // The RPC deadline includes both local socket handshakes and scheduling.
+            Duration::from_millis(250)
         } else {
             Duration::from_secs(3)
         };
@@ -3501,7 +3503,11 @@ fn import_reticulumd_announce_batch(
     let mut imported = 0_usize;
     let mut last_id = None;
     let mut snapshot = RchCore::new().snapshot();
-    snapshot.identity_announces = load_identity_announce_records(state)?;
+    let destinations = announces
+        .iter()
+        .filter_map(|announce| normalize_identity_key(&announce.peer))
+        .collect::<Vec<_>>();
+    snapshot.identity_announces = load_identity_announce_records(state, &destinations)?;
     let touch_ts_ms = unix_now_ms();
     let updated_records = {
         let mut core = RchCore::from_snapshot(snapshot.clone())
@@ -3657,6 +3663,7 @@ fn is_known_pixel_voice_destination(destination_hash: &str) -> bool {
 
 fn load_identity_announce_records(
     state: &AppState,
+    destinations: &[String],
 ) -> Result<Vec<r3akt_rch_core::IdentityAnnounceRecord>, ApiError> {
     let path = state
         .sqlite_path
@@ -3665,7 +3672,7 @@ fn load_identity_announce_records(
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     store
-        .load_identity_announces()
+        .load_identity_announces_by_destination_hashes(destinations)
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
@@ -9860,25 +9867,20 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
 fn announce_cache_diagnostics(state: &AppState) -> Result<Value, ApiError> {
     let now_ms = unix_now_ms();
     let fresh_cutoff_ms = now_ms - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS;
-    let mut announces = load_identity_announces_for_state(state)?;
-    announces.sort_by(|left, right| {
-        right
-            .last_seen_ts_ms
-            .cmp(&left.last_seen_ts_ms)
-            .then_with(|| left.destination_hash.cmp(&right.destination_hash))
-    });
-    let total = announces.len();
-    let fresh = announces
-        .iter()
-        .filter(|record| record.last_seen_ts_ms >= fresh_cutoff_ms)
-        .count();
+    let summary = if let Some(path) = &state.sqlite_path {
+        RchSqliteStore::open_read_only(path.as_ref())
+            .and_then(|store| store.identity_announce_summary(fresh_cutoff_ms))
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else {
+        r3akt_rch_core::IdentityAnnounceSummary::default()
+    };
+    let total = summary.total;
+    let fresh = summary.fresh;
     let stale = total.saturating_sub(fresh);
-    let last_seen = announces.first();
-    let oldest_stale = announces
-        .iter()
-        .filter(|record| record.last_seen_ts_ms < fresh_cutoff_ms)
-        .min_by_key(|record| record.last_seen_ts_ms);
-    let records = announces
+    let last_seen = summary.recent.first();
+    let oldest_stale = summary.oldest_stale.as_ref();
+    let records = summary
+        .recent
         .iter()
         .take(10)
         .map(|record| {
@@ -9907,9 +9909,9 @@ fn announce_cache_diagnostics(state: &AppState) -> Result<Value, ApiError> {
         "last_seen_ts_ms": last_seen.map(|record| record.last_seen_ts_ms),
         "last_seen_at": last_seen.map(|record| iso8601_from_unix_ms(record.last_seen_ts_ms)),
         "last_seen_destination": last_seen.map(|record| record.destination_hash.as_str()),
-        "oldest_stale_ts_ms": oldest_stale.map(|record| record.last_seen_ts_ms),
-        "oldest_stale_at": oldest_stale.map(|record| iso8601_from_unix_ms(record.last_seen_ts_ms)),
-        "oldest_stale_destination": oldest_stale.map(|record| record.destination_hash.as_str()),
+        "oldest_stale_ts_ms": oldest_stale.map(|(_, timestamp)| *timestamp),
+        "oldest_stale_at": oldest_stale.map(|(_, timestamp)| iso8601_from_unix_ms(*timestamp)),
+        "oldest_stale_destination": oldest_stale.map(|(destination, _)| destination.as_str()),
         "records": records,
     }))
 }
@@ -27723,11 +27725,14 @@ mod tests {
     mod attachment_security;
     mod auth;
     mod field_commands;
+    #[path = "issue_238_live.rs"]
+    mod issue_238_live;
     mod release_durability;
     mod release_lifecycle;
     mod release_receipt_callbacks;
     mod release_security;
     mod rem_team_directory;
+    mod resource_efficiency;
 
     use crate::BASE64_STANDARD;
     use std::io::{Read, Write};
@@ -46365,7 +46370,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "3");
+        assert_eq!(payload["persistence"]["schema_version"], "4");
         assert!(
             payload["persistence"]["path"]
                 .as_str()
@@ -55351,7 +55356,10 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "bounded ZMQ pre-admission timeout took too long: {elapsed:?}"
         );
-        assert!(error.to_string().contains("ZeroMQ"));
+        assert!(
+            error.to_string().contains("SDK_TRANSPORT_ZMQ_TIMEOUT"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -55532,7 +55540,10 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("unbound ZMQ endpoint must fail before admission"),
         };
-        assert!(error.to_string().contains("ZeroMQ"));
+        assert!(
+            error.to_string().contains("SDK_TRANSPORT_ZMQ_TIMEOUT"),
+            "{error}"
+        );
         let requests = rpc_server.join().expect("rpc server");
         assert!(
             requests.is_empty(),

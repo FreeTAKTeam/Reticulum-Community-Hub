@@ -15,6 +15,8 @@
 
 mod text;
 
+mod sqlite_announces;
+pub use sqlite_announces::IdentityAnnounceSummary;
 mod sqlite_commands;
 mod sqlite_marker_idempotency;
 mod sqlite_record_updates;
@@ -403,7 +405,9 @@ const RCH_SQLITE_MIGRATION_SQL: &str = include_str!("../migrations/0001_rch_core
 const RCH_SQLITE_MIGRATION_2_SQL: &str = include_str!("../migrations/0002_ordered_migrations.sql");
 const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "3";
+const RCH_SQLITE_MIGRATION_4_SQL: &str =
+    include_str!("../migrations/0004_identity_announce_projections.sql");
+const RCH_SQLITE_SCHEMA_VERSION: &str = "4";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -1714,11 +1718,7 @@ impl RchSqliteStore {
         }
         let transaction = self.connection.transaction()?;
         for record in records {
-            transaction.execute(
-                "INSERT OR REPLACE INTO rch_identity_announces (destination_hash, payload)
-                 VALUES (?1, ?2)",
-                params![record.destination_hash, encode_msgpack(record)?],
-            )?;
+            sqlite_announces::write_identity_announce(&transaction, record, true)?;
         }
         transaction.commit()?;
         Ok(())
@@ -2733,12 +2733,24 @@ impl RchSqliteStore {
                 [],
                 |row| row.get::<_, bool>(0),
             )?;
-        if migration_3_applied {
+        let migration_4_applied = has_migration_history
+            && self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM rch_schema_migrations WHERE version = 4)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+        if migration_4_applied {
             return Ok(());
         }
         if has_existing_schema {
             self.integrity_check()?;
-            self.backup_before_migration(if migration_2_applied { 3 } else { 2 })?;
+            self.backup_before_migration(if migration_3_applied {
+                4
+            } else if migration_2_applied {
+                3
+            } else {
+                2
+            })?;
         }
         self.connection.execute_batch("BEGIN IMMEDIATE;")?;
         let migration_result = (|| -> Result<(), RchCoreError> {
@@ -2870,6 +2882,13 @@ impl RchSqliteStore {
                     [utc_now_ms()],
                 )?;
             }
+            self.connection.execute_batch(RCH_SQLITE_MIGRATION_4_SQL)?;
+            sqlite_announces::backfill_identity_announce_projections(&self.connection)?;
+            self.connection.execute(
+                "INSERT INTO rch_schema_migrations (version, name, applied_ts_ms)
+                 VALUES (4, 'identity_announce_projections', ?1)",
+                [utc_now_ms()],
+            )?;
             self.connection.execute(
                 "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value)
              VALUES ('schema_version', ?1)",
@@ -10780,10 +10799,7 @@ fn save_topic_snapshot_tables(
     }
     if !options.preserve_identity_announces {
         for announce in &snapshot.identity_announces {
-            transaction.execute(
-                "INSERT INTO rch_identity_announces (destination_hash, payload) VALUES (?1, ?2)",
-                params![announce.destination_hash, encode_msgpack(announce)?],
-            )?;
+            sqlite_announces::write_identity_announce(transaction, announce, false)?;
         }
     }
     for state in &snapshot.identity_states {
@@ -13129,7 +13145,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "3");
+        assert_eq!(store.schema_version().expect("schema version"), "4");
     }
 
     #[test]
@@ -16618,7 +16634,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "3");
+        assert_eq!(store.schema_version().expect("schema version"), "4");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16662,7 +16678,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 3);
+        assert_eq!(migration_count, 4);
 
         let index_exists: bool = store
             .connection
@@ -16722,7 +16738,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "3");
+        assert_eq!(store.schema_version().expect("schema version"), "4");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");

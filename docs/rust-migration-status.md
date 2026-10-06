@@ -79,13 +79,15 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 
 ## Local server
 
-Rust library dependencies resolve LXMF-rs `v0.12.0` at the immutable commit
-`20717f4456d1b402bcc3cb7e8a1a3a86c9bb4755` from Git. A sibling checkout is
+Rust library dependencies resolve LXMF-rs `0.13.0` plus the issue #238 fix at the immutable commit
+`bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68` from Git. A sibling checkout is
 needed for local daemon development and default desktop sidecar preparation.
 For a fresh development layout, run this from the RCH repository:
 
 ```bash
-git clone --depth 1 --branch v0.12.0 https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
+git clone --filter=blob:none --no-checkout https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
+git -C ../LXMF-rs fetch origin bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
+git -C ../LXMF-rs checkout --detach bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
 ```
 
 If that sibling already exists, preserve any local changes and use a clean

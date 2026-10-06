@@ -1328,6 +1328,14 @@ enum ZmqSdkActorPayload {
 }
 
 impl ZmqSdkActorPayload {
+    fn response_wait_timeout(&self, config: &ZmqPipelineBackendConfig) -> Duration {
+        let operation_rpcs = match self {
+            Self::RegisterIdentity(_) | Self::UpdateIdentity { .. } => 3,
+            _ => 1,
+        };
+        actor_response_wait_timeout(config, operation_rpcs)
+    }
+
     fn batch_size(&self) -> usize {
         match self {
             Self::Single(_) => 1,
@@ -1564,13 +1572,10 @@ impl ZmqDataPlane {
 
     fn request(&self, payload: ZmqSdkActorPayload) -> Result<ZmqSdkActorResponse, TransportError> {
         let (response_tx, response_rx) = mpsc::channel();
+        let response_timeout = payload.response_wait_timeout(&self.config);
         self.try_enqueue(payload, response_tx)?;
         response_rx
-            .recv_timeout(
-                self.config
-                    .request_timeout
-                    .saturating_add(Duration::from_secs(1)),
-            )
+            .recv_timeout(response_timeout)
             .map_err(|error| match error {
                 mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                     "LXMF-rs ZeroMQ data plane timed out waiting for result".to_string(),
@@ -1656,11 +1661,7 @@ fn send_lxmf_zmq_outbound_message_via_actor(
             }
         })?;
     let response = response_rx
-        .recv_timeout(
-            config
-                .request_timeout
-                .saturating_add(Duration::from_secs(1)),
-        )
+        .recv_timeout(actor_response_wait_timeout(config, 1))
         .map_err(|error| match error {
             mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor timed out waiting for send result".to_string(),
@@ -1707,11 +1708,7 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
             }
         })?;
     response_rx
-        .recv_timeout(
-            config
-                .request_timeout
-                .saturating_add(Duration::from_secs(1)),
-        )
+        .recv_timeout(actor_response_wait_timeout(config, 1))
         .map_err(|error| match error {
             mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor timed out waiting for send result".to_string(),
@@ -1754,11 +1751,7 @@ fn lxmf_zmq_delivery_status_via_actor(
             }
         })?;
     response_rx
-        .recv_timeout(
-            config
-                .request_timeout
-                .saturating_add(Duration::from_secs(1)),
-        )
+        .recv_timeout(actor_response_wait_timeout(config, 1))
         .map_err(|error| match error {
             mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor timed out waiting for status result".to_string(),
@@ -1800,11 +1793,7 @@ fn announce_lxmf_zmq_identity_via_actor(
             }
         })?;
     response_rx
-        .recv_timeout(
-            config
-                .request_timeout
-                .saturating_add(Duration::from_secs(1)),
-        )
+        .recv_timeout(actor_response_wait_timeout(config, 1))
         .map_err(|error| match error {
             mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor timed out waiting for announce result".to_string(),
@@ -1848,11 +1837,7 @@ fn poll_lxmf_zmq_events_via_actor(
             }
         })?;
     response_rx
-        .recv_timeout(
-            config
-                .request_timeout
-                .saturating_add(Duration::from_secs(1)),
-        )
+        .recv_timeout(actor_response_wait_timeout(config, 1))
         .map_err(|error| match error {
             mpsc::RecvTimeoutError::Timeout => TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor timed out waiting for event poll result".to_string(),
@@ -1899,8 +1884,15 @@ fn run_zmq_data_plane_actor(
         recv_prioritized_actor_request(send_receiver, control_receiver, &mut send_burst)
     {
         metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
-        if actor_request_expired(request.queued_at, config.request_timeout) {
+        if !matches!(request.payload, ZmqSdkActorPayload::Shutdown)
+            && actor_request_expired(request.queued_at, config.request_timeout)
+        {
             metrics.record_expired();
+            send_actor_response(
+                &request.response,
+                Err(expired_actor_request()),
+                "queue expiry",
+            );
             continue;
         }
         let response_started = Instant::now();
@@ -1985,7 +1977,14 @@ fn run_zmq_sdk_actor(
 ) {
     let mut session: Option<ZmqSdkActorSession> = None;
     while let Ok(request) = receiver.recv() {
-        if actor_request_expired(request.queued_at, config.request_timeout) {
+        if !matches!(request.payload, ZmqSdkActorPayload::Shutdown)
+            && actor_request_expired(request.queued_at, config.request_timeout)
+        {
+            send_actor_response(
+                &request.response,
+                Err(expired_actor_request()),
+                "legacy queue expiry",
+            );
             continue;
         }
         let shutting_down = matches!(request.payload, ZmqSdkActorPayload::Shutdown);
@@ -2027,10 +2026,25 @@ fn run_zmq_sdk_actor(
     }
 }
 
+fn actor_response_wait_timeout(config: &ZmqPipelineBackendConfig, operation_rpcs: u32) -> Duration {
+    // Queue residence is separately bounded by one RPC budget plus grace. A cold
+    // session needs negotiation (1 RPC) and cached identity import/activate/announce
+    // (3 RPCs), before the requested operation (1 RPC, or 3 for identity changes).
+    // Each SDK RPC now bounds its entire connection/send/receive lifecycle.
+    config
+        .request_timeout
+        .saturating_mul(5 + operation_rpcs)
+        .saturating_add(LXMF_ZMQ_ACTOR_QUEUE_GRACE.saturating_mul(2))
+}
+
+fn expired_actor_request() -> TransportError {
+    TransportError::Receive(
+        "LXMF-rs ZeroMQ request expired in the actor queue before execution".to_string(),
+    )
+}
+
 fn actor_request_expired(queued_at: Instant, request_timeout: Duration) -> bool {
-    // The synchronous caller gives up after request_timeout plus the
-    // one-second receive grace. Replaying work after that deadline only
-    // consumes the single actor and fills the control queue again.
+    // Do not replay stale queued work after a preceding request has recovered.
     queued_at.elapsed() >= request_timeout.saturating_add(LXMF_ZMQ_ACTOR_QUEUE_GRACE)
 }
 
@@ -2055,7 +2069,11 @@ fn open_zmq_sdk_actor_session(
 }
 
 fn rch_lxmf_start_request() -> LxmfSdkStartRequest {
-    LxmfSdkStartRequest::new(LxmfSdkConfig::desktop_local_default()).with_requested_capabilities([
+    let mut config = LxmfSdkConfig::desktop_local_default();
+    // Polling advances a cursor without removing retained events. Reject would
+    // permanently starve this continuous consumer once the daemon's log fills.
+    config.overflow_policy = lxmf_sdk::OverflowPolicy::DropOldest;
+    LxmfSdkStartRequest::new(config).with_requested_capabilities([
         "sdk.capability.batch_send",
         "sdk.capability.async_events",
         "sdk.capability.identity_multi",
@@ -3826,6 +3844,9 @@ mod tests {
     #[path = "../actor_request_expiry.rs"]
     mod actor_request_expiry;
 
+    #[path = "../event_retention.rs"]
+    mod event_retention;
+
     #[derive(Debug, Clone)]
     struct RecordedRpcCall {
         method: String,
@@ -3983,6 +4004,20 @@ mod tests {
         responses: Vec<serde_json::Value>,
         captured: Arc<Mutex<Vec<RecordedRpcCall>>>,
     ) -> thread::JoinHandle<()> {
+        spawn_zmq_sequence_server_with_delay(
+            command_endpoint,
+            responses,
+            captured,
+            Duration::from_millis(50),
+        )
+    }
+
+    fn spawn_zmq_sequence_server_with_delay(
+        command_endpoint: String,
+        responses: Vec<serde_json::Value>,
+        captured: Arc<Mutex<Vec<RecordedRpcCall>>>,
+        response_delay: Duration,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let runtime = tokio::runtime::Runtime::new().expect("test runtime");
             runtime.block_on(async move {
@@ -4037,7 +4072,7 @@ mod tests {
                         )
                         .await
                         .expect("connect response endpoint");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(response_delay).await;
                     response_socket
                         .send(ZmqMessage::from(
                             zmq::encode_envelope(&ZmqRpcEnvelope::response(
@@ -5795,6 +5830,7 @@ mod tests {
     }
 
     include!("identity_update_tests.rs");
+    include!("issue_238_tests.rs");
 }
 
 #[cfg(test)]
