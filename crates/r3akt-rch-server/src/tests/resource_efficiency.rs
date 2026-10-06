@@ -139,3 +139,246 @@ fn diagnostics_preserves_alias_membership_and_ten_record_contract_with_large_his
     drop(state);
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
+
+fn history_fingerprint(path: &std::path::Path) -> String {
+    let database = Connection::open(path).expect("DB");
+    let mut statement = database
+        .prepare(
+            "SELECT destination_hash,payload FROM rch_identity_announces ORDER BY destination_hash",
+        )
+        .expect("history");
+    let mut rows = statement.query([]).expect("rows");
+    let mut digest = Sha256::new();
+    while let Some(row) = rows.next().expect("row") {
+        let key: String = row.get(0).expect("key");
+        let payload: Vec<u8> = row.get(1).expect("payload");
+        digest.update(key.as_bytes());
+        digest.update(&payload);
+    }
+    format!("{digest:x}", digest = digest.finalize())
+}
+
+#[test]
+#[ignore = "explicit release-mode 100k-row performance qualification"]
+fn profile_remaining_announce_paths() {
+    let (state, directory) = fixture();
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    let now = unix_now_ms();
+    let records = (0..100_000)
+        .map(|index| r3akt_rch_core::IdentityAnnounceRecord {
+            destination_hash: format!("{index:032x}"),
+            announced_identity_hash: Some(format!("{:032x}", index + 200_000)),
+            display_name: Some(format!("Preserved synthetic peer {index:06}")),
+            source_interface: Some("destination".to_string()),
+            announce_capabilities: vec!["lxmf".to_string(), format!("name=fixture-peer-{index}")],
+            client_type: "generic_lxmf".to_string(),
+            first_seen_ts_ms: 1,
+            last_seen_ts_ms: now,
+        })
+        .collect::<Vec<_>>();
+    store.upsert_identity_announces(&records).expect("history");
+    drop(records);
+    let original_digest = history_fingerprint(&directory.join("state.db"));
+    let identity = format!("{:032x}", 299_999);
+    state
+        .clients
+        .write()
+        .expect("clients")
+        .insert(identity.clone(), ClientRecord::new(identity.clone(), now));
+    let mut times = Vec::new();
+    for _ in 0..11 {
+        let start = std::time::Instant::now();
+        assert_eq!(client_records_for_state(&state).expect("roster").len(), 1);
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    println!("client_roster: median_ms={} max_ms={}", times[5], times[10]);
+    let mut times = Vec::new();
+    for _ in 0..11 {
+        let start = std::time::Instant::now();
+        assert!(
+            outbound_destination_has_announce_since_for_any(&state, &[&identity], now)
+                .expect("fresh")
+        );
+        times.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(f64::total_cmp);
+    println!(
+        "freshness_lookup: median_ms={} max_ms={}",
+        times[5], times[10]
+    );
+    assert_eq!(
+        store.identity_announce_summary(now).expect("history").total,
+        100_000
+    );
+    assert_eq!(
+        history_fingerprint(&directory.join("state.db")),
+        original_digest
+    );
+    drop(store);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}
+
+fn saved_announce(
+    destination: &str,
+    identity: Option<&str>,
+    timestamp: i64,
+) -> r3akt_rch_core::IdentityAnnounceRecord {
+    r3akt_rch_core::IdentityAnnounceRecord {
+        destination_hash: destination.to_string(),
+        announced_identity_hash: identity.map(str::to_string),
+        display_name: Some(format!("peer {destination}")),
+        source_interface: Some("identity".to_string()),
+        announce_capabilities: Vec::new(),
+        client_type: "rem".to_string(),
+        first_seen_ts_ms: 1,
+        last_seen_ts_ms: timestamp,
+    }
+}
+
+#[test]
+fn client_roster_indexed_annotations_preserve_shared_alias_source_precedence_and_empty_rosters() {
+    let (state, directory) = fixture();
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    let now = unix_now_ms();
+    let mut records = vec![
+        saved_announce("a", Some(" SHARED "), now + 100),
+        saved_announce("b", Some("shared"), now),
+        saved_announce("c", Some("shared"), now + 200),
+        saved_announce("\u{2003}MiXeD\u{2003}", Some(" "), now),
+        saved_announce("other", Some("unlisted"), now),
+    ];
+    records[1].source_interface = Some(" Destination ".to_string());
+    records[2].source_interface = Some("destination".to_string());
+    store.upsert_identity_announces(&records).expect("history");
+    let baseline = rem_annotations_for_state(&state).expect("full reference");
+    let identities = ["shared", "mixed", "missing"].map(str::to_string);
+    let actual =
+        rem_annotations_for_client_identities(&state, &identities).expect("bounded annotations");
+    for identity in &identities {
+        assert_eq!(actual.get(identity), baseline.get(identity));
+    }
+    assert_eq!(actual["shared"].destination_hash, "b");
+    let mut expected = Vec::new();
+    for identity in &identities {
+        let mut client = ClientRecord::new(identity.clone(), now);
+        state
+            .clients
+            .write()
+            .expect("clients")
+            .insert(identity.clone(), client.clone());
+        if let Some(annotation) = baseline.get(identity) {
+            client.apply_rem_annotation(annotation);
+        }
+        expected.push(client);
+    }
+    expected.sort_by(|left, right| left.identity.cmp(&right.identity));
+    assert_eq!(client_records_for_state(&state).expect("roster"), expected);
+    let database = Connection::open(directory.join("state.db")).expect("DB");
+    database.execute(
+        "INSERT INTO rch_identity_announces (destination_hash,payload,last_seen_ts_ms,normalized_destination_hash) VALUES ('corrupt',X'C1',0,'corrupt')", [],
+    ).expect("unrelated corrupt fixture");
+    assert_eq!(
+        client_records_for_state(&state).expect("isolated roster"),
+        expected
+    );
+    state.clients.write().expect("clients").clear();
+    assert!(
+        client_records_for_state(&state)
+            .expect("empty roster")
+            .is_empty()
+    );
+    drop(database);
+    drop(store);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}
+
+#[test]
+fn indexed_relay_names_and_active_subscribers_preserve_timestamp_ties_and_aliases() {
+    let (state, directory) = fixture();
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    let now = unix_now_ms();
+    let records = [
+        saved_announce("a", Some(" ALIAS "), now),
+        saved_announce("z", Some("alias"), now),
+        saved_announce(
+            "stale",
+            None,
+            now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 1_000,
+        ),
+        saved_announce("source", None, now),
+    ];
+    store.upsert_identity_announces(&records).expect("history");
+    assert_eq!(
+        relay_sender_display_name(&state, " ALIAS ").expect("relay name"),
+        "peer z"
+    );
+    let subscribers = [" ALIAS ", "alias", "stale", "SOURCE", "absent"].map(str::to_string);
+    assert_eq!(
+        active_direct_subscriber_relay_destinations(&state, "source", &subscribers)
+            .expect("active"),
+        ["alias"]
+    );
+    assert!(outbound_destination_has_known_announce(&state, " STALE ").expect("known"));
+    assert!(
+        outbound_destination_has_stale_known_announce_for_any(&state, &["absent", "stale"])
+            .expect("stale")
+    );
+    assert!(
+        !outbound_destination_has_stale_known_announce_for_any(&state, &["stale", "alias"])
+            .expect("fresh alias")
+    );
+    let mut expected = records.to_vec();
+    expected.sort_by(|left, right| left.destination_hash.cmp(&right.destination_hash));
+    assert_eq!(store.load_identity_announces().expect("retained"), expected);
+    drop(store);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}
+
+#[test]
+fn indexed_delivery_timestamps_keep_raw_equality_and_expose_storage_errors() {
+    let (state, directory) = fixture();
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    let records = [
+        saved_announce("MiXeD", Some(" ALIAS "), 200),
+        saved_announce("a", Some("alias"), 100),
+        saved_announce("z", Some("alias"), 150),
+    ];
+    store.upsert_identity_announces(&records).expect("history");
+    assert_eq!(
+        announce_last_seen_ts_ms(&state, " ALIAS ").expect("latest"),
+        Some(150)
+    );
+    assert_eq!(
+        announce_last_seen_ts_ms(&state, "mixed").expect("raw equality"),
+        None
+    );
+    assert_eq!(announce_last_seen_ts_ms(&state, " ").expect("empty"), None);
+    let database = Connection::open(directory.join("state.db")).expect("DB");
+    database
+        .execute(
+            "UPDATE rch_identity_announces SET payload=X'C1' WHERE destination_hash='a'",
+            [],
+        )
+        .expect("corrupt matched row");
+    assert!(announce_last_seen_ts_ms(&state, "alias").is_err());
+    assert!(relay_sender_display_name(&state, "alias").is_err());
+    let mut unavailable = state.clone();
+    unavailable.sqlite_path = Some(Arc::new(directory.join("missing.db")));
+    assert!(announce_last_seen_ts_ms(&unavailable, "alias").is_err());
+    assert!(
+        outbound_destination_has_stale_known_announce_for_any(&unavailable, &["alias"]).is_err()
+    );
+    assert!(outbound_destination_has_announce_since_for_any(&unavailable, &["alias"], 0).is_err());
+    assert!(
+        !outbound_destination_has_announce_since_for_any(&unavailable, &[" "], 0).expect("empty")
+    );
+    drop(unavailable);
+    drop(database);
+    drop(store);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}

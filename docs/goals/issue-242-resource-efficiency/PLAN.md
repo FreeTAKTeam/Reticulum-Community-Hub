@@ -32,3 +32,69 @@ Owner: `LXMF-rs/crates/libs/rns-rpc/src/storage/messages_parts/messagesstore_sec
 ## Execution disposition
 
 PRE and POST source review passed. The committed server-only release gate, four backend package suites, upstream RPC 759 tests/lint, module budgets and documentation checks passed. Both 30-minute local workloads completed; independent audits verify all 100,000 raw payloads, four distinct Delivered/persisted messages, post-restart imports and candidate zero shutdown codes. The candidate meets every local resource/latency budget; see [the evidence report](../../issue-242-resource-efficiency.md) for exact metrics, source/binary identities, fixture deviations and evidence limits. The bounded implementation is locally qualified. Original production daemon CPU attribution and the 2 GiB reclaim-pressure acceptance remain unproven, so #242 stays open. No merge or release is part of this source integration.
+
+## Follow-up: retained announce lookups after preview.13
+
+Preview.13 already contains the diagnostics/import correction. With 100,000
+preserved synthetic records, current-main release-mode measurements still show
+214.6 ms median for a one-client roster enrichment and 78.7 ms for one recipient
+freshness probe. Redirect these paths to the schema-4 normalized destination and
+announced-identity indexes. Core remains the read owner; no new cache, connection
+owner, schema migration, history retention policy or daemon change.
+
+Preserve raw destination ordering across all requested identities, deduplicate
+rows matching both indexes, retain REM source precedence and exact raw-field
+semantics for the delivery timestamp helper. Relay sender names and active topic
+subscribers use the same bounded matching reader. Storage/decode failures in
+these paths propagate to callers; they must not become missing/freshness-false
+fallbacks. Empty client rosters must never mean full-history selection.
+
+Verification: alias/case/Unicode whitespace/timestamp boundary/query-plan tests,
+full-reader equivalence for shared-identity annotations and relay ties,
+corrupt unrelated versus requested payloads, storage errors, unchanged raw
+history digest in the explicit 100,000-row release probe, required workspace
+checks and committed server-only readiness gate. Public full-history APIs and
+chat-name alias graph construction retain their existing contract. The original
+production daemon CPU spike and 2 GiB memory-pressure acceptance still require
+fresh deployment evidence; this follow-up does not certify them.
+
+## Related LXMF-rs #655 follow-up
+
+The operator report identifies reticulumd as the source of measured disk traffic.
+Synthetic daemon probes reproduce three costs: repeated unchanged announce-cache
+writes, a second RAM copy of every durably stored propagation payload, and full
+payload materialization for ID/size-only offers. A blocked identity-lookup
+regression also demonstrates event publication blocked behind the poll's log lock.
+
+Owner: LXMF-rs transport announce cache; RPC MessagesStore metadata projection;
+RPC propagation ingest/fetch/alias paths and private event log; SDK ZeroMQ timeout
+diagnostics. SQLite is the single persistent payload owner. Remove the private
+RAM payload map and its fallback reads; durable deletion is authoritative. Use the
+existing covering destination/size/ID index. Compare cache bytes with bounded
+reads, preserving mutable headers and interface changes. Snapshot requested
+visible shared event references and release the log before identity-independent
+encoding/metadata. Keep cursor/overflow/event limits and the SDK shared deadline.
+No speculative cancellation, new eviction policy, service-limit increase, history
+pruning or schema change.
+
+Evidence: baseline RSS after ingest/list of 1,000 64 KiB inputs was
+139,292/207,216 KiB; fixed was 11,860/11,860 KiB with the same persistent row and
+byte counts. Repeated 10,000-cache flush kernel write accounting fell from
+40,960,000 bytes to zero, with exact-byte/mtime correctness tests. Production
+allocation attribution, aggregate event/response byte admission and overnight
+2 GiB memory-pressure acceptance remain open. Verify upstream tests/lint, daemon
+build/runtime, then pin RCH and all workflows to the exact pushed upstream SHA,
+re-run the committed server release gate and push the existing follow-up PR.
+
+
+### Follow-up review disposition
+
+POST correctness and maintainability reviews found the bounded source changes
+aligned with the follow-up contract. Independent verification confirms three
+persisted Delivered receipts across restart, all 100,007 original raw rows,
+matching dependency/workflow pins and binary hashes, per-service limits and
+zero process exits. The maintainability review identified three current
+packaging/transition baseline descriptions still naming the old daemon SHA;
+those references now match `81344ae1eccc79612fe933efe990c8da55809254`.
+Historical published release evidence retains its original pins. Production
+overnight/reclaim acceptance remains unproven; #242 and #655 stay open.

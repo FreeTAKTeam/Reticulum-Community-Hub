@@ -4232,11 +4232,12 @@ fn relay_sender_display_name(state: &AppState, source: &str) -> Result<String, A
         }
     }
     if let Some(source_key) = source_key.as_deref() {
-        let announced_name = load_identity_announces_for_state(state)?
-            .into_iter()
-            .filter(|record| identity_announce_matches_destination(record, source_key))
-            .max_by_key(|record| record.last_seen_ts_ms)
-            .and_then(|record| relay_display_name_from_announce(&record));
+        let announced_name =
+            load_identity_announces_for_identities_for_state(state, &[source_key.to_string()])?
+                .into_iter()
+                .filter(|record| identity_announce_matches_destination(record, source_key))
+                .max_by_key(|record| record.last_seen_ts_ms)
+                .and_then(|record| relay_display_name_from_announce(&record));
         if let Some(name) = announced_name {
             return Ok(name);
         }
@@ -4333,7 +4334,7 @@ fn active_direct_subscriber_relay_destinations(
 ) -> Result<Vec<String>, ApiError> {
     let now = unix_now_ms();
     let source = normalize_identity_key(source);
-    let announces = load_identity_announces_for_state(state)?;
+    let announces = load_identity_announces_for_identities_for_state(state, subscribers)?;
     let mut destinations = subscribers
         .iter()
         .filter_map(|destination| normalize_identity_key(destination))
@@ -15827,8 +15828,10 @@ fn outbound_delivery_decision_for_targets_with_refresh(
             .unwrap_or(false)
     {
         let now = unix_now_ms();
-        let announce_last_seen =
-            destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
+        let announce_last_seen = destination
+            .map(|identity| announce_last_seen_ts_ms(state, identity))
+            .transpose()?
+            .flatten();
         let has_live_connection =
             destination.is_some_and(|identity| has_live_client(state, identity, now));
         let freshness_destinations = destination
@@ -15878,8 +15881,10 @@ fn outbound_delivery_decision_for_targets_with_refresh(
         });
     }
     let now = unix_now_ms();
-    let announce_last_seen =
-        destination.and_then(|identity| announce_last_seen_ts_ms(state, identity));
+    let announce_last_seen = destination
+        .map(|identity| announce_last_seen_ts_ms(state, identity))
+        .transpose()?
+        .flatten();
     let has_live_connection =
         destination.is_some_and(|identity| has_live_client(state, identity, now));
     if delivery_mode == DeliveryMode::Targeted {
@@ -15979,7 +15984,7 @@ fn outbound_destinations_have_unannounced_route(
     }
     let now = unix_now_ms();
     let routing_context = outbound_destination_routing_context(state)?;
-    Ok(destinations.into_iter().any(|destination| {
+    for destination in destinations {
         let delivery_destination = outbound_destination_for_message_with_context_for_mode(
             delivery_mode,
             &destination,
@@ -15988,12 +15993,14 @@ fn outbound_destinations_have_unannounced_route(
         );
         let candidates = [destination.as_str(), delivery_destination.as_str()];
         let has_fresh_announce =
-            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+            outbound_destination_has_fresh_announce_for_any(state, &candidates)?;
         let has_recent_client_presence =
-            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
-                .unwrap_or(false);
-        !has_fresh_announce && !has_recent_client_presence
-    }))
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)?;
+        if !has_fresh_announce && !has_recent_client_presence {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn outbound_explicit_targets_have_unannounced_route(
@@ -16006,7 +16013,7 @@ fn outbound_explicit_targets_have_unannounced_route(
     }
     let now = unix_now_ms();
     let routing_context = outbound_destination_routing_context(state)?;
-    Ok(destinations.into_iter().any(|destination| {
+    for destination in destinations {
         let delivery_destination = outbound_destination_for_message_with_context_for_mode(
             delivery_mode,
             &destination,
@@ -16015,12 +16022,14 @@ fn outbound_explicit_targets_have_unannounced_route(
         );
         let candidates = [destination.as_str(), delivery_destination.as_str()];
         let has_fresh_announce =
-            outbound_destination_has_fresh_announce_for_any(state, &candidates).unwrap_or(false);
+            outbound_destination_has_fresh_announce_for_any(state, &candidates)?;
         let has_recent_client_presence =
-            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)
-                .unwrap_or(false);
-        !has_fresh_announce && !has_recent_client_presence
-    }))
+            outbound_destination_has_recent_client_presence_for_any(state, &candidates, now)?;
+        if !has_fresh_announce && !has_recent_client_presence {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn outbound_destination_has_known_announce(
@@ -16030,9 +16039,12 @@ fn outbound_destination_has_known_announce(
     let Some(destination) = normalize_identity_key(destination) else {
         return Ok(false);
     };
-    Ok(load_identity_announces_for_state(state)?
-        .into_iter()
-        .any(|record| identity_announce_matches_destination(&record, destination.as_str())))
+    let Some(path) = &state.sqlite_path else {
+        return Ok(false);
+    };
+    RchSqliteStore::open_read_only(path.as_ref())
+        .and_then(|store| store.has_identity_announce(&destination))
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 fn outbound_destination_has_stale_known_announce(
@@ -16054,9 +16066,15 @@ fn outbound_destination_has_stale_known_announce_for_any(
     state: &AppState,
     destinations: &[&str],
 ) -> Result<bool, ApiError> {
-    Ok(destinations.iter().any(|destination| {
-        outbound_destination_has_known_announce(state, destination).unwrap_or(false)
-    }) && !outbound_destination_has_fresh_announce_for_any(state, destinations)?)
+    for destination in destinations {
+        if outbound_destination_has_known_announce(state, destination)? {
+            return Ok(!outbound_destination_has_fresh_announce_for_any(
+                state,
+                destinations,
+            )?);
+        }
+    }
+    Ok(false)
 }
 
 fn outbound_targeted_destination_should_reject_stale(
@@ -16106,21 +16124,18 @@ fn outbound_destination_has_announce_since_for_any(
     destinations: &[&str],
     cutoff_ts_ms: i64,
 ) -> Result<bool, ApiError> {
-    let normalized = destinations
+    if !destinations
         .iter()
-        .filter_map(|destination| normalize_identity_key(destination))
-        .collect::<HashSet<_>>();
-    if normalized.is_empty() {
+        .any(|destination| normalize_identity_key(destination).is_some())
+    {
         return Ok(false);
     }
-    Ok(load_identity_announces_for_state(state)?
-        .into_iter()
-        .any(|record| {
-            record.last_seen_ts_ms >= cutoff_ts_ms
-                && normalized
-                    .iter()
-                    .any(|destination| identity_announce_matches_destination(&record, destination))
-        }))
+    let Some(path) = &state.sqlite_path else {
+        return Ok(false);
+    };
+    RchSqliteStore::open_read_only(path.as_ref())
+        .and_then(|store| store.has_identity_announce_since_for_any(destinations, cutoff_ts_ms))
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 fn identity_announce_matches_destination(
@@ -16185,7 +16200,7 @@ fn rem_command_destination_should_propagate(
     if outbound_destination_has_stale_known_announce(state, destination)? {
         return Ok(true);
     }
-    let announce_last_seen = announce_last_seen_ts_ms(state, destination);
+    let announce_last_seen = announce_last_seen_ts_ms(state, destination)?;
     Ok(latest_failed_direct_delivery_ts_ms(state, destination)
         .is_some_and(|failed_at| announce_last_seen.is_none_or(|seen_at| failed_at >= seen_at)))
 }
@@ -16219,20 +16234,20 @@ fn direct_failure_error_should_trigger_cooldown(error: &str) -> bool {
         || normalized.contains("request timed out waiting for correlated response"))
 }
 
-fn announce_last_seen_ts_ms(state: &AppState, identity: &str) -> Option<i64> {
-    let identity = normalize_identity_key(identity)?;
-    let path = state.sqlite_path.as_ref()?;
-    let store = RchSqliteStore::open_read_only(path.as_ref()).ok()?;
-    store
-        .load_identity_announces()
-        .ok()?
-        .into_iter()
-        .filter(|record| {
-            record.destination_hash == identity
-                || record.announced_identity_hash.as_deref() == Some(identity.as_str())
-        })
-        .map(|record| record.last_seen_ts_ms)
-        .max()
+fn announce_last_seen_ts_ms(state: &AppState, identity: &str) -> Result<Option<i64>, ApiError> {
+    let Some(identity) = normalize_identity_key(identity) else {
+        return Ok(None);
+    };
+    Ok(
+        load_identity_announces_for_identities_for_state(state, std::slice::from_ref(&identity))?
+            .into_iter()
+            .filter(|record| {
+                record.destination_hash == identity
+                    || record.announced_identity_hash.as_deref() == Some(identity.as_str())
+            })
+            .map(|record| record.last_seen_ts_ms)
+            .max(),
+    )
 }
 
 fn has_live_client(state: &AppState, identity: &str, now_ts_ms: i64) -> bool {
@@ -16304,7 +16319,8 @@ fn client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiEr
             )
         })
         .collect::<HashMap<_, _>>();
-    let annotations = rem_annotations_for_state(state)?;
+    let identities = records.keys().cloned().collect::<Vec<_>>();
+    let annotations = rem_annotations_for_client_identities(state, &identities)?;
     for (identity, annotation) in annotations {
         if let Some(record) = records.get_mut(&identity) {
             record.apply_rem_annotation(&annotation);
@@ -16715,6 +16731,18 @@ fn outbound_destination_for_message(
 struct OutboundDestinationRoutingContext {
     rem_app_destinations: HashSet<String>,
     chat_delivery_aliases: HashMap<String, String>,
+}
+
+fn load_identity_announces_for_identities_for_state(
+    state: &AppState,
+    identities: &[String],
+) -> Result<Vec<r3akt_rch_core::IdentityAnnounceRecord>, ApiError> {
+    let Some(path) = &state.sqlite_path else {
+        return Ok(Vec::new());
+    };
+    RchSqliteStore::open_read_only(path.as_ref())
+        .and_then(|store| store.load_identity_announces_for_identities(identities))
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 fn load_identity_announces_for_state(
@@ -21573,6 +21601,21 @@ fn empty_rem_peer_registry() -> Value {
         "effective_connected_mode": false,
         "items": []
     })
+}
+
+fn rem_annotations_for_client_identities(
+    state: &AppState,
+    identities: &[String],
+) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
+    if identities.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let identity_announces = load_identity_announces_for_identities_for_state(state, identities)?;
+    let identity_rem_modes = load_identity_rem_modes_for_state(state)?;
+    Ok(rem_annotations_from_records(
+        &identity_announces,
+        &identity_rem_modes,
+    ))
 }
 
 fn rem_annotations_for_state(
