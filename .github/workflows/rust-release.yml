@@ -6,15 +6,16 @@ on:
       release_version:
         description: "Version label to embed in manually built artifacts"
         required: false
-        default: "v3.0.0-preview.13"
+        default: "v3.0.0-preview.15"
+      linux_amd64_only:
+        description: "Build only the Linux AMD64 server package"
+        type: boolean
+        required: false
+        default: false
   release:
     types: [published]
   push:
     branches: ["rust-next"]
-    tags:
-      - "v3.0.0-alpha.*"
-      - "v3.0.0-preview.*"
-      - "v3.*"
     paths:
       - ".github/workflows/rust-release.yml"
       - "scripts/build-rust-release-package.ps1"
@@ -38,42 +39,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: Windows x64
-            os: windows-latest
-            artifact: rch-rust-full-windows-x64
-            archive_format: zip
-            server_binary: target/release/r3akt-rch-server.exe
-            tak_binary: target/release/r3akt-tak-service.exe
-            reticulumd_binary: ../LXMF-rs/target/release/reticulumd.exe
-          - platform: macOS x64
-            os: macos-15-intel
-            artifact: rch-rust-full-macos-x64
-            archive_format: tar.gz
-            server_binary: target/release/r3akt-rch-server
-            tak_binary: target/release/r3akt-tak-service
-            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
-          - platform: macOS arm64
-            os: macos-latest
-            artifact: rch-rust-full-macos-arm64
-            archive_format: tar.gz
-            server_binary: target/release/r3akt-rch-server
-            tak_binary: target/release/r3akt-tak-service
-            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
-          - platform: Linux AMD64
-            os: ubuntu-latest
-            artifact: rch-rust-full-linux-amd64
-            archive_format: tar.gz
-            server_binary: target/release/r3akt-rch-server
-            tak_binary: target/release/r3akt-tak-service
-            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
-          - platform: Linux Raspberry Pi 64
-            os: ubuntu-24.04-arm
-            artifact: rch-rust-full-linux-rpi64
-            archive_format: tar.gz
-            server_binary: target/release/r3akt-rch-server
-            tak_binary: target/release/r3akt-tak-service
-            reticulumd_binary: ../LXMF-rs/target/release/reticulumd
+        include: >-
+          ${{ fromJSON(
+            (inputs.linux_amd64_only || contains(github.event.release.body, '<!-- rch-release: linux-amd64-only -->')) &&
+            '[{"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"}]' ||
+            '[{"platform":"Windows x64","os":"windows-latest","artifact":"rch-rust-full-windows-x64","archive_format":"zip","server_binary":"target/release/r3akt-rch-server.exe","tak_binary":"target/release/r3akt-tak-service.exe","reticulumd_binary":"../LXMF-rs/target/release/reticulumd.exe"},
+              {"platform":"macOS x64","os":"macos-15-intel","artifact":"rch-rust-full-macos-x64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
+              {"platform":"macOS arm64","os":"macos-latest","artifact":"rch-rust-full-macos-arm64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
+              {"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
+              {"platform":"Linux Raspberry Pi 64","os":"ubuntu-24.04-arm","artifact":"rch-rust-full-linux-rpi64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"}]'
+          ) }}
 
     steps:
       - name: Check out RCH
@@ -187,6 +162,8 @@ jobs:
           fail_on_unmatched_files: true
 
   desktop-package:
+    if: >-
+      ${{ !(inputs.linux_amd64_only || contains(github.event.release.body, '<!-- rch-release: linux-amd64-only -->')) }}
     name: Desktop package (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:
