@@ -1,6 +1,7 @@
 import { useConnectionStore } from "../stores/connection";
 import { mockFetch } from "./mock";
 import { assertSecureTransport } from "../utils/transport-security";
+import { endpoints } from "./endpoints";
 
 export interface ApiError extends Error { status?: number; body?: unknown }
 export interface RequestOptions {
@@ -133,7 +134,23 @@ const requestRaw = async (path: string, options: RequestOptions & { signal: Abor
       const error = asError(failure);
       if (options.signal.aborted || error.name === "AbortError" || identity !== connection.requestIdentity) { throw error; }
       if (!options.suppressAuthStatus && error.status === 401) { connection.setAuthStatus("unauthenticated", "Authentication required."); }
-      else if (!options.suppressAuthStatus && error.status === 403) { connection.setAuthStatus("forbidden", "Access denied."); }
+      else if (!options.suppressAuthStatus && error.status === 403) {
+        // A resource denial is not proof that the credential is invalid. Some
+        // compatible backends use 403 for authentication, so check /Status.
+        let invalidCredential = path === endpoints.status;
+        if (!invalidCredential && connection.hasActiveAuthSession) {
+          try {
+            const probe = await requestRaw(endpoints.status, { ...options, method: "GET", body: undefined, retries: 0, suppressAuthStatus: true }, identity);
+            await readText(probe, options.signal, identity);
+          } catch (probeFailure) {
+            const probeError = asError(probeFailure);
+            invalidCredential = probeError.status === 401 || probeError.status === 403;
+          }
+        }
+        assertCurrent(identity);
+        connection.setAuthStatus(invalidCredential ? "unauthenticated" : "forbidden",
+          invalidCredential ? "Authentication required." : error.message);
+      }
       else if (!error.status && (init.method ?? "GET").toUpperCase() === "GET") { connection.setOffline(error.message || "Unable to reach the hub"); }
       if (attempt < maxRetries && shouldRetry(init.method ?? "GET", error)) {
         await delay(Math.min(1000 * 2 ** attempt, 4000), options.signal); attempt += 1; continue;

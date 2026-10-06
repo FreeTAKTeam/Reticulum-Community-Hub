@@ -163,7 +163,8 @@ watch(() => connectionStore.hasActiveAuthSession, async (authenticated) => {
   }
 });
 
-onMounted(() => {
-  void waitForBackend();
+onMounted(async () => {
+  await router.isReady();
+  await waitForBackend();
 });
 </script>

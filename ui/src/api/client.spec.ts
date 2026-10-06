@@ -132,4 +132,54 @@ describe("api client remote auth gating", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(8 * 1024 * 1024 + 1))));
     await expect(getBlob("/File/1/raw", { retries: 0 })).rejects.toMatchObject({ status: 413 });
   });
+
+  it("keeps a valid session on resource 403, verifies /Status and never retries the write", async () => {
+    const connection = useConnectionStore();
+    connection.authMode = "apiKey"; connection.apiKey = "fixture"; connection.markAuthenticated();
+    const fetch = vi.fn().mockResolvedValueOnce(new Response("operator role required", { status: 403 }))
+      .mockResolvedValueOnce(new Response('{"status":"ok"}'));
+    vi.stubGlobal("fetch", fetch);
+    await expect(post("/Config", { setting: true })).rejects.toMatchObject({ status: 403, message: "operator role required" });
+    expect(connection.hasActiveAuthSession).toBe(true);
+    expect(connection.authStatus).toBe("forbidden");
+    expect(connection.authMessage).toBe("operator role required");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toMatch(/\/Status$/);
+    expect(fetch.mock.calls[1][1]).toMatchObject({ method: "GET", credentials: "omit" });
+    expect(fetch.mock.calls[1][1].body).toBeUndefined();
+  });
+
+  it.each([401, 403])("invalidates an active session if /Status rejects its credential with %s", async (status) => {
+    const connection = useConnectionStore(); connection.markAuthenticated();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("denied", { status: 403 }))
+      .mockResolvedValueOnce(new Response("invalid credential", { status })));
+    await expect(get("/File", { retries: 0 })).rejects.toMatchObject({ status: 403, message: "denied" });
+    expect(connection.hasActiveAuthSession).toBe(false);
+    expect(connection.authStatus).toBe("unauthenticated");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not clear a session just because the auth probe is unavailable", async () => {
+    const connection = useConnectionStore(); connection.markAuthenticated();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("resource denied", { status: 403 }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 })));
+    await expect(get("/File", { retries: 0 })).rejects.toMatchObject({ status: 403 });
+    expect(connection.hasActiveAuthSession).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("cannot clear a new session when an old 403 auth probe finishes", async () => {
+    const connection = useConnectionStore(); connection.markAuthenticated();
+    let finish!: (response: Response) => void;
+    const fetch = vi.fn().mockResolvedValueOnce(new Response("denied", { status: 403 }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    vi.stubGlobal("fetch", fetch);
+    const pending = get("/File", { retries: 0 });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    connection.apiKey = "replacement"; connection.markAuthenticated();
+    finish(new Response("invalid credential", { status: 401 }));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(connection.hasActiveAuthSession).toBe(true);
+    expect(connection.authStatus).toBe("ok");
+  });
 });

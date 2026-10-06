@@ -159,10 +159,14 @@ export const useConnectionStore = defineStore("connection", () => {
   };
 
   // Ephemeral identity only: never persist or log the included credentials.
-  const requestIdentity = computed(() => JSON.stringify([
+  const configurationIdentity = computed(() => JSON.stringify([
     resolveUrl(""), resolveWsUrl(""), authMode.value, token.value, apiKey.value
   ]));
-  watch(requestIdentity, () => {
+  const configurationRevision = ref(0);
+  // Changing settings away and back must still supersede in-flight responses.
+  const requestIdentity = computed(() => `${configurationRevision.value}:${configurationIdentity.value}`);
+  watch(configurationIdentity, () => {
+    configurationRevision.value += 1;
     isAuthenticated.value = false;
     authenticatedRequestIdentity.value = "";
     status.value = "unknown";
@@ -285,7 +289,7 @@ export const useConnectionStore = defineStore("connection", () => {
     authStatus.value = next;
     authMessage.value = message ?? "";
     lastAuthCheckAt.value = Date.now();
-    if (next === "unauthenticated" || next === "forbidden") {
+    if (next === "unauthenticated") {
       isAuthenticated.value = false;
       authenticatedRequestIdentity.value = "";
     }

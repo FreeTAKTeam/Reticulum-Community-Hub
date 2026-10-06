@@ -13,6 +13,7 @@
           <BaseInput id="connect-api-key" v-model="connectionStore.apiKey" label="API Key" type="password" />
           <div class="md:col-span-2">
             <BaseCheckbox v-model="connectionStore.rememberSecrets" label="Remember credentials on this device" />
+            <p class="mt-1 text-sm text-rth-muted">Without this option, credentials stay in memory and a page reload requires login.</p>
           </div>
           <div v-if="connectionStore.authValidationError" class="md:col-span-2 text-sm text-rth-danger">
             {{ connectionStore.authValidationError }}
