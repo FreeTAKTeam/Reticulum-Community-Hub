@@ -3,6 +3,7 @@ name: Rust workspace
 on:
   push:
     branches: ["rust-next", "main"]
+  workflow_dispatch:
   pull_request:
     branches: ["rust-next", "main"]
 

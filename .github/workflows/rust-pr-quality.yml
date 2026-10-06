@@ -1,6 +1,8 @@
 name: Rust PR Quality Control
 
 on:
+  push:
+    branches: ["main"]
   pull_request:
     branches: ["rust-next", "main"]
   workflow_dispatch:
@@ -54,8 +56,12 @@ jobs:
         run: ./scripts/check-doc-links.ps1
 
   ui-quality:
-    name: UI Quality
+    name: UI / ${{ matrix.check }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, typecheck, test, build, test:e2e]
     steps:
       - name: Check out RCH
         uses: actions/checkout@v6
@@ -73,21 +79,25 @@ jobs:
         working-directory: rch
         run: npm --prefix ui ci
 
-      - name: Lint UI
-        working-directory: rch
-        run: npm --prefix ui run lint
+      - name: Install acceptance browser
+        if: matrix.check == 'test:e2e'
+        working-directory: rch/ui
+        run: npx --no-install playwright install --with-deps chromium
 
-      - name: Type-check UI
+      - name: Run independent UI check
         working-directory: rch
-        run: npm --prefix ui run typecheck
+        env:
+          UI_CHECK: ${{ matrix.check }}
+        run: npm --prefix ui run "$UI_CHECK"
 
-      - name: Test UI
-        working-directory: rch
-        run: npm --prefix ui run test
-
-      - name: Build UI
-        working-directory: rch
-        run: npm --prefix ui run build
+      - name: Retain browser evidence
+        if: always() && matrix.check == 'test:e2e'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rch-browser-${{ github.sha }}
+          path: |
+            rch/ui/playwright-report/
+            rch/ui/test-results/
 
   fmt:
     name: Format
