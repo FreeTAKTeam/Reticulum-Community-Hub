@@ -57,3 +57,31 @@ checks and committed server-only readiness gate. Public full-history APIs and
 chat-name alias graph construction retain their existing contract. The original
 production daemon CPU spike and 2 GiB memory-pressure acceptance still require
 fresh deployment evidence; this follow-up does not certify them.
+
+## Related LXMF-rs #655 follow-up
+
+The operator report identifies reticulumd as the source of measured disk traffic.
+Synthetic daemon probes reproduce three costs: repeated unchanged announce-cache
+writes, a second RAM copy of every durably stored propagation payload, and full
+payload materialization for ID/size-only offers. A blocked identity-lookup
+regression also demonstrates event publication blocked behind the poll's log lock.
+
+Owner: LXMF-rs transport announce cache; RPC MessagesStore metadata projection;
+RPC propagation ingest/fetch/alias paths and private event log; SDK ZeroMQ timeout
+diagnostics. SQLite is the single persistent payload owner. Remove the private
+RAM payload map and its fallback reads; durable deletion is authoritative. Use the
+existing covering destination/size/ID index. Compare cache bytes with bounded
+reads, preserving mutable headers and interface changes. Snapshot requested
+visible shared event references and release the log before identity-independent
+encoding/metadata. Keep cursor/overflow/event limits and the SDK shared deadline.
+No speculative cancellation, new eviction policy, service-limit increase, history
+pruning or schema change.
+
+Evidence: baseline RSS after ingest/list of 1,000 64 KiB inputs was
+139,292/207,216 KiB; fixed was 11,860/11,860 KiB with the same persistent row and
+byte counts. Repeated 10,000-cache flush kernel write accounting fell from
+40,960,000 bytes to zero, with exact-byte/mtime correctness tests. Production
+allocation attribution, aggregate event/response byte admission and overnight
+2 GiB memory-pressure acceptance remain open. Verify upstream tests/lint, daemon
+build/runtime, then pin RCH and all workflows to the exact pushed upstream SHA,
+re-run the committed server release gate and push the existing follow-up PR.

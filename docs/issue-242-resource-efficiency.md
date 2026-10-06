@@ -254,3 +254,60 @@ indexed reads; this does not establish that all endpoint work is independent
 of retained history or attribute the production daemon CPU spike.
 Keep #242 open until deployment measurements establish its production
 acceptance. Do not erase the existing databases to obtain a lower memory result.
+
+
+## Related daemon issue #655 follow-up
+
+RCH is now pinned, including its lockfile and all three build/release workflows,
+to LXMF-rs `81344ae1eccc79612fe933efe990c8da55809254` ([PR #654](https://github.com/FreeTAKTeam/LXMF-rs/pull/654)).
+The [related production report](https://github.com/FreeTAKTeam/LXMF-rs/issues/655)
+attributes measured disk traffic to reticulumd and describes anonymous memory,
+swap growth and SDK timeouts despite healthy readiness.
+
+The upstream fix removes the second RAM copy of durably stored propagation
+payloads, uses the existing covering index for ID/size-only destination offers,
+skips byte-identical cached announce writes, and releases the event-log lock
+before identity-independent encoding/metadata. SDK timeout messages now identify
+the request and failing stage. SQLite remains the payload owner, including
+aliases and explicit deletion; no history is pruned and no new eviction policy
+is introduced. See [upstream source and evidence](https://github.com/FreeTAKTeam/LXMF-rs/blob/81344ae1eccc79612fe933efe990c8da55809254/docs/rch-resource-follow-up-655.md).
+
+With 1,000 persistent propagation payloads, baseline RSS after ingestion/listing
+was 139,292/207,216 KiB versus 11,860/11,860 KiB fixed; both retained 1,000 rows
+and 65,504,000 stored bytes. Listing latency fell from 79.28 ms to 0.66 ms.
+Repeating 10,000 unchanged cached announces reduced kernel-accounted writes
+from 40,960,000 bytes to zero. Exact-byte/mtime tests prove unchanged files are
+preserved; kernel accounting is not completed device throughput. The bounded
+read comparison took 270.75 ms versus 223.22 ms baseline, trading reads/time for
+reduced writes.
+
+The final RCH pin passed the committed server-only release-readiness gate,
+including workspace formatting/clippy/tests, documentation and HTTP release
+smoke. Its release binary SHA256 is
+`755afbbea8965e6e65fc9a676a5dd51ea59b5f8e6570ad27ba108ca11e4a763b`.
+The earlier HTTP measurement binary `6684bb7e...` used the old daemon pin; its
+measurements remain attributable to that earlier source, not this new binary.
+
+Production allocation attribution, aggregate event/response byte admission,
+SDK-path health qualification and overnight 2-CPU/2-GiB reclaim acceptance remain
+open. The short synthetic probes do not certify the complete production issue.
+This source update publishes no release.
+
+The exact final RCH/daemon binaries also completed a 242-second local paired
+check on CPU affinity 0/1, with two real TCP daemons and 100,007 retained RCH
+announce rows. User-service limits were daemon MemoryHigh 512 MiB/MemoryMax
+768 MiB each, and RCH 256/512 MiB. Three fresh messages were Delivered, imported
+and persisted, including one after daemon-only restart. An independent post-stop
+SQLite audit verifies all sender receipts, distinct RCH messages and all original
+100,007 raw rows byte for byte; one new peer row was added. Every owned process
+exited zero. Sampled RSS peaks were 27,196 KiB for the daemons and 67,624 KiB for
+RCH, with zero swap and memory.high/oom events. This short fixture has small daemon
+databases and does not exercise production reclaim pressure or overnight load.
+
+The copied RCH cursor recovered once from a different runtime scope at startup;
+intentional daemon restart added one transport poll error and one cursor reset.
+The final counters show three poll errors, two cursor resets, three received
+messages, and no current error. Steady polling/event progress resumed after each
+recovery. The final-pin 100,000-row release probe preserved its raw digest and
+measured roster 0.401 ms median/0.671 ms maximum, freshness 0.202/0.212 ms. All four
+required backend package suites also pass on the final pin.
