@@ -995,12 +995,13 @@ const statusTone = (status: string | null | undefined) => {
 
 const localValidation = computed(() => validateReticulumConfigState(config.value));
 
+let disposed = false;
 const loadConfig = async () => {
   try {
     await configStore.loadConfig();
-    toastStore.push("Reticulum config loaded", "success");
+    if (!disposed) { toastStore.push("Reticulum config loaded", "success"); }
   } catch {
-    toastStore.push("Unable to load Reticulum config", "danger");
+    if (!disposed) { toastStore.push("Unable to load Reticulum config", "danger"); }
   }
 };
 
@@ -1054,11 +1055,14 @@ const refreshDiscovery = async (showToast = false) => {
 
 onMounted(async () => {
   await loadConfig();
+  if (disposed) { return; }
   await refreshDiscovery(false);
+  if (disposed) { return; }
   discoveryStore.startPolling();
 });
 
 onUnmounted(() => {
+  disposed = true;
   discoveryStore.stopPolling();
 });
 </script>

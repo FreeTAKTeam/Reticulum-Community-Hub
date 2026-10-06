@@ -1024,7 +1024,7 @@ impl AppState {
         let path = path.as_ref().to_path_buf();
         let mut store = RchSqliteStore::open_admin(&path)?;
         store.prune_telemetry_records(reticulumd_source)?;
-        let snapshot = store.load_snapshot()?;
+        let snapshot = store.load_snapshot_without_identity_announces()?;
         let mut state = Self {
             messages: Arc::default(),
             sqlite_path: Some(Arc::new(path)),
@@ -18262,14 +18262,12 @@ async fn list_chat_messages(
     let topic_id = normalize_optional_text(query.topic_id);
     let destination = normalize_optional_text(query.destination);
     let source = normalize_optional_text(query.source);
-    let mut messages = state
+    let messages = state
         .messages
         .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .clone();
-    messages.sort_by(|left, right| right.created_ts_ms.cmp(&left.created_ts_ms));
-    let payload = messages
-        .into_iter()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut selected = messages
+        .iter()
         .filter(|message| {
             message_visible_in_chat(message)
                 && direction
@@ -18285,7 +18283,12 @@ async fn list_chat_messages(
                     .as_deref()
                     .is_none_or(|value| message.sender.as_str() == value)
         })
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| right.created_ts_ms.cmp(&left.created_ts_ms));
+    let payload = selected
+        .into_iter()
         .take(limit)
+        .cloned()
         .map(chat_message_payload)
         .collect::<Vec<_>>();
     Ok(Json(json!(payload)))
@@ -18676,6 +18679,7 @@ fn rem_annotations_for_client_identities(
     ))
 }
 
+#[cfg(test)]
 fn rem_annotations_for_state(
     state: &AppState,
 ) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
@@ -18852,19 +18856,15 @@ fn rem_peer_registry_payload_for_state(
     };
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_announces = store
-        .load_identity_announces()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_states = store
-        .load_identity_states()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_rem_modes = store
-        .load_identity_rem_modes()
+    let cutoff_ms = unix_now_ms().saturating_sub(REM_PEER_ACTIVE_WINDOW_MS);
+    let cutoff_ms = runtime_freshness_cutoff_ms.map_or(cutoff_ms, |runtime| cutoff_ms.max(runtime));
+    let snapshot = store
+        .load_rem_peer_read_snapshot(cutoff_ms)
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(rem_peer_registry_payload_from_records(
-        &identity_announces,
-        &identity_states,
-        &identity_rem_modes,
+        &snapshot.identity_announces,
+        &snapshot.identity_states,
+        &snapshot.identity_rem_modes,
         runtime_freshness_cutoff_ms,
     ))
 }
@@ -21395,10 +21395,10 @@ fn with_r3akt_core<T>(
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let snapshot = store
-        .load_r3akt_read_snapshot()
+        .load_permission_read_snapshot()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut core = RchCore::from_snapshot(snapshot.clone())
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let mut core =
+        RchCore::from_snapshot(snapshot).map_err(|error| ApiError::Internal(error.to_string()))?;
     let result = f(&mut core)?;
     record_sqlite_latency(state, started.elapsed());
     Ok(result)
@@ -21423,9 +21423,12 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
     if is_read_only {
         let store = RchSqliteStore::open_read_only(path.as_ref())
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let snapshot = store
-            .load_r3akt_read_snapshot()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let snapshot = if r3akt_http_read_without_announces(command_type) {
+            store.load_r3akt_http_read_snapshot()
+        } else {
+            store.load_r3akt_read_snapshot()
+        }
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
         let mut core = RchCore::from_snapshot(snapshot)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let outcome = core.handle_command(&command);
@@ -21462,6 +21465,24 @@ fn r3akt_command_is_read_only(command_type: &str) -> bool {
             command_type,
             "mission.registry.eam.latest" | "mission.registry.eam.team.summary"
         )
+}
+
+fn r3akt_http_read_without_announces(command_type: &str) -> bool {
+    matches!(
+        command_type,
+        "mission.registry.asset.get"
+            | "mission.registry.eam.get"
+            | "mission.registry.eam.latest"
+            | "mission.registry.eam.team.summary"
+            | "mission.registry.mission.get"
+            | "mission.registry.rights.mission_access.list"
+            | "mission.registry.rights.subjects.list"
+            | "mission.registry.skill.list"
+            | "mission.registry.task_skill_requirement.list"
+            | "mission.registry.team.get"
+            | "mission.registry.team_member.get"
+            | "mission.registry.team_member_skill.list"
+    )
 }
 
 fn r3akt_command_outcome_value(
@@ -23239,7 +23260,22 @@ async fn list_clients(
 
 async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let client_records = client_records_for_state(&state)?;
-    let annotations = rem_annotations_for_state(&state)?;
+    let mut records = state
+        .identity_states
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
+    // Only listed identities need display records. Include actual clients so
+    // voice owners absent from the identity-state list still suppress aliases.
+    let annotation_keys = records
+        .iter()
+        .map(IdentityStatusRecord::identity_key)
+        .chain(client_records.iter().map(|record| record.identity.clone()))
+        .collect::<Vec<_>>();
+    let annotations = rem_annotations_for_client_identities(&state, &annotation_keys)?;
     let identity_display_records =
         identity_display_records_for_annotations(&client_records, &annotations);
     let identity_display_records_by_identity = identity_display_records
@@ -23259,14 +23295,6 @@ async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, A
             Some((voice_destination, owner))
         })
         .collect::<HashMap<_, _>>();
-    let mut records = state
-        .identity_states
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
     let items = records
         .into_iter()
         .filter_map(|record| {
@@ -23372,7 +23400,8 @@ async fn upsert_identity_status(
     }
     identity_states.insert(key, record.clone());
     drop(identity_states);
-    let annotations = match rem_annotations_for_state(&state) {
+    let annotations = match rem_annotations_for_client_identities(&state, &[record.identity_key()])
+    {
         Ok(annotations) => annotations,
         Err(error) => {
             record_system_event_best_effort(
@@ -24748,6 +24777,7 @@ mod tests {
     mod field_commands;
     #[path = "issue_238_live.rs"]
     mod issue_238_live;
+    mod memory_readers;
     mod release_durability;
     mod release_lifecycle;
     mod release_security;

@@ -740,10 +740,10 @@ async fn accepted_moderation_reports_success_when_optional_enrichment_is_malform
     let database = Connection::open(directory.join("state.db")).expect("DB");
     database
         .execute(
-            "INSERT INTO rch_identity_announces (destination_hash, payload, last_seen_ts_ms) VALUES (?1, ?2, 0)",
-            rusqlite::params!["unrelated-peer", vec![0xc1_u8]],
+            "INSERT INTO rch_identity_announces (destination_hash, payload, last_seen_ts_ms, normalized_destination_hash) VALUES (?1, ?2, 0, ?1)",
+            rusqlite::params!["peer", vec![0xc1_u8]],
         )
-        .expect("malformed unrelated annotation");
+        .expect("malformed relevant annotation");
     let Json(response) =
         upsert_identity_status(state.clone(), "peer".to_string(), Some(true), None)
             .await

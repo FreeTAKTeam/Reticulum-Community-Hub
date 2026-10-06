@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createApp, nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
+import ReticulumConfigEditor from "../components/ReticulumConfigEditor.vue";
 import ChatPage from "./ChatPage.vue";
 import WebMapPage from "./WebMapPage.vue";
 import DashboardPage from "./DashboardPage.vue";
@@ -31,7 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-it.each([ChatPage, WebMapPage, DashboardPage])("does not start view resources after unmount during initial loading", async (page) => {
+it.each([ChatPage, WebMapPage, DashboardPage, ReticulumConfigEditor])("does not start view resources after unmount during initial loading", async (page) => {
   let finish!: (value: unknown) => void;
   const pending = new Promise(resolve => { finish = resolve; });
   vi.mocked(get).mockReturnValue(pending);
