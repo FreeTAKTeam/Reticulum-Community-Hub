@@ -113,7 +113,7 @@ describe("api client", () => {
     ) as any;
 
     const connectionStore = useConnectionStore();
-    await expect(request("/Status", { retries: 0 })).rejects.toMatchObject({
+    await expect(request("/Topic", { retries: 0 })).rejects.toMatchObject({
       status: 403,
       message: "operator role required"
     });
