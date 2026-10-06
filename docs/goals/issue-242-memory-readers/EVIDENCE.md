@@ -41,3 +41,10 @@ The released daemon (`81344ae1eccc79612fe933efe990c8da55809254`, binary SHA256 `
 Count-bounded retained event payloads and the peer-crypto map are source candidates to measure, not proven causes. No LXMF-rs source change is included.
 
 RCH active-only message caching needs durable read/update fallbacks and preservation of unresolved SDK admissions/late receipts; arbitrary eviction is unsafe. #242 and LXMF-rs #655 remain open pending that work and representative 30-minute production memory, swap, CPU, latency and delivery acceptance.
+
+## UI-triggered extension
+
+The later UI request replay, final binary identity and allocator/browser evidence
+are recorded separately in [UI-EVIDENCE.md](UI-EVIDENCE.md). The four-fixture
+measurements above remain the prior reader-slice results for binary `ab5f28a5`;
+they are not relabeled as the later UI experiment.

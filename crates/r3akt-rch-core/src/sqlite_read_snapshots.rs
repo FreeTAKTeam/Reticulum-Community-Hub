@@ -1,6 +1,6 @@
 use super::{
-    IdentityCapabilityGrant, RchCore, RchCoreError, RchCoreSnapshot, RchSqliteStore,
-    SubjectOperationRight,
+    IdentityAnnounceRecord, IdentityCapabilityGrant, RchCore, RchCoreError, RchCoreSnapshot,
+    RchSqliteStore, SubjectOperationRight, decode_msgpack,
 };
 
 impl RchSqliteStore {
@@ -18,6 +18,34 @@ impl RchSqliteStore {
             snapshot.authorization_required = store
                 .setting_value("authorization_required")?
                 .is_some_and(|value| value == "true");
+            Ok(snapshot)
+        })
+    }
+
+    /// Filter the indexed freshness range before decoding, then retain only REM
+    /// payloads. Restore raw destination order for the peer selector's tie rules.
+    pub fn load_rem_peer_read_snapshot(
+        &self,
+        cutoff_ms: i64,
+    ) -> Result<RchCoreSnapshot, RchCoreError> {
+        self.consistent_read(|store| {
+            let mut snapshot = RchCore::new().snapshot();
+            let mut statement = store.connection.prepare(
+                "SELECT payload FROM rch_identity_announces WHERE last_seen_ts_ms >= ?1",
+            )?;
+            let mut rows = statement.query([cutoff_ms])?;
+            while let Some(row) = rows.next()? {
+                let payload: Vec<u8> = row.get(0)?;
+                let record: IdentityAnnounceRecord = decode_msgpack(&payload)?;
+                if record.client_type.trim().eq_ignore_ascii_case("rem") {
+                    snapshot.identity_announces.push(record);
+                }
+            }
+            snapshot
+                .identity_announces
+                .sort_by(|left, right| left.destination_hash.cmp(&right.destination_hash));
+            snapshot.identity_states = store.load_identity_states()?;
+            snapshot.identity_rem_modes = store.load_identity_rem_modes()?;
             Ok(snapshot)
         })
     }
@@ -126,5 +154,54 @@ mod tests {
             )
             .expect("retained history");
         assert_eq!(history, [0xc1]);
+    }
+    #[test]
+    fn rem_reader_preserves_raw_order_and_exact_cutoff_without_retaining_generic_history() {
+        let mut store = RchSqliteStore::in_memory().expect("store");
+        let make = |destination: &str, last_seen, client_type: &str| IdentityAnnounceRecord {
+            destination_hash: destination.into(),
+            announced_identity_hash: Some(" Owner ".into()),
+            display_name: None,
+            source_interface: None,
+            announce_capabilities: vec![],
+            client_type: client_type.into(),
+            first_seen_ts_ms: 1,
+            last_seen_ts_ms: last_seen,
+        };
+        let older = make("A", 100, " ReM ");
+        let newer = make("z", 300, "rem");
+        store
+            .upsert_identity_announces(&[
+                newer.clone(),
+                make("stale", 99, "rem"),
+                older.clone(),
+                make("generic", 200, "generic_lxmf"),
+            ])
+            .expect("history");
+        let before = store.load_identity_announces().expect("full history");
+        assert_eq!(
+            store
+                .load_rem_peer_read_snapshot(100)
+                .expect("fresh REM")
+                .identity_announces,
+            [older, newer]
+        );
+        assert_eq!(store.load_identity_announces().expect("unchanged"), before);
+        store
+            .connection
+            .execute(
+                "UPDATE rch_identity_announces SET payload=X'C1' WHERE destination_hash='stale'",
+                [],
+            )
+            .expect("stale corruption");
+        assert!(store.load_rem_peer_read_snapshot(100).is_ok());
+        store
+            .connection
+            .execute(
+                "UPDATE rch_identity_announces SET payload=X'C1' WHERE destination_hash='generic'",
+                [],
+            )
+            .expect("fresh corruption");
+        assert!(store.load_rem_peer_read_snapshot(100).is_err());
     }
 }

@@ -18679,6 +18679,7 @@ fn rem_annotations_for_client_identities(
     ))
 }
 
+#[cfg(test)]
 fn rem_annotations_for_state(
     state: &AppState,
 ) -> Result<HashMap<String, RemIdentityAnnotation>, ApiError> {
@@ -18855,19 +18856,15 @@ fn rem_peer_registry_payload_for_state(
     };
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_announces = store
-        .load_identity_announces()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_states = store
-        .load_identity_states()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let identity_rem_modes = store
-        .load_identity_rem_modes()
+    let cutoff_ms = unix_now_ms().saturating_sub(REM_PEER_ACTIVE_WINDOW_MS);
+    let cutoff_ms = runtime_freshness_cutoff_ms.map_or(cutoff_ms, |runtime| cutoff_ms.max(runtime));
+    let snapshot = store
+        .load_rem_peer_read_snapshot(cutoff_ms)
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(rem_peer_registry_payload_from_records(
-        &identity_announces,
-        &identity_states,
-        &identity_rem_modes,
+        &snapshot.identity_announces,
+        &snapshot.identity_states,
+        &snapshot.identity_rem_modes,
         runtime_freshness_cutoff_ms,
     ))
 }
@@ -23263,7 +23260,22 @@ async fn list_clients(
 
 async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let client_records = client_records_for_state(&state)?;
-    let annotations = rem_annotations_for_state(&state)?;
+    let mut records = state
+        .identity_states
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
+    // Only listed identities need display records. Include actual clients so
+    // voice owners absent from the identity-state list still suppress aliases.
+    let annotation_keys = records
+        .iter()
+        .map(IdentityStatusRecord::identity_key)
+        .chain(client_records.iter().map(|record| record.identity.clone()))
+        .collect::<Vec<_>>();
+    let annotations = rem_annotations_for_client_identities(&state, &annotation_keys)?;
     let identity_display_records =
         identity_display_records_for_annotations(&client_records, &annotations);
     let identity_display_records_by_identity = identity_display_records
@@ -23283,14 +23295,6 @@ async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, A
             Some((voice_destination, owner))
         })
         .collect::<HashMap<_, _>>();
-    let mut records = state
-        .identity_states
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
     let items = records
         .into_iter()
         .filter_map(|record| {
@@ -23396,7 +23400,8 @@ async fn upsert_identity_status(
     }
     identity_states.insert(key, record.clone());
     drop(identity_states);
-    let annotations = match rem_annotations_for_state(&state) {
+    let annotations = match rem_annotations_for_client_identities(&state, &[record.identity_key()])
+    {
         Ok(annotations) => annotations,
         Err(error) => {
             record_system_event_best_effort(

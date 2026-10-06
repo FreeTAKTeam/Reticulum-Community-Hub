@@ -1,3 +1,4 @@
+import { useConnectionStore } from "./connection";
 import { defineStore } from "pinia";
 import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
@@ -107,23 +108,39 @@ export const useUsersStore = defineStore("users", () => {
   const loading = ref(false);
   const backendScope = useBackendScope([clients, identities, remPeers, remConnectedMode, loading]);
 
-  const fetchUsers = async () => {
+  const connection = useConnectionStore();
+  let pending: { identity: string; promise: Promise<void> } | undefined;
+
+  const fetchUsers = () => {
+    const identity = connection.requestIdentity;
+    if (pending?.identity === identity) {
+      return pending.promise;
+    }
+    const promise = loadUsers().finally(() => {
+      if (pending?.promise === promise) {
+        pending = undefined;
+        if (connection.requestIdentity === identity) {
+          loading.value = false;
+        }
+      }
+    });
+    pending = { identity, promise };
+    return promise;
+  };
+
+  const loadUsers = async () => {
     const assertCurrent = backendScope();
     loading.value = true;
-    try {
-      const response = await get<ClientApiPayload[]>(endpoints.clients);
-      assertCurrent();
-      const identityResponse = await get<IdentityApiPayload[]>(endpoints.identities);
-      assertCurrent();
-      const remPeersResponse = await get<RemPeersApiPayload>(endpoints.remPeers);
-      assertCurrent();
-      clients.value = response.map(fromApiClient);
-      identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
-      remPeers.value = Array.isArray(remPeersResponse.items) ? remPeersResponse.items : [];
-      remConnectedMode.value = Boolean(remPeersResponse.effective_connected_mode);
-    } finally {
-      loading.value = false;
-    }
+    const response = await get<ClientApiPayload[]>(endpoints.clients);
+    assertCurrent();
+    const identityResponse = await get<IdentityApiPayload[]>(endpoints.identities);
+    assertCurrent();
+    const remPeersResponse = await get<RemPeersApiPayload>(endpoints.remPeers);
+    assertCurrent();
+    clients.value = response.map(fromApiClient);
+    identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
+    remPeers.value = Array.isArray(remPeersResponse.items) ? remPeersResponse.items : [];
+    remConnectedMode.value = Boolean(remPeersResponse.effective_connected_mode);
   };
 
   const actOnClient = async (clientId: string, action: "Ban" | "Unban" | "Blackhole") => {

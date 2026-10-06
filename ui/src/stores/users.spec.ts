@@ -94,3 +94,47 @@ describe("users store REM registry mapping", () => {
     expect(store.remPeers[0].registered_mode).toBe("connected");
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+import { useConnectionStore } from "./connection";
+
+it("shares simultaneous roster reads and retries after failure", async () => {
+  localStorage.clear(); setActivePinia(createPinia()); getMock.mockReset();
+  const first = deferred<unknown[]>();
+  getMock.mockReturnValueOnce(first.promise);
+  const store = useUsersStore();
+  const a = store.fetchUsers(); const b = store.fetchUsers();
+  expect(getMock).toHaveBeenCalledTimes(1);
+  const failure = new Error("offline"); first.reject(failure);
+  await expect(a).rejects.toBe(failure); await expect(b).rejects.toBe(failure);
+  expect(store.loading).toBe(false);
+  getMock.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce({ items: [] });
+  await store.fetchUsers();
+  expect(getMock).toHaveBeenCalledTimes(4);
+});
+
+it("isolates A to B to A requests and stale finally blocks", async () => {
+  localStorage.clear(); setActivePinia(createPinia()); getMock.mockReset();
+  const original = deferred<unknown[]>(); const hubB = deferred<unknown[]>(); const newA = deferred<unknown[]>();
+  getMock.mockReturnValueOnce(original.promise).mockReturnValueOnce(hubB.promise).mockReturnValueOnce(newA.promise);
+  const connection = useConnectionStore(); const originalUrl = connection.baseUrl;
+  const store = useUsersStore(); const a = store.fetchUsers();
+  connection.baseUrl = "https://hub-b.example";
+  const b = store.fetchUsers();
+  original.resolve([{ identity: "old-A" }]);
+  await expect(a).rejects.toMatchObject({ name: "AbortError" });
+  expect(store.loading).toBe(true); expect(store.clients).toEqual([]);
+  connection.baseUrl = originalUrl;
+  const newRequest = store.fetchUsers();
+  hubB.reject(new Error("B offline")); await expect(b).rejects.toThrow("B offline");
+  expect(store.loading).toBe(true);
+  getMock.mockResolvedValueOnce([{ Identity: "new-A" }]).mockResolvedValueOnce({ items: [] });
+  newA.resolve([{ identity: "new-A" }]); await newRequest;
+  expect(store.clients[0].id).toBe("new-A"); expect(store.loading).toBe(false);
+});

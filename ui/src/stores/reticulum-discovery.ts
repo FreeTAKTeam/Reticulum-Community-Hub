@@ -1,3 +1,4 @@
+import { useConnectionStore } from "./connection";
 import { defineStore } from "pinia";
 import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
@@ -36,31 +37,58 @@ export const useReticulumDiscoveryStore = defineStore("reticulum-discovery", () 
   const error = ref("");
   const polling = ref(false);
   const lastRefreshAt = ref<string | null>(null);
-  useBackendScope([capabilities, discovery, loading, error, lastRefreshAt]);
+  const backendScope = useBackendScope([capabilities, discovery, loading, error, lastRefreshAt]);
+  const connection = useConnectionStore();
+  let pending: { identity: string; promise: Promise<void> } | undefined;
 
   let pollTimer: number | null = null;
 
   const fetchCapabilities = async () => {
-    capabilities.value = await get<ReticulumInterfaceCapabilities>(endpoints.reticulumInterfacesCapabilities);
+    const assertCurrent = backendScope();
+    const response = await get<ReticulumInterfaceCapabilities>(endpoints.reticulumInterfacesCapabilities);
+    assertCurrent();
+    capabilities.value = response;
     return capabilities.value;
   };
 
   const fetchDiscovery = async () => {
-    discovery.value = await get<ReticulumDiscoveryState>(endpoints.reticulumDiscovery);
+    const assertCurrent = backendScope();
+    const response = await get<ReticulumDiscoveryState>(endpoints.reticulumDiscovery);
+    assertCurrent();
+    discovery.value = response;
     return discovery.value;
   };
 
-  const refresh = async () => {
+  const refresh = () => {
+    const identity = connection.requestIdentity;
+    if (pending?.identity === identity) { return pending.promise; }
+    const promise = loadDiscovery().finally(() => {
+      if (pending?.promise === promise) {
+        pending = undefined;
+        if (connection.requestIdentity === identity) { loading.value = false; }
+      }
+    });
+    pending = { identity, promise };
+    return promise;
+  };
+
+  const loadDiscovery = async () => {
+    const assertCurrent = backendScope();
     loading.value = true;
     error.value = "";
     try {
-      await Promise.all([fetchCapabilities(), fetchDiscovery()]);
+      // Keep ownership until both requests settle, even if one fails early.
+      const results = await Promise.allSettled([fetchCapabilities(), fetchDiscovery()]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") { throw failure.reason; }
+      assertCurrent();
       lastRefreshAt.value = new Date().toISOString();
     } catch (err) {
-      error.value = err instanceof Error ? err.message : "Failed to refresh discovery state";
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        assertCurrent();
+        error.value = err instanceof Error ? err.message : "Failed to refresh discovery state";
+      }
       throw err;
-    } finally {
-      loading.value = false;
     }
   };
 
