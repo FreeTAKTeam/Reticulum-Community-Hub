@@ -296,7 +296,7 @@ fn client_roster_indexed_annotations_preserve_shared_alias_source_precedence_and
 }
 
 #[test]
-fn indexed_relay_names_and_active_subscribers_preserve_timestamp_ties_and_aliases() {
+fn indexed_relay_display_names_preserve_timestamp_ties_and_aliases() {
     let (state, directory) = fixture();
     let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
     let now = unix_now_ms();
@@ -315,21 +315,6 @@ fn indexed_relay_names_and_active_subscribers_preserve_timestamp_ties_and_aliase
         relay_sender_display_name(&state, " ALIAS ").expect("relay name"),
         "peer z"
     );
-    let subscribers = [" ALIAS ", "alias", "stale", "SOURCE", "absent"].map(str::to_string);
-    assert_eq!(
-        active_direct_subscriber_relay_destinations(&state, "source", &subscribers)
-            .expect("active"),
-        ["alias"]
-    );
-    assert!(outbound_destination_has_known_announce(&state, " STALE ").expect("known"));
-    assert!(
-        outbound_destination_has_stale_known_announce_for_any(&state, &["absent", "stale"])
-            .expect("stale")
-    );
-    assert!(
-        !outbound_destination_has_stale_known_announce_for_any(&state, &["stale", "alias"])
-            .expect("fresh alias")
-    );
     let mut expected = records.to_vec();
     expected.sort_by(|left, right| left.destination_hash.cmp(&right.destination_hash));
     assert_eq!(store.load_identity_announces().expect("retained"), expected);
@@ -339,46 +324,12 @@ fn indexed_relay_names_and_active_subscribers_preserve_timestamp_ties_and_aliase
 }
 
 #[test]
-fn indexed_delivery_timestamps_keep_raw_equality_and_expose_storage_errors() {
+fn relay_display_name_reports_corrupt_matching_announce() {
     let (state, directory) = fixture();
-    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
-    let records = [
-        saved_announce("MiXeD", Some(" ALIAS "), 200),
-        saved_announce("a", Some("alias"), 100),
-        saved_announce("z", Some("alias"), 150),
-    ];
-    store.upsert_identity_announces(&records).expect("history");
-    assert_eq!(
-        announce_last_seen_ts_ms(&state, " ALIAS ").expect("latest"),
-        Some(150)
-    );
-    assert_eq!(
-        announce_last_seen_ts_ms(&state, "mixed").expect("raw equality"),
-        None
-    );
-    assert_eq!(announce_last_seen_ts_ms(&state, " ").expect("empty"), None);
     let database = Connection::open(directory.join("state.db")).expect("DB");
-    database
-        .execute(
-            "UPDATE rch_identity_announces SET payload=X'C1' WHERE destination_hash='a'",
-            [],
-        )
-        .expect("corrupt matched row");
-    assert!(announce_last_seen_ts_ms(&state, "alias").is_err());
-    assert!(relay_sender_display_name(&state, "alias").is_err());
-    let mut unavailable = state.clone();
-    unavailable.sqlite_path = Some(Arc::new(directory.join("missing.db")));
-    assert!(announce_last_seen_ts_ms(&unavailable, "alias").is_err());
-    assert!(
-        outbound_destination_has_stale_known_announce_for_any(&unavailable, &["alias"]).is_err()
-    );
-    assert!(outbound_destination_has_announce_since_for_any(&unavailable, &["alias"], 0).is_err());
-    assert!(
-        !outbound_destination_has_announce_since_for_any(&unavailable, &[" "], 0).expect("empty")
-    );
-    drop(unavailable);
+    database.execute("INSERT INTO rch_identity_announces (destination_hash,payload,last_seen_ts_ms,normalized_destination_hash) VALUES ('target',X'C1',0,'target')", []).expect("corrupt display record");
+    assert!(relay_sender_display_name(&state, "target").is_err());
     drop(database);
-    drop(store);
     drop(state);
     std::fs::remove_dir_all(directory).expect("cleanup");
 }

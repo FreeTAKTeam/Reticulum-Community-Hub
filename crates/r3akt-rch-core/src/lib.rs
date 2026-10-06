@@ -37,8 +37,7 @@ use r3akt_profile_rch::{
 use r3akt_protocol::{Destination, NodeId, Payload, ProtocolEnvelope, Topic, TopicMessage};
 pub use r3akt_shared_mesh_delivery::{
     DEFAULT_PRIORITY, DEFAULT_TTL_SECONDS, DELIVERY_SCHEMA_VERSION, DeliveryEnvelope, DeliveryMode,
-    OutboundDeliveryDecision, OutboundDeliveryPolicy, RECENT_ANNOUNCE_WINDOW_MS,
-    RECENT_RUNTIME_PRESENCE_WINDOW_MS,
+    OutboundDeliveryDecision, RECENT_ANNOUNCE_WINDOW_MS, RECENT_RUNTIME_PRESENCE_WINDOW_MS,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OpenFlags, Transaction, params, params_from_iter};
@@ -13032,13 +13031,6 @@ mod tests {
 
     mod rem_team_directory;
 
-    fn delivery_decision(method: &str, reason: &str) -> OutboundDeliveryDecision {
-        OutboundDeliveryDecision {
-            method: method.to_string(),
-            reason: reason.to_string(),
-        }
-    }
-
     fn command(command_type: &str, args: Value) -> MissionCommandEnvelope {
         let suffix = args.to_string();
         MissionCommandEnvelope {
@@ -13342,105 +13334,6 @@ mod tests {
             classify_delivery_mode(Some("ops"), Some("abcd")),
             Err(RchCoreError::Delivery(_))
         ));
-    }
-
-    #[test]
-    fn outbound_delivery_policy_matches_python_presence_and_cooldown_rules() {
-        let identity = "11".repeat(16);
-        let now = 1_700_000_000_000;
-        let mut policy = OutboundDeliveryPolicy::default();
-
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                None,
-                false,
-                now
-            ),
-            delivery_decision("propagated", "no_fresh_presence")
-        );
-
-        policy.mark_presence(identity.as_str(), now - 1_000);
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                None,
-                false,
-                now
-            ),
-            delivery_decision("direct", "fresh_presence")
-        );
-
-        policy.mark_direct_failure(identity.as_str(), now);
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                Some(now - 1_000),
-                false,
-                now
-            ),
-            delivery_decision("propagated", "direct_cooldown")
-        );
-
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                Some(now + 1_000),
-                false,
-                now + 1_000
-            ),
-            delivery_decision("direct", "fresh_presence")
-        );
-    }
-
-    #[test]
-    fn outbound_delivery_policy_propagates_fanout_broadcast_and_stale_presence() {
-        let identity = "22".repeat(16);
-        let now = 1_700_000_000_000;
-        let mut policy = OutboundDeliveryPolicy::default();
-        policy.mark_presence(
-            identity.as_str(),
-            now - RECENT_RUNTIME_PRESENCE_WINDOW_MS - 1,
-        );
-
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Fanout,
-                Some(identity.as_str()),
-                Some(now),
-                true,
-                now
-            ),
-            delivery_decision("propagated", "fanout_route")
-        );
-        assert_eq!(
-            policy.delivery_decision(DeliveryMode::Broadcast, None, None, true, now),
-            delivery_decision("propagated", "broadcast_route")
-        );
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                Some(now - RECENT_ANNOUNCE_WINDOW_MS - 1),
-                false,
-                now
-            ),
-            delivery_decision("propagated", "no_fresh_presence")
-        );
-        assert_eq!(
-            policy.delivery_decision(
-                DeliveryMode::Targeted,
-                Some(identity.as_str()),
-                None,
-                true,
-                now
-            ),
-            delivery_decision("direct", "live_connection")
-        );
     }
 
     #[test]

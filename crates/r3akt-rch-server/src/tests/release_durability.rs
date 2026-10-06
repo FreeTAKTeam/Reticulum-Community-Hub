@@ -351,7 +351,7 @@ fn receipt_after_candidate_collection_prevents_redispatch_and_stale_retry() {
     .expect("receipt");
     mark_outbound_attempt_started(&state, &candidate.message_id, unix_now_ms())
         .expect("late attempt");
-    schedule_outbound_retry_after_failure(&state, &candidate, "fixture send failure".to_string())
+    schedule_zmq_pre_admission_retry(&state, &candidate, &DispatchReport::default())
         .expect("late retry");
     assert_eq!(
         state.messages.read().expect("messages")[0].delivery_state,
@@ -396,7 +396,7 @@ fn receipt_after_attempt_validation_wins_over_dispatch_completion() {
             .is_none()
     );
     assert!(
-        schedule_outbound_retry_after_failure(&state, &attempted, "rate_limited".to_string())
+        schedule_zmq_pre_admission_retry(&state, &attempted, &DispatchReport::default())
             .expect("late retry")
             .is_none()
     );
@@ -669,11 +669,6 @@ async fn inline_receipt_during_dispatch(fail_dispatch: bool) {
     });
     let state = state.with_reticulumd_rpc(endpoint, "fixture-source");
     let destination = "00112233445566778899aabbccddeeff";
-    state
-        .outbound_delivery_policy
-        .write()
-        .expect("policy")
-        .mark_presence(destination, unix_now_ms());
     let sender = state.clone();
     let send = std::thread::spawn(move || {
         record_outbound_message_with_metadata_mode(
@@ -693,17 +688,8 @@ async fn inline_receipt_during_dispatch(fail_dispatch: bool) {
     let message_id = state.messages.read().expect("messages")[0]
         .message_id
         .clone();
-    let Json(receipt) = internal_delivery_receipt(
-        State(state.clone()),
-        Json(InternalDeliveryReceiptPayload {
-            message_id: Some(message_id),
-            destination: None,
-            acknowledgement_type: Some("delivery".to_string()),
-        }),
-    )
-    .await
-    .expect("receipt accepted");
-    assert_eq!(receipt["status"], "delivered");
+    mark_reticulumd_status_delivery_receipt(&state, &message_id, "delivered")
+        .expect("SDK receipt projection");
     release.send(()).expect("release");
     let completed = send.join().expect("send thread");
     rpc.join().expect("RPC thread");
@@ -746,55 +732,6 @@ async fn inline_success_cannot_overwrite_a_receipt_during_dispatch() {
 #[tokio::test]
 async fn inline_error_cannot_overwrite_a_receipt_during_dispatch() {
     inline_receipt_during_dispatch(true).await;
-}
-
-#[tokio::test]
-async fn stale_delivery_failure_callback_preserves_the_committed_receipt() {
-    let (state, directory) = fixture();
-    let message = record_outbound_message_deferred_with_metadata(
-        &state,
-        "fixture",
-        None,
-        Some("00112233445566778899aabbccddeeff".to_string()),
-        Vec::new(),
-        false,
-        json!({"max_attempts": 0}),
-    )
-    .expect("admit");
-    update_outbound_delivery_state(
-        &state,
-        &message.message_id,
-        "delivered",
-        json!({"acked": true}),
-    )
-    .expect("receipt");
-    let Json(response) = internal_delivery_failure(
-        State(state.clone()),
-        Json(InternalDeliveryFailurePayload {
-            message_id: Some(message.message_id),
-            destination: None,
-            reason: Some("send_error".to_string()),
-        }),
-    )
-    .await
-    .expect("stale callback");
-    assert_eq!(response["status"], "delivered");
-    assert!(
-        !state
-            .system_events
-            .read()
-            .expect("events")
-            .iter()
-            .any(|event| event.event_type == "message_delivery_failed")
-    );
-    let reopened = AppState::from_sqlite_path(directory.join("state.db")).expect("restart");
-    assert_eq!(
-        reopened.messages.read().expect("messages")[0].delivery_state,
-        "delivered"
-    );
-    drop(reopened);
-    drop(state);
-    std::fs::remove_dir_all(directory).expect("cleanup");
 }
 
 #[tokio::test]

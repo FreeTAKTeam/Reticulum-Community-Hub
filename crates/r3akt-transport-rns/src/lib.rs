@@ -11,6 +11,12 @@
 
 mod actor_helpers;
 mod field_commands;
+mod sdk_batch_admission;
+
+use sdk_batch_admission::send_lxmf_zmq_actor_batch;
+mod sdk_path_control;
+
+use sdk_path_control::{resolve_zmq_actor_path, sync_zmq_actor_selected_node};
 
 use field_commands::{DirectLxmfCommandResult, direct_lxmf_command};
 
@@ -34,9 +40,11 @@ use lxmf_sdk::{
     IdentityAnnounceRequest, IdentityBundle, IdentityImportRequest, IdentityRef, LxmfSdk,
     LxmfSdkIdentity, MessageHistoryListRequest as LxmfSdkMessageHistoryListRequest,
     MessageHistoryPage as LxmfSdkMessageHistoryPage, MessageId as LxmfSdkMessageId,
-    SdkConfig as LxmfSdkConfig, SdkError as LxmfSdkError, SdkEvent as LxmfSdkEvent,
-    SendRequest as LxmfSdkSendRequest, StartRequest as LxmfSdkStartRequest, ZmqEndpointRole,
-    ZmqPipelineBackendClient, ZmqPipelineBackendConfig,
+    PropagationPeerSyncRequest, PropagationRemoteRequest, RnsSdkTransport, RnsTransportOperation,
+    SdkConfig as LxmfSdkConfig, SdkControlRequest, SdkError as LxmfSdkError,
+    SdkEvent as LxmfSdkEvent, SendRequest as LxmfSdkSendRequest,
+    StartRequest as LxmfSdkStartRequest, ZmqEndpointRole, ZmqPipelineBackendClient,
+    ZmqPipelineBackendConfig,
 };
 use r3akt_protocol::{
     Destination, NodeId, Payload, ProtocolEnvelope, TelemetrySample, Topic, TopicAttachment,
@@ -64,8 +72,7 @@ pub use lxmf_sdk::{
 };
 
 const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
-// Match RCH's outbound dispatch deadline so a stuck ZeroMQ SDK response cannot
-// leave the operator UI waiting on a long-lived local transport operation.
+// Bound one SDK request; a missing admission response is reconciled by stable ID.
 const LXMF_ZMQ_SEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const LXMF_ZMQ_SEND_QUEUE_CAPACITY: usize = 20_000;
 const LXMF_ZMQ_CONTROL_QUEUE_CAPACITY: usize = 1_024;
@@ -318,6 +325,8 @@ pub enum TransportError {
     Backpressure(String),
     #[error("transport encode failed: {0}")]
     Encode(String),
+    #[error("SDK request was not submitted: {0}")]
+    NotSubmitted(String),
     #[error("transport send failed: {0}")]
     Send(String),
     #[error("transport receive failed: {0}")]
@@ -1312,6 +1321,8 @@ enum ZmqSdkActorPayload {
     Single(LxmfSdkOutboundMessage),
     Batch(LxmfSdkOutboundBatch),
     Status(String),
+    ResolvePath(String),
+    SyncSelectedNode,
     RegisterIdentity(RchServiceIdentityConfig),
     UpdateIdentity {
         display_name: String,
@@ -1330,7 +1341,8 @@ enum ZmqSdkActorPayload {
 impl ZmqSdkActorPayload {
     fn response_wait_timeout(&self, config: &ZmqPipelineBackendConfig) -> Duration {
         let operation_rpcs = match self {
-            Self::RegisterIdentity(_) | Self::UpdateIdentity { .. } => 3,
+            Self::RegisterIdentity(_) | Self::UpdateIdentity { .. } | Self::SyncSelectedNode => 3,
+            Self::ResolvePath(_) => 2,
             _ => 1,
         };
         actor_response_wait_timeout(config, operation_rpcs)
@@ -1341,6 +1353,8 @@ impl ZmqSdkActorPayload {
             Self::Single(_) => 1,
             Self::Batch(batch) => batch.messages.len(),
             Self::Status(_)
+            | Self::ResolvePath(_)
+            | Self::SyncSelectedNode
             | Self::RegisterIdentity(_)
             | Self::UpdateIdentity { .. }
             | Self::Announce
@@ -1358,6 +1372,7 @@ impl ZmqSdkActorPayload {
 enum ZmqSdkActorResponse {
     Batch(Vec<LxmfSdkOutboundBatchResult>),
     Status(Option<LxmfDeliverySnapshot>),
+    Control(JsonValue),
     Identity(IdentityBundle),
     Announce(Option<String>),
     Events(ReticulumdEventBatch),
@@ -1618,7 +1633,7 @@ impl ZmqDataPlane {
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 self.metrics.rollback_enqueued(queued_at, is_send_lane);
-                Err(TransportError::Send(
+                Err(TransportError::NotSubmitted(
                     "LXMF-rs ZeroMQ data-plane actor stopped".to_string(),
                 ))
             }
@@ -1657,7 +1672,7 @@ fn send_lxmf_zmq_outbound_message_via_actor(
                 "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
             )),
             mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+                TransportError::NotSubmitted("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
     let response = response_rx
@@ -1704,7 +1719,7 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
                 "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
             )),
             mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+                TransportError::NotSubmitted("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
     response_rx
@@ -1724,6 +1739,7 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
             | ZmqSdkActorResponse::Announce(_)
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Control(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
             )),
@@ -1747,7 +1763,7 @@ fn lxmf_zmq_delivery_status_via_actor(
                 "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
             )),
             mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+                TransportError::NotSubmitted("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
     response_rx
@@ -1767,6 +1783,7 @@ fn lxmf_zmq_delivery_status_via_actor(
             | ZmqSdkActorResponse::Announce(_)
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Control(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
             )),
@@ -1789,7 +1806,7 @@ fn announce_lxmf_zmq_identity_via_actor(
                 "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
             )),
             mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Send("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+                TransportError::NotSubmitted("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
     response_rx
@@ -1809,6 +1826,7 @@ fn announce_lxmf_zmq_identity_via_actor(
             | ZmqSdkActorResponse::Identity(_)
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Control(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-announce response".to_string(),
             )),
@@ -1833,7 +1851,7 @@ fn poll_lxmf_zmq_events_via_actor(
                 "LXMF-rs ZeroMQ SDK send queue is full (capacity {LXMF_ZMQ_SEND_QUEUE_CAPACITY})"
             )),
             mpsc::TrySendError::Disconnected(_) => {
-                TransportError::Receive("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
+                TransportError::NotSubmitted("LXMF-rs ZeroMQ SDK send actor stopped".to_string())
             }
         })?;
     response_rx
@@ -1853,6 +1871,7 @@ fn poll_lxmf_zmq_events_via_actor(
             | ZmqSdkActorResponse::Identity(_)
             | ZmqSdkActorResponse::Announce(_)
             | ZmqSdkActorResponse::MessageHistory(_)
+            | ZmqSdkActorResponse::Control(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-event-poll response".to_string(),
             )),
@@ -2000,7 +2019,11 @@ fn run_zmq_sdk_actor(
             match open_zmq_sdk_actor_session(&config) {
                 Ok(opened) => session = Some(opened),
                 Err(error) => {
-                    send_actor_response(&request.response, Err(error), "legacy session startup");
+                    send_actor_response(
+                        &request.response,
+                        Err(TransportError::NotSubmitted(error.to_string())),
+                        "legacy session startup",
+                    );
                     continue;
                 }
             }
@@ -2038,7 +2061,7 @@ fn actor_response_wait_timeout(config: &ZmqPipelineBackendConfig, operation_rpcs
 }
 
 fn expired_actor_request() -> TransportError {
-    TransportError::Receive(
+    TransportError::NotSubmitted(
         "LXMF-rs ZeroMQ request expired in the actor queue before execution".to_string(),
     )
 }
@@ -2114,6 +2137,12 @@ fn send_lxmf_zmq_actor_request(
         }
         ZmqSdkActorPayload::Status(message_id) => {
             send_lxmf_zmq_actor_status(session, &message_id).map(ZmqSdkActorResponse::Status)
+        }
+        ZmqSdkActorPayload::ResolvePath(destination) => {
+            resolve_zmq_actor_path(session, &destination).map(ZmqSdkActorResponse::Control)
+        }
+        ZmqSdkActorPayload::SyncSelectedNode => {
+            sync_zmq_actor_selected_node(session).map(ZmqSdkActorResponse::Control)
         }
         ZmqSdkActorPayload::RegisterIdentity(config) => {
             register_zmq_actor_identity(session, config).map(ZmqSdkActorResponse::Identity)
@@ -2205,46 +2234,6 @@ fn send_lxmf_zmq_actor_single_message(
     LxmfSdk::send(&session.client, lxmf_sdk_send_request(message))
         .map(|message_id| message_id.0)
         .map_err(transport_sdk_error)
-}
-
-fn send_lxmf_zmq_actor_batch(
-    session: &mut ZmqSdkActorSession,
-    batch: LxmfSdkOutboundBatch,
-) -> Result<Vec<LxmfSdkOutboundBatchResult>, TransportError> {
-    let destinations = batch
-        .messages
-        .iter()
-        .map(|message| (message.correlation_id.clone(), message.destination.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let request = lxmf_sdk_batch_send_request(batch)?;
-    let result = session
-        .client
-        .backend()
-        .send_batch(request)
-        .map_err(transport_sdk_error)?;
-    let mut output = Vec::with_capacity(result.results.len());
-    for item in result.results {
-        let message_id = item.message_id.unwrap_or_default();
-        if item.accepted && message_id.is_empty() {
-            return Err(TransportError::Send(
-                "LXMF-rs ZeroMQ SDK accepted batch item missing message_id".to_string(),
-            ));
-        }
-        let destination = destinations.get(&item.id).cloned().unwrap_or_default();
-        output.push(LxmfSdkOutboundBatchResult {
-            id: item.id,
-            message_id,
-            destination,
-            accepted: item.accepted,
-            error: item.error.map(|error| LxmfSdkOutboundBatchError {
-                code: error.code,
-                message: error.message,
-                category: error.category,
-                retryable: error.retryable,
-            }),
-        });
-    }
-    Ok(output)
 }
 
 fn send_lxmf_zmq_actor_status(
@@ -4237,6 +4226,8 @@ mod tests {
                 "sdk.capability.identity_multi",
                 "sdk.capability.identity_import_export",
                 "sdk.capability.identity_discovery",
+                "sdk.capability.rns_transport",
+                "sdk.capability.propagation",
             ] {
                 if !capabilities
                     .iter()
@@ -4577,7 +4568,7 @@ mod tests {
                 correlation_id: "after-shutdown".to_string(),
             })
             .expect_err("work after shutdown must fail");
-        assert!(matches!(error, TransportError::Send(_)));
+        assert!(matches!(error, TransportError::NotSubmitted(_)));
     }
 
     #[test]
@@ -5829,6 +5820,7 @@ mod tests {
         assert_eq!(received.source.as_str(), expected_source.as_str());
     }
 
+    include!("sdk_routing_tests.rs");
     include!("identity_update_tests.rs");
     include!("issue_238_tests.rs");
 }
