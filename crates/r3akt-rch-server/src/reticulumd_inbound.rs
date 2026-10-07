@@ -3,6 +3,68 @@ use super::{
     sha256_lower_hex, unix_now_ms,
 };
 
+pub(crate) fn recover_history(
+    state: &AppState,
+    source: &str,
+    mut fetch_page: impl FnMut(
+        Option<String>,
+    ) -> Result<r3akt_transport_rns::LxmfMessageHistoryPage, ApiError>,
+) -> Result<usize, ApiError> {
+    let mut cursor = None;
+    let mut recovered = 0_usize;
+    for _ in 0..100 {
+        let page = fetch_page(cursor.clone())?;
+        for message in &page.messages {
+            if !is_inbound_to_source(&message.direction, &message.destination, source) {
+                continue;
+            }
+            let value = serde_json::to_value(message)
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            if import_message(state, &value, source)? {
+                recovered = recovered.saturating_add(1);
+            }
+        }
+        let next_cursor = page.next_cursor;
+        if next_cursor.is_none() || next_cursor == cursor {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    Ok(recovered)
+}
+
+pub(crate) fn import_message(
+    state: &AppState,
+    message: &Value,
+    source: &str,
+) -> Result<bool, ApiError> {
+    let direction = message
+        .get("direction")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let destination = message
+        .get("destination")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !is_inbound_to_source(direction, destination, source) {
+        return Ok(false);
+    }
+    let Some(envelope) = decode_message_or_quarantine(state, message, source)? else {
+        return Ok(false);
+    };
+    if super::reticulumd_inbound_was_already_processed(state, &envelope)? {
+        return Ok(false);
+    }
+    super::process_reticulumd_inbound_envelope(state, &envelope)?;
+    super::record_reticulumd_inbound_worker_received(state, &envelope);
+    Ok(true)
+}
+
+fn is_inbound_to_source(direction: &str, destination: &str, source: &str) -> bool {
+    (direction.eq_ignore_ascii_case("in") || direction.eq_ignore_ascii_case("inbound"))
+        && destination.eq_ignore_ascii_case(source)
+}
+
 pub(crate) fn decode_event_or_quarantine(
     state: &AppState,
     event: &r3akt_transport_rns::ReticulumdEventRecord,
