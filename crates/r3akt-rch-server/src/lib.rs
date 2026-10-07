@@ -119,7 +119,7 @@ use r3akt_transport_rns::{
     LxmfSdkOutboundBatchResult, LxmfSdkSharedOutboundBatch, LxmfSdkSharedPayload,
     LxmfSdkSharedRecipient, RchServiceIdentityConfig, ReticulumdAnnounceRecord, ZmqDataPlane,
     delivery_snapshot_receipt_status, list_reticulumd_announces, lxmf_shared_batch_to_legacy_batch,
-    poll_reticulumd_events, reticulumd_message_to_envelope,
+    poll_reticulumd_events,
 };
 #[cfg(test)]
 mod lxmf_load_tests;
@@ -3022,41 +3022,18 @@ fn recover_lxmf_zmq_history_after_stream_gap(
     let data_plane = state.lxmf_zmq_data_plane.as_ref().ok_or_else(|| {
         ApiError::ServiceUnavailable("ZeroMQ data plane is unavailable".to_string())
     })?;
-    let mut cursor = None;
-    let mut recovered = 0_usize;
-    for _ in 0..100 {
-        let page = data_plane
+    reticulumd_inbound::recover_history(state, source, |cursor| {
+        data_plane
             .message_history(LxmfMessageHistoryListRequest {
                 peer_id: None,
                 conversation_id: None,
                 include_receipts: Some(false),
                 limit: Some(1_000),
                 before_ts: None,
-                cursor: cursor.clone(),
+                cursor,
             })
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        for message in page
-            .messages
-            .iter()
-            .filter(|message| message.direction.eq_ignore_ascii_case("in"))
-        {
-            let value = serde_json::to_value(message)
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            if let Some(envelope) = reticulumd_message_to_envelope(&value, source)
-                .map_err(|error| ApiError::Internal(error.to_string()))?
-            {
-                process_reticulumd_inbound_envelope(state, &envelope)?;
-                record_reticulumd_inbound_worker_received(state, &envelope);
-                recovered = recovered.saturating_add(1);
-            }
-        }
-        let next_cursor = page.next_cursor;
-        if next_cursor.is_none() || next_cursor == cursor {
-            break;
-        }
-        cursor = next_cursor;
-    }
-    Ok(recovered)
+            .map_err(|error| ApiError::Internal(error.to_string()))
+    })
 }
 
 fn process_reticulumd_event_batch(
@@ -3159,29 +3136,7 @@ fn process_reticulumd_list_messages_result(
     };
     let mut imported = 0_usize;
     for message in messages.iter().rev() {
-        let direction = message
-            .get("direction")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if direction != "in" && direction != "inbound" {
-            continue;
-        }
-        let destination = message
-            .get("destination")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !destination.eq_ignore_ascii_case(source) {
-            continue;
-        }
-        if let Some(envelope) =
-            reticulumd_inbound::decode_message_or_quarantine(state, message, source)?
-        {
-            if reticulumd_inbound_was_already_processed(state, &envelope)? {
-                continue;
-            }
-            process_reticulumd_inbound_envelope(state, &envelope)?;
-            record_reticulumd_inbound_worker_received(state, &envelope);
+        if reticulumd_inbound::import_message(state, message, source)? {
             imported = imported.saturating_add(1);
         }
     }
@@ -24785,6 +24740,7 @@ mod tests {
     mod resource_efficiency;
     mod sdk_receipt_recovery;
     mod sdk_routing;
+    mod stream_gap_recovery;
 
     use crate::BASE64_STANDARD;
     use std::io::{Read, Write};
