@@ -1,7 +1,9 @@
 # Resource-stability evidence and task status
 
-Updated 8 October 2026. The goal is **active and incomplete**. No sustained
-acceptance, production recovery, release or publication is claimed here.
+Updated 8 October 2026. The broader resource-stability goal is **incomplete and
+stopped**. The initiated framework fixes are published; the final scoped RCH
+integration is locally verified. No sustained acceptance, production recovery
+or release is claimed here.
 
 ## Completed checkpoints
 
@@ -141,9 +143,9 @@ invalid 4 KiB inbound chat payload. None is attributed to the production inciden
 
 | Task | Status and remaining evidence |
 | --- | --- |
-| T1 fixture/harness | Partial: valid large history and constrained sampling work; independent short real-delivery and browser measurement preflights pass; their integration with populated history, continuing browser load and operational transitions remains. |
-| T2 attribution | Partial: owned inventory/event diagnostics, maintenance and PUSH/PULL stage timing/wire-buffer accounting pass. SDK failed-exchange method/session/stage correlation is committed locally and independently verified. RCH bootstrap-phase and daemon request/lock correlation, canonical ROUTER metrics and full heap/byte attribution remain. |
-| T3 daemon ownership | Inventory cutover committed locally as `540e449a`; 781 RPC library tests and independent 14-test issue-657 verification pass. Correctness/maintainer reviews and same-fixture comparison pass for this partial checkpoint; no final stability claim. Aggregate byte limits remain. |
+| T1 fixture/harness | Partial: valid large history and constrained sampling work; empty and populated direct delivery, maintenance and history-preservation gates pass. Operational propagation transitions, continuing browser load and regular-filesystem/cold-page acceptance remain. |
+| T2 attribution | Partial: owned inventory/event and PUSH/PULL diagnostics pass; SDK failed-exchange correlation is integrated through the pinned SDK. Bounded heap attribution identified and verified removal of poll-metadata copy churn. RCH bootstrap/daemon request-lock correlation, canonical ROUTER metrics and aggregate variable-payload attribution remain. |
+| T3 daemon ownership | Inventory cutover `540e449a` and metadata projection `3173eb70` are published in the framework. Affected tests, reviews and same-fixture comparisons pass for these partial checkpoints; aggregate byte limits, operational propagation and sustained stability remain. |
 | T4 indexed migration (#256) | Pending historical-collision policy answer; no resolution policy selected. |
 | T5 durable message APIs | Pending; SQLite must replace every resident-only reader/transition before eviction. |
 | T6 bounded cache (#252) | Pending selected retention/active-work policy and T5. |
@@ -347,3 +349,56 @@ one child-process regression (119 opt-in tests ignored). Hosted full CI on
 `bed26158` passed all nine active jobs, including strict workspace quality,
 builds, unit tests, contracts and architecture checks. The separate Verify
 workflow is not implied by that CI result.
+
+
+### Final scoped evidence and stopping point
+
+The fresh metadata-only comparison, profile attempt 3, passed all 130 unique
+authenticated durable message/receipt chains, 2,709 polls with zero errors,
+history preservation and a 3,464-ms maintenance cycle pruning 34,908 pending
+marks. Its 427.69-second observation retained all 135,893 original payloads,
+all original RCH history, completed marks and surviving association contents.
+All three services exited gracefully; their PIDs, cgroups and SDK peer were
+independently confirmed absent. Frozen RCH and the SDK fixture remained exactly
+those used in profile attempt 1; only the daemon's metadata projection changed.
+
+Exhaustive allocation-cost stack files, rather than a top-N report, verify the
+specific cutover: the old full-state poll path accounted for 1,385,744 allocations,
+including 1,380,352 peer-string clones. The corrected trace contains zero
+allocations through that full-state poll path across all 8,230 recorded stacks.
+This removes confirmed transient churn. The sampled peak remains approximately
+12.2 MB; it is not evidence of a smaller retained heap or a production plateau.
+The corrected trace has 48,887 live-heap samples, a sampled maximum of
+12,242,407 bytes and 6,232,328 bytes at the last definitely pre-shutdown sample.
+Offline analysis uses bounded owned workers; independent verification is recorded
+with the local evidence.
+
+Profile attempt 2 is failed evidence: temporary-storage quota interrupted it
+and left an empty delivery-result file. Its error context and raw trace remain
+preserved. Only its node0 graceful status was captured; absence of the other
+services was independently checked. Stopped populated9/profile1/profile2 data
+were relocated to regular disk with all 540 file hashes and sizes verified,
+retaining their original paths as symlinks. No production cleanup occurred.
+
+The final combined-build smoke, empty attempt 17, uses RCH `703bdae` and its
+new published-framework SDK pin with the corrected frozen daemon. It passed ten
+authenticated durable message/receipt chains, 141 polls with zero errors and all
+three graceful exits in 21.90 seconds. Independent verification confirms source,
+binary and harness hashes, full payloads, exact IDs and no remaining owned
+processes. This qualifies integration, not sustained resource stability.
+
+The authorized finish scope is implemented and locally verified. The broader
+resource-stability goal remains incomplete and stopped: bounded durable server
+and UI history, byte admission, remaining keyed command families/migrations,
+operation cancellation/join ownership and the representative multi-hour soak
+remain. RCH #252–257 and LXMF-rs #657 do not meet their full acceptance criteria
+and are not closed by these changes. No release or production deployment was
+performed in this finish checkpoint.
+
+Local evidence: `/tmp/rch-resource-stability/evidence/` contains the final
+readiness, independent verifiers, `metadata-allocation-counterfactual.json`
+and immutable binary manifests. Profile3 provenance and analysis, exhaustive
+stack reports and raw profiles are under the canonical workspace's ignored
+`target/resource-stability-evidence/`. Hosted framework CI passed on
+[`bed26158`](https://github.com/FreeTAKTeam/LXMF-rs/actions/runs/37824846170);
+the separate Verify workflow has its own result and is not implied here.
