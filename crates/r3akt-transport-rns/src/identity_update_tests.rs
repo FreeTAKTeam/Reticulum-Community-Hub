@@ -119,7 +119,7 @@ fn zmq_data_plane_identity_update_maps_sdk_errors() {
             serde_json::json!({"runtime_id": "runtime-rch-zmq"}),
             identity_result,
             serde_json::json!({"accepted": true}),
-            serde_json::json!({"accepted": true}),
+            serde_json::json!({"accepted": true, "identity": "11111111111111111111111111111111", "delivery_destination": "22222222222222222222222222222222"}),
             serde_json::json!({
                 "__rpc_error": {
                     "code": "SDK_IDENTITY_ANNOUNCE_FAILED",

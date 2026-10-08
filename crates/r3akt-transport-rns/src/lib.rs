@@ -12,6 +12,11 @@
 mod actor_helpers;
 mod field_commands;
 mod sdk_batch_admission;
+mod sdk_identity;
+use sdk_identity::{
+    RegisteredZmqIdentity, register_zmq_actor_identity, send_lxmf_zmq_actor_announce,
+    update_zmq_actor_identity,
+};
 
 use sdk_batch_admission::send_lxmf_zmq_actor_batch;
 mod sdk_path_control;
@@ -37,8 +42,7 @@ use base64::Engine;
 use lxmf_sdk::{
     BatchSendItem as LxmfSdkBatchSendItem, BatchSendRequest as LxmfSdkBatchSendRequest,
     Client as LxmfSdkClient, EventBatch as LxmfSdkEventBatch, EventCursor as LxmfSdkEventCursor,
-    IdentityAnnounceRequest, IdentityBundle, IdentityImportRequest, IdentityRef, LxmfSdk,
-    LxmfSdkIdentity, MessageHistoryListRequest as LxmfSdkMessageHistoryListRequest,
+    IdentityBundle, LxmfSdk, MessageHistoryListRequest as LxmfSdkMessageHistoryListRequest,
     MessageHistoryPage as LxmfSdkMessageHistoryPage, MessageId as LxmfSdkMessageId,
     PropagationPeerSyncRequest, PropagationRemoteRequest, RnsSdkTransport, RnsTransportOperation,
     SdkConfig as LxmfSdkConfig, SdkControlRequest, SdkError as LxmfSdkError,
@@ -1389,7 +1393,7 @@ struct ZmqSdkActorRequest {
 struct ZmqSdkActorSession {
     client: LxmfSdkClient<ZmqPipelineBackendClient>,
     runtime_info: ZmqRuntimeInfo,
-    identity: Option<RchServiceIdentityConfig>,
+    identity: Option<RegisteredZmqIdentity>,
 }
 
 impl ZmqDataPlane {
@@ -2169,64 +2173,6 @@ fn send_lxmf_zmq_actor_request(
     }
 }
 
-fn register_zmq_actor_identity(
-    session: &mut ZmqSdkActorSession,
-    config: RchServiceIdentityConfig,
-) -> Result<IdentityBundle, TransportError> {
-    let identity = announce_zmq_actor_identity(session, &config)?;
-    session.identity = Some(config);
-    Ok(identity)
-}
-
-fn update_zmq_actor_identity(
-    session: &mut ZmqSdkActorSession,
-    display_name: String,
-    capabilities: Vec<String>,
-    metadata: BTreeMap<String, JsonValue>,
-) -> Result<IdentityBundle, TransportError> {
-    let Some(mut config) = session.identity.clone() else {
-        return Err(TransportError::Send(
-            "RCH service identity is not registered".to_string(),
-        ));
-    };
-    config.display_name = display_name;
-    config.capabilities = capabilities;
-    config.metadata = metadata;
-    register_zmq_actor_identity(session, config)
-}
-
-fn announce_zmq_actor_identity(
-    session: &mut ZmqSdkActorSession,
-    config: &RchServiceIdentityConfig,
-) -> Result<IdentityBundle, TransportError> {
-    let identity = LxmfSdkIdentity::identity_import(
-        &session.client,
-        IdentityImportRequest {
-            bundle_base64: base64::engine::general_purpose::STANDARD.encode(&config.private_key),
-            passphrase: None,
-            display_name: Some(config.display_name.clone()),
-            capabilities: config.capabilities.clone(),
-            metadata: config.metadata.clone(),
-            extensions: BTreeMap::new(),
-        },
-    )
-    .map_err(transport_sdk_error)?;
-    LxmfSdkIdentity::identity_activate(&session.client, IdentityRef(identity.identity.0.clone()))
-        .map_err(transport_sdk_error)?;
-    LxmfSdkIdentity::identity_announce(
-        &session.client,
-        IdentityAnnounceRequest {
-            identity: Some(IdentityRef(identity.identity.0.clone())),
-            display_name: Some(config.display_name.clone()),
-            capabilities: config.capabilities.clone(),
-            metadata: config.metadata.clone(),
-            extensions: BTreeMap::new(),
-        },
-    )
-    .map_err(transport_sdk_error)?;
-    Ok(identity)
-}
-
 fn send_lxmf_zmq_actor_single_message(
     session: &mut ZmqSdkActorSession,
     message: LxmfSdkOutboundMessage,
@@ -2241,14 +2187,6 @@ fn send_lxmf_zmq_actor_status(
     message_id: &str,
 ) -> Result<Option<LxmfDeliverySnapshot>, TransportError> {
     LxmfSdk::status(&session.client, LxmfSdkMessageId(message_id.to_string()))
-        .map_err(transport_sdk_error)
-}
-
-fn send_lxmf_zmq_actor_announce(
-    session: &mut ZmqSdkActorSession,
-) -> Result<Option<String>, TransportError> {
-    LxmfSdkIdentity::identity_announce_now(&session.client)
-        .map(|_| None)
         .map_err(transport_sdk_error)
 }
 
@@ -3841,6 +3779,7 @@ mod tests {
         method: String,
         params: serde_json::Value,
         response_endpoint: Option<String>,
+        session_id: Option<String>,
     }
 
     #[derive(Debug, Default)]
@@ -3892,6 +3831,7 @@ mod tests {
                 method: method.to_string(),
                 params: params.unwrap_or(serde_json::Value::Null),
                 response_endpoint: None,
+                session_id: None,
             });
             Ok(ReticulumdRpcResponse {
                 id: 1,
@@ -4028,6 +3968,7 @@ mod tests {
                             method: request.method.clone(),
                             params: request.params.unwrap_or(serde_json::Value::Null),
                             response_endpoint: envelope.response_endpoint.clone(),
+                            session_id: Some(envelope.session_id.clone()),
                         });
                     let response = if request.method == "sdk_negotiate_v2" {
                         complete_test_negotiation_response(response)
@@ -5822,6 +5763,7 @@ mod tests {
 
     include!("sdk_routing_tests.rs");
     include!("identity_update_tests.rs");
+    include!("identity_contract_tests.rs");
     include!("issue_238_tests.rs");
 }
 

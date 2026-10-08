@@ -8,13 +8,14 @@ fn issue_238_event_poll_waits_for_delayed_identity_restoration() {
         "delivery_destination": "service-destination"
     }});
     let accepted = serde_json::json!({"accepted": true});
+    let announced = serde_json::json!({"accepted": true, "identity": "service-identity", "delivery_destination": "service-destination"});
     let server = spawn_zmq_sequence_server_with_delay(command.clone(), vec![
-        negotiation.clone(), identity.clone(), accepted.clone(), accepted.clone(),
+        negotiation.clone(), identity.clone(), accepted.clone(), announced.clone(),
         serde_json::json!({"__rpc_error": {
             "code": "SDK_RUNTIME_NOT_RUNNING", "message": "daemon restarted",
             "machine_code": "SDK_RUNTIME_NOT_RUNNING", "category": "runtime", "retryable": true
         }}),
-        negotiation, identity, accepted.clone(), accepted,
+        negotiation, identity, accepted, announced,
         serde_json::json!({"events": [], "next_cursor": "recovered-cursor", "dropped_count": 0}),
     ], Arc::clone(&captured), Duration::from_millis(300));
     let plane = ZmqDataPlane::new_with_timeout(command, response, Duration::from_millis(400))
