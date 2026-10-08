@@ -520,3 +520,17 @@ and runtime allocation evidence pass.
 The 8 October PRE review found no blockers and three major/two minor corrections. The plan now names a process-level shutdown boundary/test, all protocol/common-context command callers, operationally valid payload and post-maintenance fixture validation, effective cgroup/browser preflight, and a numerical-limit ownership/freeze gate. Re-review these corrections before T1 execution.
 
 PRE re-review: aligned, no remaining blocker/major before T1. Execution started with isolated Linux-control preflight and fail-closed report regression tests. T1 remains in progress; no application fix or sustained acceptance claimed.
+
+
+### Authorized finish integration: immutable framework pin
+
+After publishing the reviewed framework fixes, align the existing RCH Cargo
+Git sources, lockfile, verification/release workflow `LXMF_REF` values and
+current packaging/readiness/transition documentation to that one published
+commit. Preserve dependency versions, features, unrelated lock resolution and
+historical evidence pins. This removes the old SDK/daemon reference from the
+current build path; it creates no new runtime owner or compatibility path.
+Validate the exact Git source with locked Cargo resolution and the committed
+server-readiness runner before publication. Keep the original frozen binaries
+for the metadata-only counterfactual; that comparison must not change RCH or
+the SDK fixture simultaneously. No release or production deployment is included.

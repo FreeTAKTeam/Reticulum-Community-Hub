@@ -159,7 +159,11 @@ fn zmq_data_plane_identity_update_maps_sdk_errors() {
             assert_eq!(code, "SDK_IDENTITY_ANNOUNCE_FAILED");
             assert_eq!(category.as_deref(), Some("Internal"));
             assert!(!retryable);
-            assert_eq!(message, "identity import rejected");
+            assert!(message.starts_with("identity import rejected [sdk_zmq_exchange session="));
+            assert!(message.contains(
+                " request=5 method=sdk_identity_import_v2 stage=rpc response elapsed_ms="
+            ));
+            assert!(message.ends_with(" send_completed=true ignored_replies=0]"));
         }
         other => panic!("expected SDK error, got {other:?}"),
     }

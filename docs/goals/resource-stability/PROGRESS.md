@@ -319,3 +319,31 @@ only the unchanged-write and operation-right slices. LXMF-rs #657 has concrete
 inventory/copy corrections and diagnostics, but lacks the required several-hour
 production-shaped stable memory-plus-swap acceptance. None of these seven issues
 is fully resolved by this checkpoint. They must remain open.
+
+
+### Published-framework integration validation
+
+RCH now pins all five LXMF Cargo sources and all three verification/release
+workflow references to published framework commit
+`fb5c2a1f938a7aab2f68e67976ef4e074218f258`. The lockfile retains all 285 packages;
+versions, features and unrelated resolution are unchanged. The subsequent
+framework commit `bed26158b2238a1d668d6c0f10a5b35f27de15e6` only replaces an
+equivalent range predicate in the resource-fixture example; it changes no
+library or daemon source. The tested runtime pin remains immutable.
+
+Exact-pin integration exposed one stale test expectation for the bare SDK error
+message. The test now requires the original message plus the actual method,
+request and response-stage context, preserving error-code/category/retryability
+assertions. Its real ZeroMQ exchange passed independent execution. No RCH
+production behavior changed in that adjustment.
+
+The final committed server-readiness runner passed strict workspace formatting
+and Clippy, 693 workspace/doc tests with two explicitly ignored, strict Rust
+documentation, link checks, release build and HTTP smoke. An earlier quota-failed
+run is preserved; validation was rerun with temporary files on regular disk.
+An intermediate run's one old-message assertion failure is also preserved.
+The LXMF affected suite passed 1,828 top-level cases across 41 executables plus
+one child-process regression (119 opt-in tests ignored). Hosted full CI on
+`bed26158` passed all nine active jobs, including strict workspace quality,
+builds, unit tests, contracts and architecture checks. The separate Verify
+workflow is not implied by that CI result.

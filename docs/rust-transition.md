@@ -215,7 +215,7 @@ Release blockers cleared in the latest parity pass:
   for the authority boundary and validation requirements.
 - Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
-  `04a0ba5e5676a521c87bd7d77064bacf598f08e6` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657). The matching
+  `fb5c2a1f938a7aab2f68e67976ef4e074218f258` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics). The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.
