@@ -19,6 +19,8 @@ mod sqlite_announces;
 pub use sqlite_announces::IdentityAnnounceSummary;
 mod sqlite_commands;
 mod sqlite_marker_idempotency;
+mod sqlite_payload_deltas;
+use sqlite_payload_deltas::save_payload_delta;
 mod sqlite_read_snapshots;
 mod sqlite_record_updates;
 mod sqlite_roster;
@@ -10662,41 +10664,6 @@ where
         &format!("INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})"),
         params_from_iter(values),
     )?;
-    Ok(())
-}
-
-fn save_payload_delta<T, KeyFn, UpsertFn>(
-    transaction: &Transaction<'_>,
-    table: &str,
-    before: &[T],
-    after: &[T],
-    key_columns: KeyFn,
-    indexed_columns: UpsertFn,
-) -> Result<(), RchCoreError>
-where
-    T: Serialize,
-    KeyFn: Fn(&T) -> Vec<(&'static str, SqlValue)> + Copy,
-    UpsertFn: Fn(&T) -> Vec<(&'static str, SqlValue)> + Copy,
-{
-    let before_keys = before
-        .iter()
-        .map(|record| {
-            let columns = key_columns(record);
-            (sql_key_string(&columns), columns)
-        })
-        .collect::<HashMap<_, _>>();
-    let after_key_set = after
-        .iter()
-        .map(|record| sql_key_string(&key_columns(record)))
-        .collect::<HashSet<_>>();
-    for (key, columns) in before_keys {
-        if !after_key_set.contains(key.as_str()) {
-            delete_payload_row(transaction, table, columns)?;
-        }
-    }
-    for record in after {
-        upsert_payload_row(transaction, table, indexed_columns(record), record)?;
-    }
     Ok(())
 }
 
