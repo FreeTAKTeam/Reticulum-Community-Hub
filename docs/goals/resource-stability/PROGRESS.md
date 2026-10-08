@@ -142,7 +142,7 @@ invalid 4 KiB inbound chat payload. None is attributed to the production inciden
 | Task | Status and remaining evidence |
 | --- | --- |
 | T1 fixture/harness | Partial: valid large history and constrained sampling work; independent short real-delivery and browser measurement preflights pass; their integration with populated history, continuing browser load and operational transitions remains. |
-| T2 attribution | Partial: owned inventory/event diagnostics and maintenance duration added; PUSH/PULL stage timing and wire-buffer ownership diagnostics implemented, with completed-output/unpolled-delivery cancellation tests; correctness/maintainer and independent metric review passed. Canonical ROUTER and full heap/byte admission remain. |
+| T2 attribution | Partial: owned inventory/event diagnostics, maintenance and PUSH/PULL stage timing/wire-buffer accounting pass. SDK failed-exchange method/session/stage correlation is committed locally and independently verified. RCH bootstrap-phase and daemon request/lock correlation, canonical ROUTER metrics and full heap/byte attribution remain. |
 | T3 daemon ownership | Inventory cutover committed locally as `540e449a`; 781 RPC library tests and independent 14-test issue-657 verification pass. Correctness/maintainer reviews and same-fixture comparison pass for this partial checkpoint; no final stability claim. Aggregate byte limits remain. |
 | T4 indexed migration (#256) | Pending historical-collision policy answer; no resolution policy selected. |
 | T5 durable message APIs | Pending; SQLite must replace every resident-only reader/transition before eviction. |
@@ -165,3 +165,88 @@ in `29a39e14`. The new public-SDK driver also passes strict example Clippy
 after equivalent formatting-only baseline SDK corrections. Required
 full-workspace, daemon feature, UI and release-readiness gates
 have not yet been completed for the overall goal.
+
+## Registered identity contract checkpoint
+
+Local RCH commit `fc82358` keeps the public SDK's returned identity bundle with
+its registered configuration. Registration/update require accepted activation
+and accepted announce with the exact imported identity/destination before
+publishing success; subsequent registered announces explicitly select that
+identity without reimporting it. Standalone behavior and prior configuration
+restoration on a new session remain unchanged. This does not prove why earlier
+populated announces were not learned, and is not a memory fix.
+
+Seven new contract regressions plus existing register/update/recovery tests
+passed independent execution. The final server-readiness runner passed strict
+workspace formatting/Clippy, 689 workspace/doc tests (two ignored), strict docs
+and 57 links, release build and HTTP smoke. The exact frozen build then passed
+empty-history real delivery attempts 14 and 15: ten distinct authenticated,
+encrypted, durable message/receipt chains each, 140/141 polls with no errors,
+and all three services exited gracefully. Attempt 15 uses the separately frozen
+10-second announce cadence; both runs retain `passed_final_acceptance=false`.
+
+## Populated discovery attribution and fixture correction
+
+Attempt 4 failed local temporary-storage quota during activation; its result
+file could not be written, so an external storage-failure record preserves the
+exit status, explicit daemon quota error, immutable source hashes and absent
+owned services. No delivery observation occurred. Stopped failed directories
+1–6 are preserved on regular disk under the canonical workspace's ignored
+`target/resource-stability-evidence/`, with symlinks retaining their original
+`/tmp/rch-pop-deliveryN` paths. This relocation does not change the filesystem
+model used while those experiments ran.
+
+Attempts 5–7 each failed the original 30-second discovery deadline after 27
+attempts. Existing sender traces in 6/7 show 28 RCH announce attempts including
+startup, each with `SentBroadcast`, three matched/sent interfaces and no failed
+interface. Receiver tracing in 7 shows 56 valid RCH packets held before the
+inbound queue by ingress control for 298.23–359.78 seconds. The selected RCH
+identity never became learned. All sources/hashes stayed intact and all owned
+services exited gracefully. These are failed setup experiments, not memory or
+delivery acceptance.
+
+The harness's one-second periodic daemon announces were an artificial burst
+source. A separately reviewed experiment freezes ten seconds in both daemon
+launches and the manifest, preserving ingress control, manual SDK/RCH discovery,
+all deadlines, 65 continuing pairs, maintenance, history and receipt gates.
+All 69 harness regressions pass. Populated attempt 8 uses the same frozen
+binaries and receive/send trace as attempt 7; discovery passed in 2.34 seconds.
+Its eight-minute observation ended as failed evidence at the unchanged receipt
+deadline: both receivers received all 65 unique payloads, both daemon stores
+mark all 65 outgoing messages delivered, and 3,043 event polls had zero errors,
+but RCH ended with only 27 delivered and 38 still sent. A successful maintenance
+cycle pruned 34,908 pending associations, and subsequent traffic continued. The
+final history/cardinality proof was not reached because receipt acceptance
+failed; all three services exited gracefully and the source hashes stayed
+unchanged. The cadence comparison supports the discovery-fixture correction,
+not the production incident's cause or final resource stability.
+
+The receipt mismatch is progressing backlog, not evidence of status expiry:
+RCH's delivered count rose from 15 to 27 after sends stopped. Source review found
+newest-first receipt scheduling with a four-RPC pass budget, plus guessed
+`sdk-` ID probes before the actual message ID. At two new messages per ten-second
+pass, those extra calls and initially unknown new sends can consume the budget
+before older pending messages are revisited. This is a concrete amplification/
+starvation lead; exact SDK binding and scheduler behavior require their own
+reviewed checkpoint. Raw snapshot: `receipt-mismatch-snapshot.json` in attempt 8.
+
+## SDK failed-exchange correlation checkpoint
+
+Local LXMF commit `5a651d01` adds borrowed, call-local failure context with actual
+method/session/request, stage, elapsed time, local send completion and a
+saturating ignored-reply count. It annotates an SDK error once, keeps existing
+semantic fields and details/extensions, and retains no successful-call registry,
+logs, events or tasks. Context strings are bounded to 128 ASCII characters and
+exclude parameters/authentication/endpoints/response contents/peer session IDs.
+A colliding detail key remains unchanged with message-only local context.
+Deadlines, resets and endpoint correlation behavior are unchanged. The existing
+raw remote-error metadata loss in `map_rpc_error` is documented and deferred.
+
+The final SDK suite passed 258 tests, with the live HTTP-vs-ZeroMQ stress test
+ignored because it needs explicit live endpoints. Strict all-target SDK Clippy,
+formatting, boundaries, module-size and the existing issue-369 source scanner
+passed. Independent execution of all 75 ZeroMQ tests verified unchanged source
+and binary hashes and no surviving owned test process group. The three exact
+pre-existing formatting warnings were corrected separately in `a0361689`.
+Frozen RCH/daemon experiments do not use this new SDK source; actual application
+integration and operational recovery remain outstanding.

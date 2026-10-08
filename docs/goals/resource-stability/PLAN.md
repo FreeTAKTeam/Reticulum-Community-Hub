@@ -141,6 +141,33 @@ seeded receiver's payloads. Keep that operational propagation qualification,
 continuing browser/lifecycle/slow-peer evidence and final plateau acceptance open.
 `passed_final_acceptance` remains false, regardless of this checkpoint's result.
 
+#### T1 diagnostic follow-up: freeze a non-burst periodic announce cadence
+
+Populated attempts 5/6 failed the unchanged 30-second discovery gate. Attempt 7
+adds only existing receive-admission debug logging and proves the peer held
+RCH's valid announce for approximately 300–360 seconds under ingress control;
+attempt 6 separately proves successful sender interface dispatch. The harness
+forces periodic daemon announces every second, including several destinations
+on a propagation node. The artificial cadence sustaining the receiver's burst
+state is the hypothesis the changed-cadence experiment must test. This is not evidence that RCH's explicit identity
+correction solves daemon memory growth or a production delivery incident.
+
+**Allowed files:** The T1 delivery harness, focused harness regression, these
+documents; no SDK/daemon/RCH production changes. Freeze periodic daemon announce
+interval at 10 seconds for both nodes and record it in every new run manifest.
+This produces approximately 0.3 periodic announces/second from the propagation
+node, before protocol duplicates or manual discovery. This is a test input,
+not a claim of equivalence to 285 unique imports/15 minutes. Keep manual public-SDK/RCH discovery calls, protocol ingress
+limits, the 30-second discovery deadline, 120-second activation allowance,
+480-second observation deadline, 65 continuing pairs, all history/cardinality,
+maintenance, authenticated delivery and shutdown gates unchanged.
+**Evidence:** Keep attempts 1–7 as failed experiments. The changed cadence starts
+a separately hashed experiment; its result cannot turn a prior run into a pass.
+Assert the manifest interval and both daemon launch arguments use the same
+frozen value, then repeat empty and populated real delivery. Capture the existing
+send/ingress trace for the first populated run and independently verify the
+result. Do not disable ingress control or extend a deadline to gain a pass.
+
 #### Separate application checkpoint: registered announce identity binding
 
 Populated delivery attempt 3 registered RCH's SDK-derived service destination
@@ -191,6 +218,58 @@ must account for service-charged file cache separately from process-private memo
 **Verification:** Existing #657 probes, focused RPC/daemon tests, stage timeout/recovery tests; short cgroup baseline under traffic and maintenance.
 **Evidence:** Identify measured dominant owners or allocation-producing stacks; do not infer current allocator composition from the old build's probe.
 **Depends on:** T1. **Parallel safe:** Read-only review only.
+
+#### Separate diagnostic checkpoint: SDK failed-exchange correlation
+
+The latest #657 evidence shows that requested RCH polling can fail while the
+daemon's actual poll counter stays flat and negotiation/import counters rise.
+A request number alone cannot identify the session, method or completed stage.
+This checkpoint adds failure context at the SDK transport owner; it is partial
+T2 attribution, not a recovery or memory fix.
+
+**Allowed files:** LXMF SDK ZeroMQ transport and a small sibling diagnostic
+helper, narrow module wiring, focused transport tests, investigation notes and
+these goal documents. RCH product/dependency pins, daemon production code,
+deadlines, retries, transport reset behavior and response-correlation policy
+remain outside this checkpoint.
+**Truth owner/contract:** One stack-owned context per actual SDK RPC records the
+generated session/request ID, actual method, current stage, elapsed time,
+whether send completed and the saturating number of unrelated replies ignored.
+Failed calls carry this context in a single namespaced error detail object and
+in the error message used by existing RCH adapters. Preserve the already-mapped
+`SdkError` code/category/retryable/actionable/cause/details/extensions exactly;
+the existing remote mapper's loss of raw `RpcError` metadata is a separate
+contract gap, and `support.rs` remains unchanged. Insert `sdk_zmq_exchange` only
+when that detail key is vacant, never overwriting an existing value; on collision
+the local context is message-only, and the existing detail is not trusted as
+local diagnostics. The suffix always carries local context. No new logs, event
+ring entries, global registry, background tasks or successful-call records.
+The new detail/suffix never includes parameters, authentication, endpoints,
+response bodies or peer session IDs; it does not sanitize or expand existing
+error text/details. `send_completed` means local ZeroMQ send returned success,
+not daemon receipt or processing. Each local method/session diagnostic string is capped at 128 ASCII
+characters, replacing non-identifier characters; the generated session is
+already bounded. This is a diagnostic representation bound, not an admission
+or business-retention policy.
+**Cutover:** Replace the request-ID-only timeout helper with the same transport
+context used for connection/lock/send/receive/decode failures. Mapped remote RPC errors
+may gain local context but keep their mapped semantic fields/details. The
+PUSH/PULL path continues ignoring unrelated replies; DEALER continues failing
+on correlation mismatch. A lock-wait timeout must not reset another owner.
+**Evidence:** Both endpoint modes, cold connection and lock-wait failures;
+actual negotiation/import/poll method distinction; completed send followed by
+timeout and ignored replies; malformed reply, DEALER mismatch and remote error
+metadata preservation including namespace collisions; bounded/redacted context and unchanged successful
+recovery. Existing SDK transport suites, strict SDK lint and issue-369 scanner
+where applicable. Independent PRE, correctness/maintainer and POST review.
+No live acceptance claim until the owning application uses the exact source.
+
+**Separate validation-only allowance:** Strict SDK all-target lint found three
+pre-existing `uninlined_format_args` warnings: two test assertions in
+`src/lifecycle.rs` and one gap warning in `examples/rpc_desktop_send.rs`.
+PRE approved exactly those positional-to-captured formatting substitutions,
+with unchanged text/format/behavior and no adjacent refactor. Keep this cleanup
+separate from the diagnostic implementation and verify the exact diff.
 
 ### T3 — Remove measured daemon amplification and bound variable payload ownership
 

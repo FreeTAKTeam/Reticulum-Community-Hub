@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from delivery_preflight import finish_evidence, healthy_sample
+from delivery_preflight import finish_evidence, healthy_sample, main
 from fixture_preservation import PopulatedFixture, verify_policy
 from fixtures import counts
 from linux_runtime import sha256
@@ -176,6 +176,35 @@ class FinishEvidenceTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_both_daemon_launches_use_the_manifest_cadence_without_disabling_ingress(self):
+        with tempfile.TemporaryDirectory(prefix='rch-cadence-') as directory:
+            output = Path(directory) / 'run'
+            binary = Path(__file__).resolve()
+            launches = []
+            def service(role, executable, arguments, owned_directory, *remaining):
+                if role == 'rch':
+                    raise RuntimeError('test stops before RCH launch')
+                launches.append(arguments)
+                return Mock(manifest={'role': role}, stop=Mock(return_value={'graceful': True}))
+            rpc = Mock()
+            rpc.call.return_value = {'delivery_destination_hash': 'a' * 32}
+            argv = ['delivery_preflight.py', '--server', str(binary), '--daemon', str(binary),
+                    '--sdk-peer', str(binary), '--output', str(output)]
+            with patch('sys.argv', argv), patch('delivery_preflight.Service', side_effect=service), \
+                 patch('delivery_preflight.LocalRpc', return_value=rpc), \
+                 patch('delivery_preflight.wait_ready'), \
+                 patch('delivery_preflight.free_ports', return_value=list(range(7000, 7007))):
+                self.assertEqual(main(), 1)
+            manifest = json.loads((output / 'manifest.json').read_text())
+            self.assertEqual(manifest['periodic_announce_interval_s'], 10)
+            self.assertEqual(len(launches), 2)
+            for index, arguments in enumerate(launches):
+                interval = arguments[arguments.index('--announce-interval-secs') + 1]
+                self.assertEqual(int(interval), manifest['periodic_announce_interval_s'])
+                config = (output / f'node{index}' / 'reticulum.toml').read_text()
+                self.assertNotIn('ingress_control', config)
+            self.assertFalse(json.loads((output / 'delivery-result.json').read_text())['delivery_preflight_passed'])
+
     def test_wrong_effective_policy_or_static_peers_cannot_pass(self):
         peers = [f'{i:032x}' for i in range(512)]
         policy = {'enabled': True, 'propagation_node_enabled': True, 'target_cost': 0,

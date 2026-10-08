@@ -23,6 +23,8 @@ from linux_runtime import Service, sample, sha256, write_json
 from sdk_peer import SdkPeer
 from service_discovery import discover
 
+PERIODIC_ANNOUNCE_INTERVAL_S = 10
+
 
 def healthy_sample(service):
     row = sample(service.pid, service.group)
@@ -82,6 +84,7 @@ def main():
     manifest = {'binary_sha256': {name: sha256(path) for name, path in
                 [('rch', args.server), ('daemon', args.daemon), ('sdk_peer', args.sdk_peer)]},
                 'messages_per_direction': args.messages, 'observation_deadline_s': duration_limit,
+                'periodic_announce_interval_s': PERIODIC_ANNOUNCE_INTERVAL_S,
                 'fixture': fixture.metadata if fixture else None, 'inbound_content_bytes': 480, 'outbound_content_bytes': 4096,
                 'populated_activation_deadline_s': 120 if fixture else None,
                 'cpus': cpus, 'stamp_cost': 0, 'environment': ENV,
@@ -123,7 +126,8 @@ storage_maintenance_interval_secs = 300
             service = Service(f'node{index}', args.daemon,
                               ['--db', str(directory / 'daemon.sqlite3'), '--config', str(config),
                                '--rpc-unix', str(directory / 'rpc.sock'), '--transport', f'127.0.0.1:{transport_port}',
-                               '--zmq-rpc-command', f'tcp://127.0.0.1:{command_port}', '--announce-interval-secs', '1'],
+                               '--zmq-rpc-command', f'tcp://127.0.0.1:{command_port}',
+                               '--announce-interval-secs', str(PERIODIC_ANNOUNCE_INTERVAL_S)],
                               directory, 512 * MIB, 768 * MIB, 2048 * MIB, cpus, ENV)
             services[f'node{index}'] = service
             manifest['services'] = {role: owned.manifest for role, owned in services.items()}
