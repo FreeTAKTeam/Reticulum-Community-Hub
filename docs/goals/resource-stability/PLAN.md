@@ -362,6 +362,41 @@ final resource acceptance or quantify an uninstrumented plateau. Do not infer
 allocation ownership from RSS alone. Required independent PRE and artifact/
 cleanup verification; no production ownership fix without its own checkpoint.
 
+#### Measured T2/T3 checkpoint: project propagation response metadata
+
+The independently qualified profile-1 populated run preserves all 130 real
+message/receipt chains, history and maintenance with zero poll errors. Its
+unmerged allocation report attributes 1,380,352 `String::clone` allocations to
+`current_propagation_state -> response_meta -> handle_sdk_poll_events_v2`:
+512 static peer strings cloned for each of 2,696 metadata-bearing poll calls.
+These transient allocations have zero consumption at the global heap peak;
+this is measured churn, not proof of a retained-memory leak or production cause.
+
+**Allowed files:** LXMF `rns-rpc/src/rpc/daemon/sdk_auth_http.rs` only for
+`response_meta`; a cohesive new focused response-metadata test include and
+its existing test-root wiring; investigation notes and these goal documents.
+No transport, dependency, schema, retention, event/reply admission, timeout,
+retry, fixture or workload changes.
+**Truth owner/cutover:** Keep `PropagationState` under its existing mutex as
+the policy owner. Build only the existing `propagation_node` JSON projection
+while that guard is held, then release it before reading contract version or
+constructing other metadata. Remove the full-state clone from this hot path;
+keep the explicit full-state public reader for callers that need its arrays.
+Do not introduce a second policy snapshot/cache or nested lock order.
+**Contract:** Preserve every metadata field, scalar/nullable value, stamp and
+peering defaults, `control_allowed` ordering/content and existing poisoned-lock
+behavior. The required `control_allowed` output allocation remains; unrelated
+static/allowed/denied/prioritized peer lists and store paths are not projected.
+**Evidence:** Actual SDK poll and other metadata-bearing RPC responses under
+default/custom policy, including a large unrelated peer policy and nonempty
+`control_allowed`, match the existing schema/values. Existing RPC tests,
+strict affected lint/format/boundary/module-size/issue-369 checks; freeze a new
+daemon and repeat the same real populated lane/profile controls in a fresh
+directory. Verify full history/receipt/maintenance gates and disappearance of
+the specific full-state-clone allocation stack. Preserve profile-1 and failed
+analysis output; no deadline or memory-budget relaxation. Required PRE,
+correctness, maintainer, independent verifier and POST review. No plateau claim.
+
 ### T3 — Remove measured daemon amplification and bound variable payload ownership
 
 **Allowed files:** LXMF `rns-rpc` propagation/event/store modules, reticulumd ZeroMQ modules and their tests/contracts.

@@ -270,13 +270,52 @@ then found three test literal-format warnings; the corrected run passed strict
 workspace formatting/Clippy, 693 workspace/doc tests with two ignored, strict
 docs/57 links, release build and HTTP smoke. Independent execution of 18 receipt-related tests passed with identical source
 and binary hashes and no surviving owned test process groups. Frozen
-empty/populated delivery is the next evidence gate. Independent correctness,
+empty and populated delivery have now passed the short attribution gates
+recorded below. Independent correctness,
 maintainer and POST review are aligned for this local implementation checkpoint.
 No memory plateau, live
 server recovery or final resource acceptance is claimed.
 
 The failed attempt-8 short memory series is preserved separately: node0
 private+swap increased from 13.67 to 21.29 MiB and RCH from 156.13 to 169.30 MiB.
-A separately planned, bounded local heaptrack experiment will distinguish live
-allocations/churn/peak/exit leftovers after receipt qualification; profiler
-instrumentation has not yet been run on a daemon.
+The separately bounded profile described below now distinguishes sampled live
+allocations from transient churn. It does not qualify a production plateau.
+
+
+## Finish checkpoint requested on 8 October
+
+The user stopped the broader investigation, then authorized finishing and
+publishing the changes already initiated. No new cache policy, migration
+collision rule, transport redesign or final multi-hour soak is included here.
+
+Frozen empty attempt 16 passed ten authenticated durable message/receipt chains,
+141 polls with no errors and all three graceful service exits. Populated attempt
+9 passed 130 chains, 2,716 polls with no errors and a 2,963-ms maintenance cycle
+that pruned 34,908 pending marks. Original payloads, completed marks and RCH
+history remained intact under the declared fixture rules. Its duration was
+427.47 seconds; private memory plus swap still rose during this short interval.
+Both runs passed independent source, binary, harness, database and cleanup
+verification and retain `passed_final_acceptance=false`.
+
+Profile attempt 1 used the same workload and original deadlines with heaptrack
+on node0 only. It passed 130 chains, 2,695 polls with no errors, maintenance,
+history checks and graceful cleanup in 426.68 seconds. Offline analysis yielded
+48,853 samples, with a sampled live-heap maximum of 12,222,450 bytes and
+6,407,554 bytes at the last definitely pre-shutdown sample. The initial failed
+analysis and the corrected, independently verified retry are both preserved.
+Profiler overhead is excluded from tracked application heap but included in RSS;
+this short result is not production root-cause or plateau proof.
+
+The unmerged report attributes 1,380,352 transient `String::clone` allocations
+to copying 512 configured peer strings for each of 2,696 poll metadata calls.
+The initiated framework fix projects only the existing response fields under
+the existing policy lock, without a cache or full-state copy. Three RPC
+regressions pass and the complete RPC library suite passes 784 tests with eight
+explicit opt-in diagnostics ignored. A fresh counterfactual and final affected
+checks are recorded separately below when complete.
+
+Closure audit: RCH #252, #253, #254, #256 and #257 remain unimplemented; #255 has
+only the unchanged-write and operation-right slices. LXMF-rs #657 has concrete
+inventory/copy corrections and diagnostics, but lacks the required several-hour
+production-shaped stable memory-plus-swap acceptance. None of these seven issues
+is fully resolved by this checkpoint. They must remain open.
