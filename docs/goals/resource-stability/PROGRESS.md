@@ -250,3 +250,33 @@ and binary hashes and no surviving owned test process group. The three exact
 pre-existing formatting warnings were corrected separately in `a0361689`.
 Frozen RCH/daemon experiments do not use this new SDK source; actual application
 integration and operational recovery remain outstanding.
+
+## Exact SDK receipt-ID checkpoint
+
+The SDK is the receipt ID/status authority. Removed RCH's guessed `sdk-`
+lookup and deleted alias enumeration; both production and test-only adapters
+now issue one exact lookup of the persisted SDK target ID per budget unit.
+Actual prefixed IDs remain unchanged. Scheduling order, four-call/ten-second
+budget, cooldowns, terminality, retry/partial aggregation and durable publication
+are unchanged. The arbitrary-arrival fairness defect remains a separate task.
+
+Four actual ZeroMQ regressions pass: distinct opaque/prefixed target IDs with
+terminal durable restart, one-call not-found/no-budget behavior, mapped SDK
+error preserving pending state and diagnostics, and more than four targets
+respecting the original budget. The first run exposed a fixture negotiation
+omission and failed all four before status calls; the four required desktop-local
+capabilities were added without relaxing assertions. The first readiness run
+then found three test literal-format warnings; the corrected run passed strict
+workspace formatting/Clippy, 693 workspace/doc tests with two ignored, strict
+docs/57 links, release build and HTTP smoke. Independent execution of 18 receipt-related tests passed with identical source
+and binary hashes and no surviving owned test process groups. Frozen
+empty/populated delivery is the next evidence gate. Independent correctness,
+maintainer and POST review are aligned for this local implementation checkpoint.
+No memory plateau, live
+server recovery or final resource acceptance is claimed.
+
+The failed attempt-8 short memory series is preserved separately: node0
+private+swap increased from 13.67 to 21.29 MiB and RCH from 156.13 to 169.30 MiB.
+A separately planned, bounded local heaptrack experiment will distinguish live
+allocations/churn/peak/exit leftovers after receipt qualification; profiler
+instrumentation has not yet been run on a daemon.

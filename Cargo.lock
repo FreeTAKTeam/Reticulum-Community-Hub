@@ -1553,6 +1553,7 @@ dependencies = [
  "r3akt-transport-rns",
  "rand_core 0.6.4",
  "reticulum-rs-core",
+ "reticulum-rs-rpc",
  "rmp-serde",
  "rusqlite",
  "serde",
@@ -1564,6 +1565,7 @@ dependencies = [
  "tower",
  "tower-http",
  "uuid",
+ "zeromq",
 ]
 
 [[package]]

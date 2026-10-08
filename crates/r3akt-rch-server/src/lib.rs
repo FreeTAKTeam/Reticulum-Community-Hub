@@ -10823,27 +10823,20 @@ fn zmq_delivery_status(
     message_id: &str,
     status_budget: &mut usize,
 ) -> ReticulumdStatusPollResult {
-    for candidate in reticulumd_status_message_id_candidates(message_id) {
-        if *status_budget == 0 {
-            return ReticulumdStatusPollResult::Stopped { error: None };
-        }
-        *status_budget -= 1;
-        match data_plane.delivery_status(candidate) {
-            Ok(Some(snapshot)) => {
-                return ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
-                    receipt_status: delivery_snapshot_receipt_status(&snapshot),
-                    snapshot,
-                });
-            }
-            Ok(None) => {}
-            Err(error) => {
-                return ReticulumdStatusPollResult::Stopped {
-                    error: Some(error.to_string()),
-                };
-            }
-        }
+    if *status_budget == 0 {
+        return ReticulumdStatusPollResult::Stopped { error: None };
     }
-    ReticulumdStatusPollResult::NotFound
+    *status_budget -= 1;
+    match data_plane.delivery_status(message_id) {
+        Ok(Some(snapshot)) => ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
+            receipt_status: delivery_snapshot_receipt_status(&snapshot),
+            snapshot,
+        }),
+        Ok(None) => ReticulumdStatusPollResult::NotFound,
+        Err(error) => ReticulumdStatusPollResult::Stopped {
+            error: Some(error.to_string()),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -10852,59 +10845,44 @@ fn test_rpc_delivery_status(
     message_id: &str,
     status_budget: &mut usize,
 ) -> ReticulumdStatusPollResult {
-    for candidate in reticulumd_status_message_id_candidates(message_id) {
-        if *status_budget == 0 {
-            return ReticulumdStatusPollResult::Stopped { error: None };
-        }
-        *status_budget -= 1;
-        let response = match client.call("sdk_status_v2", Some(json!({ "message_id": candidate })))
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return ReticulumdStatusPollResult::Stopped {
-                    error: Some(error.to_string()),
-                };
-            }
-        };
-        if let Some(error) = response.error {
+    if *status_budget == 0 {
+        return ReticulumdStatusPollResult::Stopped { error: None };
+    }
+    *status_budget -= 1;
+    let response = match client.call("sdk_status_v2", Some(json!({ "message_id": message_id }))) {
+        Ok(response) => response,
+        Err(error) => {
             return ReticulumdStatusPollResult::Stopped {
-                error: Some(reticulumd_rpc_error_text(&error)),
+                error: Some(error.to_string()),
             };
         }
-        let Some(result) = response.result else {
-            continue;
+    };
+    if let Some(error) = response.error {
+        return ReticulumdStatusPollResult::Stopped {
+            error: Some(reticulumd_rpc_error_text(&error)),
         };
-        match delivery_snapshot_from_status_result(&result, &candidate) {
-            Ok(Some(snapshot)) => {
-                let receipt_status = result
-                    .get("message")
-                    .unwrap_or(&result)
-                    .get("receipt_status")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
-                return ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
-                    receipt_status,
-                    snapshot,
-                });
-            }
-            Ok(None) => {}
-            Err(error) => {
-                return ReticulumdStatusPollResult::Stopped {
-                    error: Some(error.to_string()),
-                };
-            }
-        }
     }
-    ReticulumdStatusPollResult::NotFound
-}
-
-fn reticulumd_status_message_id_candidates(message_id: &str) -> Vec<String> {
-    let message_id = message_id.trim();
-    if message_id.starts_with("sdk-") {
-        vec![message_id.to_string()]
-    } else {
-        vec![format!("sdk-{message_id}"), message_id.to_string()]
+    let Some(result) = response.result else {
+        return ReticulumdStatusPollResult::NotFound;
+    };
+    match delivery_snapshot_from_status_result(&result, message_id) {
+        Ok(Some(snapshot)) => {
+            let receipt_status = result
+                .get("message")
+                .unwrap_or(&result)
+                .get("receipt_status")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| delivery_snapshot_receipt_status(&snapshot));
+            ReticulumdStatusPollResult::Found(ReticulumdDeliveryStatus {
+                receipt_status,
+                snapshot,
+            })
+        }
+        Ok(None) => ReticulumdStatusPollResult::NotFound,
+        Err(error) => ReticulumdStatusPollResult::Stopped {
+            error: Some(error.to_string()),
+        },
     }
 }
 
@@ -24735,6 +24713,7 @@ mod tests {
     mod release_security;
     mod rem_team_directory;
     mod resource_efficiency;
+    mod sdk_receipt_polling;
     mod sdk_receipt_recovery;
     mod sdk_routing;
     mod stream_gap_recovery;
@@ -44420,7 +44399,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            format!("sdk-{}", message.message_id)
+            message.message_id
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -44579,7 +44558,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            format!("sdk-{}", message.message_id)
+            message.message_id
         );
 
         let snapshot = RchSqliteStore::open(&db_path)
@@ -44658,7 +44637,7 @@ mod tests {
         assert_eq!(requests[0].method, "sdk_status_v2");
         assert_eq!(
             requests[0].params.as_ref().expect("params")["message_id"],
-            format!("sdk-{}", message.message_id)
+            message.message_id
         );
 
         let snapshot = RchSqliteStore::open(&db_path)

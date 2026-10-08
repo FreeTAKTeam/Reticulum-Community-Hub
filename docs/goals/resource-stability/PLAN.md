@@ -271,6 +271,97 @@ PRE approved exactly those positional-to-captured formatting substitutions,
 with unchanged text/format/behavior and no adjacent refactor. Keep this cleanup
 separate from the diagnostic implementation and verify the exact diff.
 
+#### Separate application checkpoint: exact SDK receipt IDs
+
+**Intent/evidence:** Populated attempt 8 delivered all 65 outgoing payloads in
+both daemon stores, while RCH retained 38 as sent at the original 480-second
+deadline. All 65 persisted RCH target IDs exactly equal the admitted SDK IDs;
+no guessed `sdk-` aliases exist in the daemon. RCH currently probes that guessed
+alias first. The SDK is the status/ID truth owner and uses an exact durable ID
+lookup. Correct this extra application interpretation before a separate
+cross-message scheduling change.
+
+**Allowed files:** Server root only for `zmq_delivery_status`, the cfg(test)
+legacy adapter, deletion of `reticulumd_status_message_id_candidates`, three
+existing exact-request assertions and cohesive test-module wiring; new
+`src/tests/sdk_receipt_polling.rs`; server dev-dependencies and their lockfile
+entry only to reuse the already locked ZeroMQ socket and official RPC codec
+crates; these goal documents. No production SDK,
+daemon, transport, schema, retention or retry policy changes.
+**Contract/cutover:** Treat the stored SDK message ID as opaque. Both status
+adapters make exactly one lookup of that ID, with one budget decrement; a real
+`sdk-` prefix is preserved. Remove prefix enumeration entirely. Preserve the
+four-call budget, ten-second pass interval, five-second per-message cooldown,
+newest-first outer ordering for this isolated comparison, target rotation,
+eligibility, error-stop behavior, terminal snapshots, partial aggregation,
+retry behavior and durable-before-publication semantics. No aliases, ID
+migration, deadline extension, extra delivery strategy or re-admission.
+**Evidence:** Actual ZeroMQ request capture for a non-prefixed SDK ID distinct
+from the parent RCH ID, an already-prefixed opaque ID, not-found with no alias
+retry, typed terminal durable update, transport/SDK error with pending state and
+visible diagnostics, and more than four pending targets obeying the unchanged
+four-call limit. Retain existing terminal-skip/restart, target ordering and
+partial-admission regressions. Run focused tests, required workspace/server
+readiness gates, freeze exact binaries/source/harness hashes, and repeat empty
+and populated real delivery with unchanged deadlines and history/maintenance
+gates. Independent PRE, correctness, maintainer, verifier and POST review.
+**Limits/kill criteria:** This is a receipt-binding correction, not a memory
+fix or final resource acceptance. Preserve attempt 8 as failed. Newest-first
+cross-message fairness remains open; a failure after exact binding requires a
+separately named scheduling checkpoint rather than larger budgets/deadlines.
+
+#### Separate T2 experiment: local daemon heap attribution
+
+After exact-ID receipt qualification, run a separately labelled instrumented
+copy of the same populated real-delivery lane. The failed unprofiled attempt 8
+increased node0 private+swap from 13.67 to 21.29 MiB and RCH from 156.13 to
+169.30 MiB in 480 seconds; this is short failed-run evidence, not a plateau or
+proof of a retained allocation leak.
+
+**Allowed artifacts:** These goal documents and an evidence-only Python runner
+using the existing harness. No application source, host package installation,
+production configuration, memory/CPU controls, fixtures, workload rates or
+deadlines change. The separately recorded diagnostic file-size limit below is
+the only additional service control. Use the already downloaded, hash-recorded Ubuntu heaptrack 1.5.0
+preload/interpreter/print artifacts from the ignored workspace target directory.
+**Ownership/controls:** Inject `LD_PRELOAD` and `DUMP_HEAPTRACK_OUTPUT` into node0
+only, copying its environment. Run the actual frozen daemon as systemd MainPID,
+not a profiler shell wrapper. Preserve the harness's cgroup/CPU/identity/OOM and
+owned cleanup checks. Write raw output to a fresh ignored directory on regular
+workspace storage, not the limited temporary filesystem. Record preload/tool,
+runner, application and harness hashes plus the actual per-service environment;
+retain the unprofiled experiment separately. Set node0's systemd `LimitFSIZE`
+to exactly 2 GiB before exec and verify both systemd's value and `/proc/limits`;
+this is a diagnostic artifact bound, not a product retention rule. The wrapper
+may intercept only its own node0 `systemd-run` argument vector to add this one
+property and must record it separately from the unchanged memory/CPU controls.
+Require at least 20 GiB free on the raw-output filesystem before launch and
+check the reserve at observation checkpoints; fail and clean up owned services
+on reserve/size failure, retaining partial files. No truncate/delete workaround. Never change perf security settings
+or connect to a production server.
+**Evidence:** One actual maintenance cycle and continuing authenticated traffic
+with the unchanged fixture/history/receipt gates; verify raw profiler output
+exists, then interpret offline and report dominant live/peak allocation owners,
+allocation churn and unresolved symbols. Export `--print-massif` time-resolved
+outstanding allocation bytes and align its relative clock with recorded startup
+monotonic brackets, observation samples, maintenance and pre-stop time. Separate
+global peak, live bytes before shutdown, total allocation counts/churn and exit
+leftovers. Use `--merge-backtraces=0` for quantitative peak reports; merged
+reports, if present, are non-additive rankings only. Every offline tool runs in
+an owned process group with a 120-second wall-clock deadline, 4 GiB address-space
+limit and 4 GiB output-file limit; terminate/kill/wait only that owned group on
+timeout and verify it is absent. Record tool exit/status/hashes and preserve
+partial output on any failure. Require the same free-disk reserve before each
+analysis stage. No host-wide cleanup or workload/deadline relaxation. Compare process-private/anonymous/RSS
+and swap separately from cgroup file cache and profiler overhead. The raw trace
+and stack reports do not contain a payload dump. Exit-time reported leaks are
+not automatically production lifetime leaks. If profiling changes behavior,
+preserve the failed diagnostic result; do not relax the workload to claim a pass.
+**Acceptance/limits:** This is diagnostic attribution only. It cannot satisfy
+final resource acceptance or quantify an uninstrumented plateau. Do not infer
+allocation ownership from RSS alone. Required independent PRE and artifact/
+cleanup verification; no production ownership fix without its own checkpoint.
+
 ### T3 — Remove measured daemon amplification and bound variable payload ownership
 
 **Allowed files:** LXMF `rns-rpc` propagation/event/store modules, reticulumd ZeroMQ modules and their tests/contracts.
