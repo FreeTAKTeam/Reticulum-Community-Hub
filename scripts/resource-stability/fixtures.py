@@ -1,4 +1,5 @@
 """Large valid history fixtures; never mutate a running service or existing history."""
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -37,7 +38,7 @@ def generator_lines(process: subprocess.Popen, timeout: float):
 
 
 def counts(path: Path) -> dict:
-    with sqlite3.connect(f'file:{path.resolve()}?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect(f'file:{path.resolve()}?mode=ro', uri=True)) as db:
         return {
             'payloads': db.execute('SELECT count(*) FROM propagation_entries').fetchone()[0],
             'payload_bytes': db.execute('SELECT coalesce(sum(size_bytes),0) FROM propagation_entries').fetchone()[0],
@@ -58,7 +59,7 @@ def seed_daemon(path: Path, generator: Path, payloads: int, peers: int, associat
     now = int(time.time())
     ids = []
     stderr_path = path.with_suffix('.fixture-generator.log')
-    with sqlite3.connect(path) as db, stderr_path.open('w') as stderr:
+    with closing(sqlite3.connect(path)) as db, db, stderr_path.open('w') as stderr:
         generator_process = subprocess.Popen([str(generator.resolve()), str(payloads), '304'],
                                              stdout=subprocess.PIPE, stderr=stderr, text=True)
         try:

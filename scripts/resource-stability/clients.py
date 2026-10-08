@@ -5,26 +5,64 @@ import json
 from pathlib import Path
 import socket
 import struct
-import urllib.request
+import time
 
 import msgpack
 
 
-class Http:
-    def __init__(self, port: int, api_key: str = ''):
-        self.base = f'http://127.0.0.1:{port}'
-        self.api_key = api_key
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class DeadlineSocket(socket.socket):
+    """HTTP's SocketIO calls recv_into for each read; keep one whole-call deadline."""
+    def __init__(self, family, deadline):
+        super().__init__(family)
+        self.deadline = deadline
 
-    def request(self, path: str, payload=None):
+    def remaining(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Local HTTP whole-response deadline')
+        self.settimeout(remaining)
+
+    def connect(self, address):
+        self.remaining()
+        return super().connect(address)
+
+    def sendall(self, data, flags=0):
+        self.remaining()
+        return super().sendall(data, flags)
+
+    def recv_into(self, buffer, nbytes=0, flags=0):
+        self.remaining()
+        return super().recv_into(buffer, nbytes, flags)
+
+
+class Http:
+    def __init__(self, port: int, api_key: str = '', timeout: float = 10):
+        self.base = f'http://127.0.0.1:{port}'
+        self.port = port
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def request(self, path: str, payload=None, *, deadline=None):
         headers = {'X-API-Key': self.api_key}
         data = None
         if payload is not None:
             data = json.dumps(payload).encode()
             headers['Content-Type'] = 'application/json'
-        request = urllib.request.Request(self.base + path, data=data, headers=headers)
-        with self.opener.open(request, timeout=10) as response:
-            return json.load(response)
+        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=self.timeout)
+        try:
+            connection.sock = DeadlineSocket(socket.AF_INET, min(time.monotonic() + self.timeout, deadline if deadline is not None else float('inf')))
+            connection.sock.connect(('127.0.0.1', self.port))
+            connection.request('POST' if payload is not None else 'GET', path, data, headers)
+            response = connection.getresponse()
+            limit = 64 * 1024 * 1024 if response.status == 200 else 65_536
+            body = response.read(limit + 1)
+            if len(body) > limit:
+                raise RuntimeError(f'HTTP response exceeds {limit} bytes at {path}')
+            if response.status != 200:
+                raise RuntimeError(f'HTTP {response.status} at {path}: {body.decode("utf-8", errors="replace")}')
+            return json.loads(body)
+        finally:
+            connection.close()
 
 
 class LocalRpc:
@@ -33,13 +71,12 @@ class LocalRpc:
         self.timeout = timeout
         self.sequence = itertools.count(1)
 
-    def call(self, method: str, params=None):
+    def call(self, method: str, params=None, *, deadline=None):
         request_id = next(self.sequence)
         data = msgpack.packb({'id': request_id, 'method': method, 'params': params}, use_bin_type=True)
         connection = http.client.HTTPConnection('localhost', timeout=self.timeout)
         try:
-            connection.sock = socket.socket(socket.AF_UNIX)
-            connection.sock.settimeout(self.timeout)
+            connection.sock = DeadlineSocket(socket.AF_UNIX, min(time.monotonic() + self.timeout, deadline if deadline is not None else float('inf')))
             connection.sock.connect(str(self.path))
             connection.request('POST', '/rpc', struct.pack('>I', len(data)) + data,
                                {'Content-Type': 'application/msgpack'})

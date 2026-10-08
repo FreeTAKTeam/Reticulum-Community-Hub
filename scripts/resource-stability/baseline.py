@@ -4,6 +4,7 @@
 This attribution lane deliberately cannot pass final acceptance: real peer delivery
 and browser qualification are separate required work. It never changes production.
 """
+from contextlib import closing
 import argparse
 import json
 import os
@@ -38,7 +39,7 @@ def wait_ready(service, probe, timeout=60):
 
 
 def clone_db(source, target):
-    with sqlite3.connect(f'file:{source.resolve()}?mode=ro', uri=True) as src, sqlite3.connect(target) as dst:
+    with closing(sqlite3.connect(f'file:{source.resolve()}?mode=ro', uri=True)) as src, closing(sqlite3.connect(target)) as dst, dst:
         src.backup(dst)
 
 

@@ -16,9 +16,36 @@ acceptance, production recovery, release or publication is claimed here.
   and verifies whole-cgroup termination before calling shutdown graceful.
 - Effective controls were verified: two CPU affinities shared by RCH/daemon,
   daemon 512 MiB high / 768 MiB max / 2 GiB swap max, RCH 768 MiB high / 1 GiB
-  max / 2 GiB swap max. Eighteen harness regressions and updated Linux preflight
+  max / 2 GiB swap max. Thirty-eight harness regressions and updated Linux preflight
   passed. The short real baseline verified both exit status zero and empty
   cgroups, with 95 SDK polls and zero poll errors.
+
+- RCH command persistence commit `7b22448` removes an extra full core snapshot
+  used only for marker/zone comparison. Twenty-two durability regressions and
+  strict server Clippy passed. The remaining before/after transaction snapshots
+  still require T8/T9 migration.
+- Daemon PUSH/PULL diagnostics commit `ae950f8d` tracks dispatch, handler,
+  queued-output and delivery work/bytes/time/outcomes through cancellation.
+  Twenty ZeroMQ tests, three metric units, all 781 RPC library tests (eight
+  explicit ignored diagnostics), strict RPC Clippy, module-size and issue369
+  checks passed. Correctness/maintainer reviews and independent metric tests
+  passed. This is accounting, not aggregate byte admission.
+- Real SDK delivery preflight `/tmp/rch-delivery9` passed five unique messages
+  each way, unchanged content, verified encryption/signatures, exact durable
+  sender/receiver rows and terminal receipts. RCH completed 177 polls with zero
+  errors; all three services exited zero with empty cgroups. Thirty-eight
+  harness tests cover trickling replies, SDK setup/pipe failure and corrupted
+  durable evidence. This short empty-history lane cannot pass final acceptance.
+- Browser/CDP measurement preflight against the frozen release UI succeeded.
+  One dashboard snapshot measured about 5.1 MB JavaScript heap and 2,996 DOM
+  nodes. It does not establish chat navigation/backfill or a memory plateau.
+
+The real-delivery checkpoint passed correctness/maintainer review. An independent
+verifier reran all 38 harness regressions, revalidated all ten durable chains,
+and checked runtime harness hashes. Review findings for startup cleanup,
+whole-exchange deadlines, durable sender evidence and SQLite connection cleanup
+were corrected before this checkpoint. The SDK peer is committed locally as
+`299810fc`; no publication is implied.
 
 ## Attribution evidence, not acceptance
 
@@ -55,16 +82,17 @@ so no plateau or final acceptance is claimed.
 
 Raw local evidence is under `/tmp/rch-resource-stability/evidence/` and
 `/tmp/rch-res-diag1/` and `/tmp/rch-res-fixed1/`, with binary, harness and fixture hashes in manifests.
-Failed harness experiments remain recorded: an initial RPC framing error and an
-overlong Unix socket path. Neither is attributed to the production incident.
+Failed harness experiments remain recorded: an initial RPC framing error, an
+overlong Unix socket path, incorrect identity/endpoint/capability setup and an
+invalid 4 KiB inbound chat payload. None is attributed to the production incident.
 
 ## Current implementation board
 
 | Task | Status and remaining evidence |
 | --- | --- |
-| T1 fixture/harness | Partial: valid large history and constrained sampling work; independent real delivery, operational history transitions and browser instrumentation remain. |
-| T2 attribution | Partial: owned inventory/event diagnostics and maintenance duration added; PUSH/PULL stage timing and wire-buffer ownership diagnostics implemented, with completed-output/unpolled-delivery cancellation tests; review pending. Canonical ROUTER and full heap/byte admission remain. |
-| T3 daemon ownership | Inventory cutover committed locally as `540e449a`; 778 RPC library tests and independent 14-test issue-657 verification pass. Correctness/maintainer reviews and same-fixture comparison pass for this partial checkpoint; no final stability claim. Aggregate byte limits remain. |
+| T1 fixture/harness | Partial: valid large history and constrained sampling work; independent short real-delivery and browser measurement preflights pass; their integration with populated history, continuing browser load and operational transitions remains. |
+| T2 attribution | Partial: owned inventory/event diagnostics and maintenance duration added; PUSH/PULL stage timing and wire-buffer ownership diagnostics implemented, with completed-output/unpolled-delivery cancellation tests; correctness/maintainer and independent metric review passed. Canonical ROUTER and full heap/byte admission remain. |
+| T3 daemon ownership | Inventory cutover committed locally as `540e449a`; 781 RPC library tests and independent 14-test issue-657 verification pass. Correctness/maintainer reviews and same-fixture comparison pass for this partial checkpoint; no final stability claim. Aggregate byte limits remain. |
 | T4 indexed migration (#256) | Pending historical-collision policy answer; no resolution policy selected. |
 | T5 durable message APIs | Pending; SQLite must replace every resident-only reader/transition before eviction. |
 | T6 bounded cache (#252) | Pending selected retention/active-work policy and T5. |
@@ -81,7 +109,8 @@ inventories from SQLite. Tests cover failed import rollback/retry, completed
 precedence, import/clear races, concurrent maintenance/completion, and zero buffer
 capacity after release. Import and clear share `imports -> peers -> store` order.
 
-Strict LXMF RPC Clippy currently reports existing `uninlined_format_args`
-violations in baseline files. Its failure is recorded, not suppressed or called
-green. Required full-workspace, daemon feature, UI and release-readiness gates
+Strict LXMF RPC Clippy now passes after formatting-only baseline corrections
+in `29a39e14`. The new public-SDK driver also passes strict example Clippy
+after equivalent formatting-only baseline SDK corrections. Required
+full-workspace, daemon feature, UI and release-readiness gates
 have not yet been completed for the overall goal.

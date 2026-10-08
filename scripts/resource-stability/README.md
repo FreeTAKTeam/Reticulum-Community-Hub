@@ -3,7 +3,8 @@
 These tools are being developed for RCH #252–#257 and LXMF-rs #657. The current
 baseline runner is an **attribution experiment**, not final acceptance. It has
 synthetic control-API announce ingress and dashboard/chat HTTP traffic; it does
-not yet include independent real peer delivery or browser heap measurement.
+not combine independent real peer delivery or browser heap measurement with its
+large-history workload. Separate short preflights qualify those instruments.
 It explicitly records `passed_final_acceptance: false` even when the baseline
 finishes. Follow `docs/goals/resource-stability/PLAN.md` for the remaining gates.
 
@@ -74,3 +75,47 @@ results. It rejects idle/incomplete workload, a discarded/unqualified fixture,
 errors, restart/OOM, resource growth or forced shutdown. Its thresholds must be
 chosen before a final run and retained with the raw evidence. A short baseline
 must never be re-labelled as the required sustained qualification.
+
+
+## Real bidirectional delivery preflight
+
+Build the public-SDK peer in the matching LXMF-rs checkout:
+
+```sh
+cargo build --release --locked --offline -p lxmf-sdk \
+  --example resource_sdk_peer --features zmq-pipeline-backend
+```
+
+Freeze/copy binaries before starting, then use a new short output path:
+
+```sh
+python3 scripts/resource-stability/delivery_preflight.py \
+  --server /absolute/path/r3akt-rch-server \
+  --daemon /absolute/path/reticulumd \
+  --sdk-peer /absolute/path/resource_sdk_peer \
+  --output /tmp/rch-delivery-new --messages 5
+```
+
+Two isolated daemons exchange real TCP Reticulum traffic. RCH and the independent
+public SDK each register their own service identity; neither sends under the
+daemon's default identity. The harness waits for real announces before sending.
+Inbound chat content is 480 bytes, within RCH's existing 500-character limit;
+outbound content is 4 KiB. Both use unique tokens and zero stamp cost.
+
+Success requires unique returned sender IDs, unchanged full payloads, terminal
+SDK/RCH receipts, exact sender and receiver SQLite rows, authenticated/encrypted
+receiver metadata and zero RCH poll errors. SDK, RCH and wire IDs can differ;
+unique tokens plus exact content and identities establish their relationship.
+HTTP and Unix RPC reads have whole-exchange deadlines, including trickling
+headers/bodies. The caller's remaining qualification time bounds each exchange.
+Pipe framing and SDK process startup/cleanup also have failure regressions.
+
+This empty-history lane always writes `passed_final_acceptance: false`. It does
+not exercise propagation history, stamp mining, browser load, the required soak
+or slow-peer resource recovery. Those remain separate acceptance requirements.
+
+Browser measurement was preflighted with the existing Playwright CLI and cached
+Chromium against a frozen UI bundle served through `--ui-dist-path`. CDP
+Performance/Memory metrics expose JavaScript heap, DOM nodes and listeners. That
+single dashboard snapshot qualifies measurement only; sustained chat navigation,
+backfill and heap/DOM plateau evidence remain outstanding.
