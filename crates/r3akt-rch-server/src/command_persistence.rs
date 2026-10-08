@@ -33,15 +33,26 @@ pub(super) fn mutate<T>(
         store.begin_r3akt_command()
     }
     .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let before = transaction.core_mut().snapshot();
+    // Cache publication only compares these two projections. Cloning the
+    // complete core here duplicated announce/domain history before every
+    // command, including checklist commands that never publish either cache.
+    let before_markers = if checklist {
+        Vec::new()
+    } else {
+        transaction.core_mut().markers()
+    };
+    let before_zones = if checklist {
+        Vec::new()
+    } else {
+        transaction.core_mut().zones()
+    };
     let (result, accepted) = operation(transaction.core_mut())?;
     if accepted {
         let after = transaction
             .commit()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         if !checklist {
-            let mut prior_markers = before
-                .markers
+            let mut prior_markers = before_markers
                 .into_iter()
                 .map(|record| (record.object_destination_hash.clone(), record))
                 .collect::<HashMap<_, _>>();
@@ -60,8 +71,7 @@ pub(super) fn mutate<T>(
             for key in prior_markers.keys() {
                 markers.remove(key);
             }
-            let mut prior_zones = before
-                .zones
+            let mut prior_zones = before_zones
                 .into_iter()
                 .map(|record| (record.zone_id.clone(), record))
                 .collect::<HashMap<_, _>>();
