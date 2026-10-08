@@ -80,6 +80,20 @@ class DriverProtocolTests(unittest.TestCase):
             child.wait.assert_called_once_with(timeout=10)
             self.assertTrue(spawn.call_args.kwargs['stderr'].closed)
 
+    def test_interrupted_shutdown_kills_and_reaps_the_owned_child(self):
+        peer = SdkPeer.__new__(SdkPeer)
+        peer.process = Mock(pid=123)
+        peer.process.poll.return_value = None
+        peer.process.wait.side_effect = [KeyboardInterrupt(), 0]
+        peer.errors = Mock()
+        with patch('sdk_peer.os.killpg') as kill:
+            with self.assertRaises(KeyboardInterrupt):
+                peer.close()
+        kill.assert_called_once_with(123, 9)
+        self.assertEqual(peer.process.wait.call_count, 2)
+        peer.process.stdout.close.assert_called_once()
+        peer.errors.close.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

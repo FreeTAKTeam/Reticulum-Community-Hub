@@ -68,6 +68,38 @@ were corrected before this checkpoint. The SDK peer is committed locally as
 
 ## Attribution evidence, not acceptance
 
+The populated real-delivery harness now has 68 passing regression tests,
+including deadline-bound SQLite proofs, original-row preservation, maintenance
+failure retention, cancellation cleanup, effective policy validation, OOM/process
+identity checks and late discovery rejection. The SDK fixture explicitly activates
+and announces its created identity and rejects a wrong identity/destination.
+Strict SDK example Clippy, its focused test and release build pass. The separate
+empty-history run `/tmp/rch-delivery13` passed five unique messages each way,
+authenticated durable rows and terminal receipts, with zero poll errors and
+three graceful shutdowns. This remains instrument qualification.
+Independent verifier reran all 68 tests, revalidated all ten empty-run durable
+chains and exact harness/binary/source hashes: 140 polls, zero errors, 21.87
+seconds. Correctness/maintainer review and the separate identity checkpoint's
+PRE review found no blocker or major finding.
+
+Populated attempts remain failed evidence, with no observation/plateau claim:
+`/tmp/rch-pop-delivery1` timed out during peer activation at the harness's old
+10-second allowance and forced daemon shutdown. The established baseline already
+allowed 120 seconds for this setup; attempts 2 and 3 completed activation in
+57.39 and 59.86 seconds. They then failed the unchanged 30-second real-announce
+discovery deadline. Attempt 3 learned the explicitly bound SDK service identity,
+but the peer daemon did not learn RCH's registered destination despite repeated
+successful `/Control/Announce` acknowledgements. All three services in attempts
+2 and 3 shut down gracefully and source fixtures remained immutable. The cause
+of the missing RCH network announcement is still under investigation.
+
+The current fixture databases are cloned on tmpfs. These runs distinguish
+process-private and cgroup memory accounting, but do not yet reproduce production
+file-cache charging/reclaim: cloned pages may be charged to the harness/parent
+rather than the daemon service. Final constrained acceptance requires regular
+filesystem databases and scoped cold-page preparation, without global cache
+dropping or changes to unrelated services.
+
 The immutable fixture has 135,893 signed/encrypted LXMF payloads (71,751,504
 payload bytes), 1,000,000 durable associations across 940 histories, 100,000
 RCH announces and 25,000 terminal RCH messages with 4 KiB content. Every wire

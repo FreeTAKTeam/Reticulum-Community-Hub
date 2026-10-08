@@ -88,6 +88,102 @@ Each task is implemented by the main agent sequentially. Read-only review and in
 **Evidence:** Baseline time series and independently verified message IDs, not receive counters. Reserve isolated ports/socket paths and cleanly join children. No destructive production access.
 **Depends on:** PRE approval. **Parallel safe:** Documentation/review reads only.
 
+#### Next T1 checkpoint: populated real-delivery attribution
+
+Extend the existing delivery preflight with `--fixture-from`, without changing
+application/SDK behavior. Clone the immutable large fixture into fresh node0
+and RCH databases; node1 stays empty. Verify source manifest/database hashes and
+reject source WAL sidecars with uncheckpointed data. Keep TCP interfaces and add
+the baseline propagation configuration only to node0; activate 512 existing
+fixture peer IDs through its current control API. Record effective policy,
+source/clone hashes, before/after logical cardinalities and bounded diagnostics.
+Use the existing baseline's separate 120-second peer-activation setup allowance,
+record its actual latency and restore the normal 10-second RPC bound afterward.
+This does not change the frozen observation or shutdown deadlines. Preserve any
+failed setup/forced shutdown evidence; do not relabel that run as passing.
+Start both TCP ends before populated activation and retry both real service
+announces through the public SDK/RCH owners within the existing 30-second setup
+discovery deadline. Require learned signed identities; submission acknowledgement
+alone is insufficient. Retain bounded discovery attempts, including on failure.
+The public SDK fixture explicitly activates its created identity and specifies
+that identity on every announce, rejecting a mismatched identity/destination or
+rejected announce. Do not rely on implicit session-active identity selection.
+Check source database hashes both before cloning and after cleanup. Record source
+timestamp ranges and reject a fixture whose pending/completed TTL expires during
+the frozen lane, identifying it as stale workload rather than daemon regression.
+
+Use 65–100 unique pairs at the existing five-second interval. Freeze the whole
+observation deadline as `max(480, messages * 5 + 60)` seconds in the manifest.
+Require successful real pairs before maintenance, an actual successful storage
+maintenance completion logged by the owned daemon after observation begins,
+and a new pair admitted after that completion was observed. All pairs require
+authenticated durable receiver/sender/receipt proof and zero new RCH poll errors.
+Cache terminal SDK status results. Reuse dashboard API requests every 30 seconds
+and bounded daemon resource sampling; add no synthetic announce ingress.
+
+After maintenance retain all 135,893 original propagation payload rows with
+unchanged content/metadata, at least 900,000 original associations across at
+least 940 original histories, and all 100,000 original completed marks. New rows
+cannot mask historical loss. Record removed original pending/added associations
+and reconcile removals with logged pruning. Preserve all 100,000 original RCH
+announces and 25,000 messages, including indexed columns and duplicate detection.
+Compare through indexed/streaming reads, never million-row `fetchall()`.
+
+**Allowed files:** Existing T1 harness/docs; cohesive fixture-preservation and
+maintenance-evidence helpers plus focused regressions. No application changes.
+**Gates:** Wrong hashes/cardinalities, missing/changed original rows, lost completed
+marks, new rows masking loss, stale/missing/failed maintenance, lack of post-cycle
+delivery, deadline expiry and failed cleanup must fail closed. Independent PRE,
+correctness/maintainer and verifier roles review this bounded harness slice.
+**Remaining:** Historical fake peer IDs model bookkeeping. This lane does not
+prove network fetch/ack or pending-to-completed transitions of the deterministic
+seeded receiver's payloads. Keep that operational propagation qualification,
+continuing browser/lifecycle/slow-peer evidence and final plateau acceptance open.
+`passed_final_acceptance` remains false, regardless of this checkpoint's result.
+
+#### Separate application checkpoint: registered announce identity binding
+
+Populated delivery attempt 3 registered RCH's SDK-derived service destination
+but the peer learned only the daemon default identity after 27 acknowledged
+`/Control/Announce` requests. Initial registration already specifies an identity;
+later announcements use implicit session selection. This is insufficient to
+prove the missing packet's cause. Correct the explicit identity contract as a
+separate application checkpoint, outside T1's harness-only allowance.
+
+**Allowed files:** RCH transport `sdk_identity.rs`, narrow root wiring/session
+state, existing identity/recovery tests and focused new identity-contract tests;
+these goal documents. No daemon/SDK production, queue, timeout, memory policy,
+network, packaging or release changes.
+**Truth owner/cutover:** The public SDK imports/activates/announces the identity.
+Keep its returned bundle with the registered configuration in one session-owned
+record. Registered announces must explicitly select that returned identity;
+check activation acceptance and announce acceptance/exact identity/destination
+before publishing registration/update success. Session recovery rebuilds the
+record through SDK import. Do not derive identities or destinations in RCH.
+**Contract:** Preserve standalone unregistered announce behavior and its
+`Option<String>` result shape. Surface rejected or mismatched acknowledgements
+as transport errors through existing callers. Never interpret an accepted
+announce as proof of peer learning or delivery. No implicit retry or reimport on
+each registered announce.
+**Evidence:** Actual SDK frames prove explicit registered identity and unchanged
+metadata, with no extra import/activate on repeated announce. Rejected activation,
+missing/wrong identity or destination and rejected announce fail before success.
+Update/recovery tests use full typed acknowledgement metadata. Standalone and
+unavailable/recovery tests preserve existing behavior. Required workspace and
+server-readiness gates, then frozen empty/populated real delivery with exact
+learned identities and durable records. A repeated populated discovery failure
+remains failed evidence and requires transport attribution, not a longer setup
+deadline or a claim that this correction fixed its root cause.
+
+The newer #657 evidence additionally requires follow-up T2 correlation of actual
+SDK method/session/request and bootstrap phases, domain/store lock waits and
+handler/reply timing. Keep those diagnostics and connection/recovery changes in
+their own reviewed checkpoints. Final T5/T10/T12 evidence must include retained
+history recovery after event-window expiry/restart, durable import before cursor
+advancement, and operational progress independent of readiness. Current tmpfs
+clones do not qualify production file-cache reclaim; final constrained acceptance
+must account for service-charged file cache separately from process-private memory.
+
 ### T2 — Attribute daemon growth and add bounded-stage diagnostics
 
 **Allowed files:** LXMF daemon/RPC propagation/event/ZeroMQ modules, focused tests, `docs/issue-657-investigation.md`; RCH harness only for integration measurement.

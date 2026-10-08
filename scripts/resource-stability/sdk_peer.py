@@ -80,6 +80,14 @@ class SdkPeer:
                 code = self.process.wait(timeout=5)
             if forced or code != 0:
                 raise RuntimeError(f'SDK driver failed shutdown: forced={forced}, exit={code}')
+        except BaseException as primary:
+            try:
+                if self.process.poll() is None:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self.process.wait(timeout=5)
+            except BaseException as cleanup:
+                raise BaseExceptionGroup('SDK shutdown and forced cleanup failed', [primary, cleanup]) from None
+            raise
         finally:
             self.process.stdout.close()
             self.errors.close()

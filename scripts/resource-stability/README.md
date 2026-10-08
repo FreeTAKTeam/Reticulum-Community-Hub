@@ -98,7 +98,9 @@ python3 scripts/resource-stability/delivery_preflight.py \
 
 Two isolated daemons exchange real TCP Reticulum traffic. RCH and the independent
 public SDK each register their own service identity; neither sends under the
-daemon's default identity. The harness waits for real announces before sending.
+daemon's default identity. The SDK peer explicitly activates and announces its
+created identity and validates the returned identity/destination binding. The
+harness waits for real announces before sending.
 Inbound chat content is 480 bytes, within RCH's existing 500-character limit;
 outbound content is 4 KiB. Both use unique tokens and zero stamp cost.
 
@@ -113,6 +115,43 @@ Pipe framing and SDK process startup/cleanup also have failure regressions.
 This empty-history lane always writes `passed_final_acceptance: false`. It does
 not exercise propagation history, stamp mining, browser load, the required soak
 or slow-peer resource recovery. Those remain separate acceptance requirements.
+
+The populated attribution lane reuses the immutable large fixture:
+
+```sh
+python3 scripts/resource-stability/delivery_preflight.py \
+  --server /absolute/path/r3akt-rch-server \
+  --daemon /absolute/path/reticulumd \
+  --sdk-peer /absolute/path/resource_sdk_peer \
+  --fixture-from /path/to/immutable-large-baseline \
+  --output /tmp/rch-populated-delivery-new --messages 65
+```
+
+This sends one unique pair every five seconds, with a frozen observation deadline
+of `max(480, messages * 5 + 60)` seconds. It requires a verified pair before an
+observed successful 300-second storage-maintenance cycle and a new verified pair
+admitted after that completion was observed. Dashboard APIs run every 30 seconds;
+daemon buffer diagnostics and both services' Linux memory accounting are sampled.
+Original payloads, completed marks, all peer histories and RCH rows must survive;
+only logged pending-association pruning is allowed, with at least 90% of original
+associations retained. New rows cannot mask missing original records. Fixture
+hashes and nonempty WAL files are checked before startup and after cleanup. The
+lane rejects fixtures whose pending/completed TTLs expire during observation.
+SQLite proof reads carry the same deadline, including bounded lock waits and
+interruptible VM work. Any maintenance failure, process identity change, sampled
+OOM event or cleanup failure invalidates success. Cancellation attempts cleanup
+of every owner and retains primary and nested cleanup errors in the report.
+Populated peer activation uses the baseline's separate 120-second setup allowance,
+records its elapsed time, then restores the normal 10-second control RPC timeout.
+It does not extend observation or shutdown deadlines.
+Both TCP ends start before activation. Setup retries both real service announces
+through the SDK and `/Control/Announce` within 30 seconds; learned signed identity
+records are required, and bounded discovery attempts are saved even on failure.
+
+It remains attribution: historical peer keys model bookkeeping, not independent
+physical peers. Seeded propagation fetch/ack transitions, browser load, slow-peer
+recovery and the sustained memory plateau still require their acceptance lanes.
+`passed_final_acceptance` remains false.
 
 Browser measurement was preflighted with the existing Playwright CLI and cached
 Chromium against a frozen UI bundle served through `--ui-dist-path`. CDP

@@ -37,8 +37,9 @@ def generator_lines(process: subprocess.Popen, timeout: float):
                 yield line.decode('utf-8')
 
 
-def counts(path: Path) -> dict:
-    with closing(sqlite3.connect(f'file:{path.resolve()}?mode=ro', uri=True)) as db:
+def counts(path: Path, *, deadline=None) -> dict:
+    from evidence_db import readonly
+    with readonly(path, deadline=deadline) as db:
         return {
             'payloads': db.execute('SELECT count(*) FROM propagation_entries').fetchone()[0],
             'payload_bytes': db.execute('SELECT coalesce(sum(size_bytes),0) FROM propagation_entries').fetchone()[0],

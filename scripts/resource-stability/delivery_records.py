@@ -1,23 +1,22 @@
 """Cross-check real traffic through distinct SDK, RCH and wire identifier spaces."""
-from contextlib import closing
 import json
 from pathlib import Path
-import sqlite3
 
 import msgpack
+from evidence_db import readonly
 
 
 def content_for(token, inbound):
     return token + 'x' * ((480 if inbound else 4096) - len(token))
 
 
-def verify_records(root: Path, destinations, expected_in, expected_out, observed_in, observed_out):
+def verify_records(root: Path, destinations, expected_in, expected_out, observed_in, observed_out, *, deadline=None):
     sender_ids = [*expected_in.values(), *expected_out.values()]
     if len(set(sender_ids)) != len(sender_ids):
         raise RuntimeError('Returned sender message IDs are not unique')
     authenticated = {}
     for index, expected in [(0, expected_in), (1, expected_out)]:
-        with closing(sqlite3.connect(root / f'node{index}' / 'daemon.sqlite3')) as connection:
+        with readonly(root / f'node{index}' / 'daemon.sqlite3', deadline=deadline) as connection:
             for token in expected:
                 rows = connection.execute(
                     "SELECT id, fields FROM messages WHERE direction = 'in' AND source = ? AND destination = ? AND content = ? LIMIT 2",
@@ -38,7 +37,7 @@ def verify_records(root: Path, destinations, expected_in, expected_out, observed
                 wanted = (destinations[index], destinations[1 - index], content_for(token, index == 1), 'out', 'delivered')
                 if rows != [wanted]:
                     raise RuntimeError('Sender durable row does not match its unique ID, payload, identities and receipt')
-    with closing(sqlite3.connect(root / 'rch' / 'rch.sqlite3')) as connection:
+    with readonly(root / 'rch' / 'rch.sqlite3', deadline=deadline) as connection:
         for inbound, observed in [(True, observed_in), (False, {k: {v} for k, v in expected_out.items()})]:
             for token, ids in observed.items():
                 if len(ids) != 1:

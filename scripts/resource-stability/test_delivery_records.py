@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 
 import msgpack
@@ -70,6 +71,11 @@ class DurableEvidenceTests(unittest.TestCase):
 
     def test_distinct_sender_rch_and_wire_identifiers_are_valid(self):
         self.assertEqual(self.verify(), {'test-in': 'wire-in', 'test-out': 'wire-out'})
+
+    def test_expired_deadline_applies_to_durable_delivery_proof(self):
+        with self.assertRaises(TimeoutError):
+            verify_records(self.root, self.destinations, self.expected_in, self.expected_out,
+                           self.observed_in, self.observed_out, deadline=time.monotonic() - 1)
 
     def test_duplicate_sender_ids_cannot_pass_on_receiver_counts(self):
         self.expected_out['test-out'] = 'sdk-in'
