@@ -46,6 +46,7 @@ mod command_persistence;
 mod first_run_setup;
 mod marker_idempotency;
 mod message_persistence;
+mod operation_right_persistence;
 mod rem_team_routing;
 mod reticulumd_inbound;
 mod runtime_exit;
@@ -352,6 +353,7 @@ struct RuntimeMetricCounters {
     ws_event_dropped_oldest: AtomicU64,
     ws_telemetry_dropped_oldest: AtomicU64,
     ws_message_dropped_oldest: AtomicU64,
+    operation_rights: operation_right_persistence::Metrics,
     sqlite_transactions: AtomicU64,
     sqlite_latency_total_ms: AtomicU64,
     sqlite_latency_max_ms: AtomicU64,
@@ -9876,6 +9878,7 @@ fn sqlite_runtime_metrics(state: &AppState) -> Value {
         .unwrap_or_default();
     json!({
         "transactions": transactions,
+        "operation_rights": state.runtime_metrics.operation_rights.snapshot(),
         "avg_ms": total_ms.checked_div(transactions).unwrap_or(0),
         "p50_ms": percentile_ms(&samples, 50),
         "p95_ms": percentile_ms(&samples, 95),
@@ -20667,7 +20670,7 @@ async fn get_r3akt_identity_capabilities(
         })));
     }
     let normalized_identity = normalize_identity_text(&identity);
-    let payload = with_r3akt_core(&state, false, |core| {
+    let payload = with_permission_read_core(&state, |core| {
         let snapshot = core.snapshot();
         let mut capabilities = snapshot
             .identity_capabilities
@@ -20715,10 +20718,15 @@ async fn grant_r3akt_identity_capability(
     Path((identity, capability)): Path<(String, String)>,
     Json(_payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let record = with_r3akt_core(&state, true, |core| {
-        core.grant_operation_right("identity", &identity, &capability, "global", "")
-            .map_err(r3akt_core_error)
-    })?;
+    let record = operation_right_persistence::set(
+        &state,
+        "identity",
+        &identity,
+        &capability,
+        "global",
+        "",
+        true,
+    )?;
     Ok(Json(capability_grant_value(&record)))
 }
 
@@ -20727,10 +20735,15 @@ async fn revoke_r3akt_identity_capability(
     Path((identity, capability)): Path<(String, String)>,
     Json(_payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let record = with_r3akt_core(&state, true, |core| {
-        core.revoke_operation_right("identity", &identity, &capability, "global", "")
-            .map_err(r3akt_core_error)
-    })?;
+    let record = operation_right_persistence::set(
+        &state,
+        "identity",
+        &identity,
+        &capability,
+        "global",
+        "",
+        false,
+    )?;
     Ok(Json(capability_grant_value(&record)))
 }
 
@@ -20794,7 +20807,7 @@ async fn list_r3akt_operation_rights(
     } else {
         None
     };
-    let payload = with_r3akt_core(&state, false, |core| {
+    let payload = with_permission_read_core(&state, |core| {
         let rows = core
             .snapshot()
             .subject_operation_rights
@@ -20850,26 +20863,15 @@ fn upsert_r3akt_operation_right(
     let scope_type =
         optional_json_text(&payload, "scope_type").unwrap_or_else(|| "global".to_string());
     let scope_id = optional_json_text(&payload, "scope_id").unwrap_or_default();
-    let record = with_r3akt_core(&state, true, |core| {
-        if granted {
-            core.grant_operation_right(
-                &subject_type,
-                &subject_id,
-                &operation,
-                &scope_type,
-                &scope_id,
-            )
-        } else {
-            core.revoke_operation_right(
-                &subject_type,
-                &subject_id,
-                &operation,
-                &scope_type,
-                &scope_id,
-            )
-        }
-        .map_err(r3akt_core_error)
-    })?;
+    let record = operation_right_persistence::set(
+        &state,
+        &subject_type,
+        &subject_id,
+        &operation,
+        &scope_type,
+        &scope_id,
+        granted,
+    )?;
     Ok(operation_right_value(&record))
 }
 
@@ -21332,29 +21334,23 @@ fn open_r3akt_read_store(state: &AppState) -> Result<RchSqliteStore, ApiError> {
         .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
-fn with_r3akt_core<T>(
+fn with_permission_read_core<T>(
     state: &AppState,
-    write: bool,
-    f: impl FnOnce(&mut RchCore) -> Result<T, ApiError>,
+    f: impl FnOnce(&RchCore) -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
     let path = state
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("R3AKT HTTP writes unavailable".to_string()))?;
-    if write {
-        return command_persistence::mutate(state, false, |core| {
-            f(core).map(|result| (result, true))
-        });
-    }
     let started = Instant::now();
     let store = RchSqliteStore::open_read_only(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let snapshot = store
         .load_permission_read_snapshot()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut core =
+    let core =
         RchCore::from_snapshot(snapshot).map_err(|error| ApiError::Internal(error.to_string()))?;
-    let result = f(&mut core)?;
+    let result = f(&core)?;
     record_sqlite_latency(state, started.elapsed());
     Ok(result)
 }
@@ -24733,6 +24729,7 @@ mod tests {
     #[path = "issue_238_live.rs"]
     mod issue_238_live;
     mod memory_readers;
+    mod operation_rights;
     mod release_durability;
     mod release_lifecycle;
     mod release_security;

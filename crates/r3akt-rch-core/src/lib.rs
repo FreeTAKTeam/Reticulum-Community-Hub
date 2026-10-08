@@ -13,12 +13,14 @@
     )
 )]
 
+mod operation_rights;
 mod text;
 
 mod sqlite_announces;
 pub use sqlite_announces::IdentityAnnounceSummary;
 mod sqlite_commands;
 mod sqlite_marker_idempotency;
+mod sqlite_operation_rights;
 mod sqlite_payload_deltas;
 use sqlite_payload_deltas::save_payload_delta;
 mod sqlite_read_snapshots;
@@ -27,6 +29,7 @@ mod sqlite_roster;
 mod sqlite_settings;
 pub use sqlite_commands::RchCommandTransaction;
 pub use sqlite_marker_idempotency::MarkerCreation;
+pub use sqlite_operation_rights::OperationRightMutation;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -3342,80 +3345,6 @@ impl RchCore {
             self.identity_capabilities.remove(&identity);
         }
         revoked
-    }
-
-    pub fn grant_operation_right(
-        &mut self,
-        subject_type: impl AsRef<str>,
-        subject_id: impl AsRef<str>,
-        operation: impl AsRef<str>,
-        scope_type: impl AsRef<str>,
-        scope_id: impl AsRef<str>,
-    ) -> Result<SubjectOperationRight, RchCoreError> {
-        self.upsert_operation_right(
-            subject_type,
-            subject_id,
-            operation,
-            scope_type,
-            scope_id,
-            true,
-        )
-    }
-
-    pub fn revoke_operation_right(
-        &mut self,
-        subject_type: impl AsRef<str>,
-        subject_id: impl AsRef<str>,
-        operation: impl AsRef<str>,
-        scope_type: impl AsRef<str>,
-        scope_id: impl AsRef<str>,
-    ) -> Result<SubjectOperationRight, RchCoreError> {
-        self.upsert_operation_right(
-            subject_type,
-            subject_id,
-            operation,
-            scope_type,
-            scope_id,
-            false,
-        )
-    }
-
-    fn upsert_operation_right(
-        &mut self,
-        subject_type: impl AsRef<str>,
-        subject_id: impl AsRef<str>,
-        operation: impl AsRef<str>,
-        scope_type: impl AsRef<str>,
-        scope_id: impl AsRef<str>,
-        granted: bool,
-    ) -> Result<SubjectOperationRight, RchCoreError> {
-        let subject_type = normalize_subject_type(subject_type.as_ref())?;
-        let subject_id = normalize_subject_id(&subject_type, subject_id.as_ref())?;
-        let operation = required_non_empty(operation.as_ref(), "operation")?;
-        let scope_type = normalize_scope_type(scope_type.as_ref())?;
-        let scope_id = normalize_scope_id(&scope_type, scope_id.as_ref());
-        let key = (
-            subject_type.clone(),
-            subject_id.clone(),
-            operation.clone(),
-            scope_type.clone(),
-            scope_id.clone(),
-        );
-        let grant_uid = self.subject_operation_rights.get(&key).map_or_else(
-            || Uuid::new_v4().simple().to_string(),
-            |record| record.grant_uid.clone(),
-        );
-        let record = SubjectOperationRight {
-            grant_uid,
-            subject_type,
-            subject_id,
-            operation,
-            scope_type,
-            scope_id,
-            granted,
-        };
-        self.subject_operation_rights.insert(key, record.clone());
-        Ok(record)
     }
 
     pub fn record_identity_announce(

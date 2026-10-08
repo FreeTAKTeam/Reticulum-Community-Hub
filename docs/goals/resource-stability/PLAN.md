@@ -138,7 +138,7 @@ Each task is implemented by the main agent sequentially. Read-only review and in
 
 ### T8 — Targeted command transaction primitive (#255)
 
-**Allowed files:** Core new command transaction/read-set modules and tests, `sqlite_commands.rs` entrypoints, server `command_persistence.rs`.
+**Allowed files:** Core new command transaction/read-set modules and tests, `sqlite_commands.rs` entrypoints, server `command_persistence.rs`; narrowly scoped root module wiring, permission endpoint adapters/SQLite diagnostics and their focused tests.
 **Output:** Immediate transaction with keyed idempotent result/audit/event persistence, explicit changed/deleted rows and metrics; remove unchanged upserts. Existing domain validation reused; no unlocked read/then-write.
 **Verification:** Rollback, competing state updates, duplicate command IDs and constant-allocation one-record mutation against large unrelated collections. Query-plan/rows-read/written/WAL evidence.
 **Depends on:** None after PRE; can precede T4–T7 if policy responses pending. **Parallel safe:** None.
@@ -150,7 +150,44 @@ Each task is implemented by the main agent sequentially. Read-only review and in
 **Output each:** Bounded affected aggregate, atomic validation/mutation/result/audit/event commit; no interpretation of unloaded rows as deleted. Domain-generated dependent changes preserved.
 **Verification each:** Existing family compatibility tests plus competing/rejected commands, result reuse, generated events and bounded allocation/SQL row count with large unrelated history. Run required workspace and committed server readiness gate per completed family slice.
 **Evidence each:** Single-row changes do not decode or rewrite unrelated families. Audit all original call sites and command types, including southbound and inbound mission sync. Last family deletes/demotes broad command snapshot/delta path; compatibility snapshots remain read-only.
-**Depends on:** T8; implement a–i sequentially. **Parallel safe:** None.
+**Depends on:** T8; implement a–i sequentially after the bounded direct-right checkpoint below. **Parallel safe:** None.
+
+#### First bounded checkpoint: direct operation-right mutations
+
+Implement this partial T8/T9b slice before T9a. The three direct permission
+mutation adapters (identity capability grant/revoke and operation-right upsert)
+currently use the broad command transaction without command IDs, audit records,
+domain events or marker/zone changes. Their domain read set is one normalized
+five-column operation-right key; no linked mission/member history is required.
+This slice does not introduce durable command replay or change sync authorization.
+
+**Allowed files:** Core `operation_rights.rs`, `sqlite_operation_rights.rs` and
+focused tests; core root only to move the existing domain implementation and
+wire exports; server `operation_right_persistence.rs`, root endpoint/read-helper
+cutover and fixed SQLite metrics, focused permission/durability tests; these goal
+documents. No message retention, collision, transport, UI or sync changes.
+**Truth owner/cutover:** Reuse one core normalization/record-construction path.
+Acquire `BEGIN IMMEDIATE`, read at most the matching row using the existing
+composite primary key, preserve its grant UID, and UPSERT only a changed row.
+Commit before returning its payload. Remove the production write branch of the
+permission snapshot helper; keep broad commands only for unmigrated families.
+**Contract:** Keep route authentication, kill-switch protection, normalization,
+validation errors (400), database/decode/commit failures (500), capability and
+operation-right response shapes. Do not synchronize the distinct legacy
+identity-capability table or invent audit/result/event effects. Do not acquire
+unrelated marker/zone cache locks.
+**Evidence:** Stable UID across restart and competing connections; unchanged
+requests write zero rows; validation/failing commit leaves durable state intact;
+primary-key query plan; large malformed unrelated history is never decoded;
+matching rows/changed rows/decoded payload bytes and elapsed time are reported
+with explicit accounting scope. Bound the decoded record to at most one and
+changed writes to at most one. Reject target key/payload disagreement as storage
+corruption before writing. Exercise all three actual HTTP adapters against large
+unrelated history, checking response shapes, changed/no-op metrics and unchanged
+unrelated rows. Run focused core/server compatibility tests,
+required workspace gates and the committed server readiness gate. This is a
+partial checkpoint; T8, T9b and issue #255 remain open until their full contracts
+and runtime allocation evidence pass.
 
 ### T10 — Cancellable, joinable runtime ownership (#257)
 

@@ -161,24 +161,26 @@ fn domain_command(kind: &str, args: Value) -> MissionCommandEnvelope {
 #[test]
 fn competing_mission_mutations_read_inside_the_write_transaction() {
     let (state, directory) = fixture();
-    with_r3akt_core(&state, true, |core| {
+    command_persistence::mutate(&state, false, |core| {
         r3akt_command_outcome_value(core.handle_command(&domain_command(
             "mission.registry.mission.upsert",
             json!({"uid": "mission", "mission_name": "Original", "description": "Original"}),
         )))
+        .map(|result| (result, true))
     })
     .expect("create");
     let second = AppState::from_sqlite_path(directory.join("state.db")).expect("second state");
     let (entered, observed) = std::sync::mpsc::channel();
     let (release, wait) = std::sync::mpsc::channel();
     let first = std::thread::spawn(move || {
-        with_r3akt_core(&state, true, |core| {
+        command_persistence::mutate(&state, false, |core| {
             entered.send(()).expect("entered");
             wait.recv().expect("release");
             r3akt_command_outcome_value(core.handle_command(&domain_command(
                 "mission.registry.mission.patch",
                 json!({"mission_uid": "mission", "patch": {"mission_name": "Accepted name"}}),
             )))
+            .map(|result| (result, true))
         })
     });
     observed
@@ -186,12 +188,13 @@ fn competing_mission_mutations_read_inside_the_write_transaction() {
         .expect("first loaded");
     let (second_entered, second_observed) = std::sync::mpsc::channel();
     let second = std::thread::spawn(move || {
-        with_r3akt_core(&second, true, |core| {
+        command_persistence::mutate(&second, false, |core| {
             second_entered.send(()).expect("second entered");
             r3akt_command_outcome_value(core.handle_command(&domain_command(
                 "mission.registry.mission.patch",
                 json!({"mission_uid": "mission", "patch": {"description": "Accepted description"}}),
             )))
+            .map(|result| (result, true))
         })
     });
     // The old owner loads a stale snapshot here. The corrected owner waits for the first commit.

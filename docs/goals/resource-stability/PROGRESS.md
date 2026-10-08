@@ -24,6 +24,25 @@ acceptance, production recovery, release or publication is claimed here.
   used only for marker/zone comparison. Twenty-two durability regressions and
   strict server Clippy passed. The remaining before/after transaction snapshots
   still require T8/T9 migration.
+- The direct operation-right checkpoint moves all three permission-write
+  adapters to one normalized keyed `IMMEDIATE` transaction. It reuses core
+  validation, preserves grant UID, rejects corrupt key/payload disagreement,
+  skips unchanged writes and commits before returning. The displaced permission
+  write helper is removed; its remaining reader accepts only `&RchCore`.
+  Six core and two router regressions cover rollback, deferred commit failure,
+  competing connections, normalization, corruption, primary-key lookup and
+  large unrelated malformed history. Independent correctness/maintainability
+  review found no actionable issue; independent verification passed ten checks,
+  including existing rights compatibility and broad-command concurrency.
+  The committed server readiness runner passed strict workspace Clippy, 682
+  tests (two explicit ignored tests), Rust docs, link checks, release build and
+  HTTP smoke. Two initial new-code lint errors were corrected before the pass.
+  `/tmp/rch-right-http1` verified 300 actual HTTP mutations against the immutable
+  100,000-announce / 25,000-message fixture: 298 matching payload rows, 200
+  changed writes and 100 zero-write repeats. Maximum decoded row payload was
+  168 bytes; all unrelated history payload hashes stayed unchanged. Shutdown
+  was graceful with an empty cgroup. This subsecond operation probe measures
+  keyed payload accounting, not peak allocations or a memory plateau.
 - Daemon PUSH/PULL diagnostics commit `ae950f8d` tracks dispatch, handler,
   queued-output and delivery work/bytes/time/outcomes through cancellation.
   Twenty ZeroMQ tests, three metric units, all 781 RPC library tests (eight
@@ -97,8 +116,8 @@ invalid 4 KiB inbound chat payload. None is attributed to the production inciden
 | T5 durable message APIs | Pending; SQLite must replace every resident-only reader/transition before eviction. |
 | T6 bounded cache (#252) | Pending selected retention/active-work policy and T5. |
 | T7 byte admission (#254) | Pending durable scheduling and selected active-work budget. |
-| T8 command primitive (#255) | Only unchanged-write subtask complete; targeted read/write transactions and instrumentation remain. |
-| T9 all command families | Pending, including protocol, REM, common authorization/routing and inbound mission-sync callers. |
+| T8 command primitive (#255) | Partial: unchanged-write and direct operation-right keyed mutation/instrumentation checkpoints pass; generic keyed replay/read/write transactions and allocation evidence remain. |
+| T9 all command families | Partial T9b: all three direct permission-write adapters moved; other rights/skill/moderation/log/change commands and every other family remain, including protocol, REM, common authorization/routing and inbound mission-sync callers. |
 | T10 cancellation/shutdown (#257) | Pending real operation-stage cancellation, join ownership and non-cooperative dependency proof. Harness cleanup is not an application lifecycle fix. |
 | T11 UI bounds (#253) | Pending chat cache/DOM bounds, durable paging, stale-fetch protection and browser evidence. Existing baseline source already contains config unmount guards and discovery single-flight polling. |
 | T12 acceptance | Pending all preceding work, required repository gates and immutable >=3-hour representative real workload. |
