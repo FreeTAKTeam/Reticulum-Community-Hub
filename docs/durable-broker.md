@@ -19,7 +19,7 @@ migration backs up existing RCH data. Bootstrap events preserve historical rows
 without executing old commands or replaying old relays. One RCH process owns a
 state directory, enforced by a separate SQLite lease.
 
-Paired LXMF-rs source: `2f74a3255a30c5f70039223f4ee4e0476b28f179`
+Paired LXMF-rs source: `b9189872da97ff48f68fb281ccc1ca4b42574b4d`
 on local branch `corvo/issue-659-durable-zmq`. Publish that framework revision
 before any remote build of this RCH candidate.
 
