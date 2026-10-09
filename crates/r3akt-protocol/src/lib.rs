@@ -259,6 +259,9 @@ pub struct HealthTelemetry {
 pub struct TelemetrySample {
     pub telemetry: Value,
     pub timestamp_s: Option<i64>,
+    /// Original packed Sideband Telemeter for lossless collector replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed_telemeter: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

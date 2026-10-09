@@ -25,6 +25,12 @@ maintenance.
   TAK-to-RCH CoT exchange; TAK socket lifecycle is not part of
   `r3akt-rch-server`.
 
+Numeric Sideband/Columba collector requests and their topic authorization,
+persistence and wire-response contract are documented in
+[Telemetry collector compatibility](telemetry-collector-compatibility.md).
+Older decoded-only snapshots require a fresh packed upload before they can be
+served. Live application acceptance remains tracked in issues #258 and #260.
+
 ## Release Gates
 
 Before switching the GitHub default branch to Rust, the branch must pass:

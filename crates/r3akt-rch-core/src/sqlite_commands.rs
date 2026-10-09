@@ -422,6 +422,26 @@ impl RchCommandTransaction<'_> {
         let payload:Option<Vec<u8>>=self.transaction.query_row("SELECT m.payload FROM rch_broker_dispatch d JOIN rch_messages m ON m.message_id=d.message_id WHERE d.daemon_message_id=?1",[id],|r|r.get(0)).optional()?;
         payload.as_deref().map(decode_msgpack).transpose()
     }
+    /// Latest persisted collector candidates in timestamp order. Fail explicitly
+    /// rather than silently truncating a snapshot beyond the response bound.
+    pub fn collector_telemetry_since(
+        &self,
+        since: i64,
+    ) -> Result<Vec<TelemetryRecord>, RchCoreError> {
+        let mut statement = self.transaction.prepare("SELECT payload FROM rch_telemetry_records WHERE timestamp_s >= ?1 ORDER BY timestamp_s DESC, id DESC LIMIT 1025")?;
+        let mut rows = statement.query([since])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            let bytes: Vec<u8> = row.get(0)?;
+            records.push(decode_msgpack(&bytes)?);
+            if records.len() > 1024 {
+                return Err(RchCoreError::InvalidPayload(
+                    "collector snapshot exceeds 1024 candidates".into(),
+                ));
+            }
+        }
+        Ok(records)
+    }
     pub fn stage_telemetry(
         &self,
         record: &TelemetryRecord,

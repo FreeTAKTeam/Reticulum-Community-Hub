@@ -75,12 +75,11 @@ fn stream_gap_recovery_quarantines_poison_and_does_not_recount_history() {
     assert_eq!(recovered, 34);
     assert_eq!(stats.received_total, 34);
     assert_eq!(stats.quarantined_total, 1);
-    assert!(
-        stats
-            .last_quarantine_error
-            .as_deref()
-            .is_some_and(|error| error.contains("poison"))
-    );
+    assert!(stats.last_quarantine_error.as_deref().is_some_and(|error| {
+        error.contains("malformed LXMF FIELD_COMMANDS (0x09) entry 0")
+            && error.contains("no recognized selector")
+            && !error.contains("poison")
+    }));
     let messages = state.messages.read().expect("messages");
     assert_eq!(
         messages

@@ -1,5 +1,5 @@
 use super::*;
-fn outgoing(
+pub(super) fn outgoing(
     unit: &RchCommandTransaction<'_>,
     _event: &InboxEvent,
     index: usize,
@@ -105,11 +105,16 @@ pub(super) fn apply_envelope(
         if bootstrap {
             return Ok(());
         }
+        if command.name == "telemetry.collect" {
+            return super::telemetry_collector::reply(
+                unit, event, envelope, &command, published, allowlist,
+            );
+        }
         if command.name.eq_ignore_ascii_case("help") {
             published.push(outgoing(
                 unit,
                 event,
-                0,
+                published.len(),
                 envelope.source.as_str(),
                 &plain_lxmf_help_reply(),
                 json!({}),
@@ -233,20 +238,18 @@ pub(super) fn apply_envelope(
             })
             .unwrap_or_default();
         destinations.retain(|d| allowed(unit.core_mut(), d, allowlist));
-        let mut index = 0;
         for response in responses {
             let fields = rem_team_routing::mission_response_fields(&response, team)?;
             if allowed(unit.core_mut(), envelope.source.as_str(), allowlist) {
                 published.push(outgoing(
                     unit,
                     event,
-                    index,
+                    published.len(),
                     envelope.source.as_str(),
                     &response.content,
                     fields.clone(),
                     envelope.timestamp.timestamp_millis(),
                 )?);
-                index += 1;
             }
             if response.event_field().is_some() && !rejected {
                 if team.is_none() {
@@ -293,13 +296,12 @@ pub(super) fn apply_envelope(
                     published.push(outgoing(
                         unit,
                         event,
-                        index,
+                        published.len(),
                         destination,
                         &response.content,
                         fields.clone(),
                         envelope.timestamp.timestamp_millis(),
                     )?);
-                    index += 1;
                 }
             }
         }
@@ -437,7 +439,7 @@ pub(super) fn apply_envelope(
                         "fanout byte/count budget exceeded; input retained".into(),
                     ));
                 }
-                for (index, destination) in destinations.iter().enumerate() {
+                for destination in &destinations {
                     let fields = if roster
                         .iter()
                         .any(|c| c.identity.eq_ignore_ascii_case(destination) && c.text_only)
@@ -449,7 +451,7 @@ pub(super) fn apply_envelope(
                     published.push(outgoing(
                         unit,
                         event,
-                        index,
+                        published.len(),
                         destination,
                         &format!("{sender} > {body}"),
                         fields,
@@ -460,6 +462,7 @@ pub(super) fn apply_envelope(
         }
         Payload::TelemetrySample(t) => {
             let record = r3akt_rch_core::TelemetryRecord {
+                packed_telemeter: t.packed_telemeter.clone(),
                 peer_destination: envelope.source.to_string(),
                 timestamp_s: t.timestamp_s.unwrap_or(envelope.timestamp.timestamp()),
                 telemetry: t.telemetry.clone(),
@@ -470,6 +473,7 @@ pub(super) fn apply_envelope(
         }
         Payload::HealthTelemetry(t) => {
             let record = r3akt_rch_core::TelemetryRecord {
+                packed_telemeter: None,
                 peer_destination: envelope.source.to_string(),
                 timestamp_s: t.observed_at.timestamp(),
                 telemetry: health_telemetry_payload(t),

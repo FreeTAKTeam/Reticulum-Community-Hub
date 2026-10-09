@@ -25,7 +25,9 @@ mod sdk_path_control;
 
 use sdk_path_control::{resolve_zmq_actor_path, sync_zmq_actor_selected_node};
 
-use field_commands::{DirectLxmfCommandResult, direct_lxmf_command};
+mod direct_lxmf;
+pub use direct_lxmf::DecodedLxmfMessage;
+use direct_lxmf::{direct_lxmf_message_envelope, direct_lxmf_message_payloads};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
@@ -2539,61 +2541,6 @@ fn lxmf_sdk_event_to_reticulumd_event_record(event: LxmfSdkEvent) -> ReticulumdE
     }
 }
 
-fn direct_lxmf_message_envelope(
-    message: &JsonValue,
-    local_source: &str,
-) -> Result<Option<ProtocolEnvelope>, TransportError> {
-    let fields = message.get("fields").and_then(JsonValue::as_object);
-    let source = optional_message_string(message, &["source", "source_hash", "source_id"])
-        .unwrap_or("unknown");
-    match direct_lxmf_command(fields) {
-        DirectLxmfCommandResult::NoCommand => {}
-        DirectLxmfCommandResult::Valid(mut command) => {
-            if let Some(team_uid) = fields.and_then(|fields| {
-                optional_field_string(fields, &["11", "FIELD_GROUP", "group", "Group"])
-            }) {
-                if let Some(args) = command.args.as_object_mut() {
-                    args.insert(
-                        "_rem_team_uid".to_string(),
-                        JsonValue::String(team_uid.to_string()),
-                    );
-                }
-            }
-            let mut envelope = ProtocolEnvelope::new(
-                NodeId::new(source),
-                Destination::Node(NodeId::new(local_source)),
-                Topic::new("rem-directory"),
-                Payload::Command(command),
-            );
-            if let Some(message_id) = message
-                .get("id")
-                .and_then(JsonValue::as_str)
-                .filter(|value| !value.trim().is_empty())
-            {
-                envelope = envelope.with_dedupe_key(message_id);
-            }
-            return Ok(Some(envelope));
-        }
-        DirectLxmfCommandResult::Malformed(reason) => {
-            let message_id = message
-                .get("id")
-                .and_then(JsonValue::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("unknown");
-            return Err(TransportError::Receive(format!(
-                "malformed LXMF FIELD_COMMANDS (0x09) in message {message_id} from {source}: {reason}"
-            )));
-        }
-    }
-    Ok(direct_lxmf_fallback_envelope(
-        fields,
-        message,
-        source,
-        local_source,
-    ))
-}
-
 fn direct_lxmf_fallback_envelope(
     fields: Option<&serde_json::Map<String, JsonValue>>,
     message: &JsonValue,
@@ -2665,12 +2612,12 @@ fn direct_lxmf_fallback_envelope(
     )
 }
 
-pub fn reticulumd_message_to_envelope(
+pub fn reticulumd_message_to_payloads(
     message: &JsonValue,
     local_source: &str,
-) -> Result<Option<ProtocolEnvelope>, TransportError> {
+) -> Result<DecodedLxmfMessage, TransportError> {
     if message.get("direction").and_then(JsonValue::as_str) != Some("in") {
-        return Ok(None);
+        return Ok(DecodedLxmfMessage::default());
     }
     let authoritative_source = message
         .get("source")
@@ -2686,7 +2633,7 @@ pub fn reticulumd_message_to_envelope(
             .eq_ignore_ascii_case(b.trim().trim_start_matches("0x"))
     };
     if !same(authoritative_destination, local_source) {
-        return Ok(None);
+        return Ok(DecodedLxmfMessage::default());
     }
     let payload_b64 = message
         .get("fields")
@@ -2708,9 +2655,32 @@ pub fn reticulumd_message_to_envelope(
                 "embedded envelope identity differs from verified LXMF sender/destination".into(),
             ));
         }
-        return Ok(Some(envelope));
+        return Ok(DecodedLxmfMessage {
+            envelopes: vec![envelope],
+            command_diagnostics: Vec::new(),
+        });
     }
-    direct_lxmf_message_envelope(message, local_source)
+    Ok(direct_lxmf_message_payloads(message, local_source))
+}
+
+/// Single-payload compatibility API. The durable broker consumes every payload
+/// through `reticulumd_message_to_payloads`.
+pub fn reticulumd_message_to_envelope(
+    message: &JsonValue,
+    local_source: &str,
+) -> Result<Option<ProtocolEnvelope>, TransportError> {
+    let decoded = reticulumd_message_to_payloads(message, local_source)?;
+    if decoded.envelopes.is_empty()
+        && decoded
+            .command_diagnostics
+            .iter()
+            .any(|d| d.starts_with("malformed"))
+    {
+        return Err(TransportError::Receive(
+            decoded.command_diagnostics.join("; "),
+        ));
+    }
+    Ok(decoded.envelopes.into_iter().next())
 }
 
 pub fn reticulumd_event_to_envelope(
@@ -2734,9 +2704,11 @@ fn direct_lxmf_telemetry(
     let payload = optional_field_value(fields, &["telemetry", "FIELD_TELEMETRY", "2"])?;
     let telemetry = parse_lxmf_telemetry_payload(payload)?;
     let telemetry = humanize_lxmf_telemetry_payload(telemetry);
+    let packed = attachment_data_bytes(payload);
     let timestamp_s = lxmf_telemetry_timestamp(&telemetry)
         .or_else(|| optional_message_i64(message, &["timestamp", "timestamp_s", "time"]));
     Some(TelemetrySample {
+        packed_telemeter: (!packed.is_empty()).then_some(packed),
         telemetry,
         timestamp_s,
     })

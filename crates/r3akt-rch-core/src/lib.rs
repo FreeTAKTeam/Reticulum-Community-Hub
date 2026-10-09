@@ -742,6 +742,9 @@ pub struct TelemetryRecord {
     pub display_name: Option<String>,
     #[serde(default)]
     pub identity_label: Option<String>,
+    /// Absent in older humanized-only records; never synthesize wire sensors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed_telemeter: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
