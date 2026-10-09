@@ -4,8 +4,10 @@ use rns_rpc::rpc::{
     ServiceIdentityRecord, ServiceIdentitySpec,
 };
 use rns_rpc::{MessageRecord, MessagesStore};
-use std::sync::atomic::{AtomicBool, Ordering};
-use zeromq::{PullSocket, PushSocket, Socket, SocketRecv, SocketSend};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use zeromq::{PullSocket, Socket, SocketRecv};
+
+mod replies;
 
 #[derive(Default)]
 struct IdentityBridge(Mutex<Option<ServiceIdentityRecord>>);
@@ -65,6 +67,7 @@ struct Fixture {
     endpoint: String,
     response: String,
     stop: Arc<AtomicBool>,
+    reply_failures: Arc<AtomicUsize>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl Fixture {
@@ -80,6 +83,8 @@ impl Fixture {
         let response = endpoint();
         let endpoint = endpoint();
         let stop = Arc::new(AtomicBool::new(false));
+        let reply_failures = Arc::new(AtomicUsize::new(0));
+        let failures = reply_failures.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let d = daemon.clone();
         let ep = endpoint.clone();
@@ -114,21 +119,12 @@ impl Fixture {
                                 &envelope.payload,
                             )
                             .unwrap();
-                        let mut replies = PushSocket::new();
-                        replies
-                            .connect(envelope.response_endpoint.as_ref().unwrap())
-                            .await
-                            .unwrap();
-                        tokio::time::sleep(Duration::from_millis(15)).await;
-                        let reply = rns_rpc::rpc::zmq::ZmqRpcEnvelope::response(
-                            envelope.session_id,
-                            envelope.request_id,
-                            payload,
-                        );
-                        replies
-                            .send(rns_rpc::rpc::zmq::encode_envelope(&reply).unwrap().into())
-                            .await
-                            .unwrap();
+                        if let Err(error) = replies::deliver(envelope, payload).await {
+                            // A cancelled SDK attempt can close its reply endpoint. Keep serving
+                            // the replay-safe retry, as the production response writer does.
+                            failures.fetch_add(1, Ordering::Release);
+                            eprintln!("fixture reply delivery failed: {error}");
+                        }
                     }
                 });
         });
@@ -138,6 +134,7 @@ impl Fixture {
             endpoint,
             response,
             stop,
+            reply_failures,
             worker: Some(worker),
         }
     }
@@ -175,7 +172,13 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        self.worker.take().unwrap().join().unwrap();
+        if let Err(error) = self.worker.take().unwrap().join() {
+            if std::thread::panicking() {
+                eprintln!("fixture worker panicked during cleanup: {error:?}");
+            } else {
+                panic!("fixture worker panicked: {error:?}");
+            }
+        }
         self.daemon.shutdown_outbound_workers();
     }
 }
