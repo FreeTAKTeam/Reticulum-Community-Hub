@@ -60,7 +60,7 @@ fn targeted_and_explicit_recipient_sends_never_decode_100001_history_rows() {
     assert_eq!(
         database
             .query_row("SELECT COUNT(*) FROM rch_identity_announces", [], |row| row
-                .get::<_, u64>(0))
+                .get::<_, i64>(0))
             .expect("count"),
         100_001
     );

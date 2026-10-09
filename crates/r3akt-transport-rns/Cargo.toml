@@ -8,10 +8,10 @@ repository.workspace = true
 
 [dependencies]
 base64.workspace = true
-lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "fb5c2a1f938a7aab2f68e67976ef4e074218f258", version = "0.13.0", default-features = false, features = ["std"] }
-lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "fb5c2a1f938a7aab2f68e67976ef4e074218f258", version = "0.13.0", default-features = false, features = ["zmq-pipeline-backend"] }
+lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "2fe675544c320a97a67b7206c26867eeca77b898", version = "0.13.0", default-features = false, features = ["std"] }
+lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "2fe675544c320a97a67b7206c26867eeca77b898", version = "0.13.0", default-features = false, features = ["zmq-pipeline-backend"] }
 r3akt-protocol.workspace = true
-rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "fb5c2a1f938a7aab2f68e67976ef4e074218f258", version = "0.13.0" }
+rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "2fe675544c320a97a67b7206c26867eeca77b898", version = "0.13.0" }
 rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true

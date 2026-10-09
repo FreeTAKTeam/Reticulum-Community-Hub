@@ -30,7 +30,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
-rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "fb5c2a1f938a7aab2f68e67976ef4e074218f258", version = "0.13.0" }
+rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "2fe675544c320a97a67b7206c26867eeca77b898", version = "0.13.0" }
 rusqlite.workspace = true
 tokio-tungstenite.workspace = true
 tower.workspace = true

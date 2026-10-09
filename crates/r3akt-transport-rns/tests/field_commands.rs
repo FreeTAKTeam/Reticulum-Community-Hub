@@ -8,6 +8,7 @@ fn message(fields: &Value) -> Value {
     json!({
         "id": "field-command-test-1",
         "source": "peer-field-command",
+        "direction":"in",
         "destination": "local-destination",
         "content": "",
         "fields": fields,

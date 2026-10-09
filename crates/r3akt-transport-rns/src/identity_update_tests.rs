@@ -76,7 +76,7 @@ fn zmq_data_plane_registers_and_updates_independent_rch_identity() {
             .map(|request| request.method.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "sdk_negotiate_v2",
+            "sdk_broker_negotiate_v1",
             "sdk_identity_import_v2",
             "sdk_identity_activate_v2",
             "sdk_identity_announce_now_v2",

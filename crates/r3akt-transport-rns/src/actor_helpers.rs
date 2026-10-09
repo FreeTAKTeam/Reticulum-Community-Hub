@@ -2,7 +2,10 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use super::{TransportError, ZmqSdkActorRequest, ZmqSdkActorResponse};
+use super::{
+    TransportError, ZmqPipelineBackendConfig, ZmqSdkActorPayload, ZmqSdkActorRequest,
+    ZmqSdkActorResponse, actor_response_wait_timeout,
+};
 
 pub(super) fn atomic_max_usize(target: &AtomicUsize, candidate: usize) {
     let _result = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
@@ -64,5 +67,45 @@ pub(super) fn recv_prioritized_actor_request(
                 return control_receiver.recv().ok();
             }
         }
+    }
+}
+
+impl ZmqSdkActorPayload {
+    pub(super) fn response_wait_timeout(&self, config: &ZmqPipelineBackendConfig) -> Duration {
+        let operation_rpcs = match self {
+            Self::RegisterIdentity(_) | Self::UpdateIdentity { .. } | Self::SyncSelectedNode => 3,
+            Self::ResolvePath(_) => 2,
+            _ => 1,
+        };
+        actor_response_wait_timeout(config, operation_rpcs)
+    }
+
+    pub(super) fn batch_size(&self) -> usize {
+        match self {
+            Self::Single(_) => 1,
+            Self::Batch(batch) => batch.messages.len(),
+            Self::Status(_)
+            | Self::ResolvePath(_)
+            | Self::SyncSelectedNode
+            | Self::RegisterIdentity(_)
+            | Self::UpdateIdentity { .. }
+            | Self::Announce
+            | Self::PollEvents { .. }
+            | Self::MessageHistory(_)
+            | Self::BrokerAnnounces(_)
+            | Self::BrokerAdmit(_)
+            | Self::BrokerReconcile(_)
+            | Self::BrokerResume(_)
+            | Self::BrokerFetch(_)
+            | Self::BrokerAck(_)
+            | Self::Shutdown => 0,
+        }
+    }
+
+    pub(super) fn is_send_lane(&self) -> bool {
+        matches!(
+            self,
+            Self::Single(_) | Self::Batch(_) | Self::BrokerAdmit(_) | Self::Shutdown
+        )
     }
 }

@@ -12,8 +12,8 @@ fn issue_238_event_poll_waits_for_delayed_identity_restoration() {
     let server = spawn_zmq_sequence_server_with_delay(command.clone(), vec![
         negotiation.clone(), identity.clone(), accepted.clone(), announced.clone(),
         serde_json::json!({"__rpc_error": {
-            "code": "SDK_RUNTIME_NOT_RUNNING", "message": "daemon restarted",
-            "machine_code": "SDK_RUNTIME_NOT_RUNNING", "category": "runtime", "retryable": true
+            "code": "SDK_BROKER_SESSION_REQUIRED", "message": "daemon restarted",
+            "machine_code": "SDK_BROKER_SESSION_REQUIRED", "category": "runtime", "retryable": true
         }}),
         negotiation, identity, accepted, announced,
         serde_json::json!({"events": [], "next_cursor": "recovered-cursor", "dropped_count": 0}),
