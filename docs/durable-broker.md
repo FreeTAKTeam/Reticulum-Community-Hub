@@ -19,9 +19,9 @@ migration backs up existing RCH data. Bootstrap events preserve historical rows
 without executing old commands or replaying old relays. One RCH process owns a
 state directory, enforced by a separate SQLite lease.
 
-Paired LXMF-rs source: `2fe675544c320a97a67b7206c26867eeca77b898`
-on local branch `corvo/issue-659-durable-zmq`. Publish that framework revision
-before any remote build of this RCH candidate.
+Paired LXMF-rs source: `e237f80c0c9e219e4090be04a4229d3328074f73`
+merged into Framework `main` by PR #660. Cargo dependencies and managed
+daemon builds use this same immutable revision.
 
 The daemon physical budget is persisted on first enablement. Its main database
 page cap uses one quarter of the selected budget to leave WAL and control
@@ -49,7 +49,6 @@ point old binaries at migrated databases; rollback uses pre-cutover backups
 and reconciliation of work admitted after that backup.
 
 Full daemon contract, limits and recovery details are maintained in LXMF-rs:
-[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/corvo/issue-659-durable-zmq/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
-That candidate branch is local until explicitly published. Local socket,
-SQLite, crash and paired-worker tests do not establish hardware power-loss
-behavior or a production multi-hour memory/swap plateau.
+[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/e237f80c0c9e219e4090be04a4229d3328074f73/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
+Local socket, SQLite, crash and paired-worker tests do not establish hardware
+power-loss behavior or a production multi-hour memory/swap plateau.
