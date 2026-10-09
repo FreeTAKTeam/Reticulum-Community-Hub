@@ -1,0 +1,15 @@
+[
+  {"name":"columba-list", "fields":{"9":[{"1":[0,true]}]}, "commands":1,"diagnostics":0},
+  {"name":"sideband-legacy", "fields":{"9":[{"1":1700000000}]}, "commands":1,"diagnostics":0},
+  {"name":"aliases", "fields":{"FIELD_COMMANDS":[{"0x01":[0,false]}]}, "commands":1,"diagnostics":0},
+  {"name":"all-entries", "fields":{"9":[{"7":[]},{"1":0},{"Command":"Help"},{"command_type":"mission.join","args":{}}]}, "commands":3,"diagnostics":1},
+  {"name":"rem-tracked", "fields":{"9":[{"t":"T1","a":{}}]}, "commands":0,"diagnostics":1},
+  {"name":"empty", "fields":{"9":[]}, "commands":0,"diagnostics":1},
+  {"name":"not-object", "fields":{"9":[null]}, "commands":0,"diagnostics":1},
+  {"name":"missing-selector", "fields":{"9":[{}]}, "commands":0,"diagnostics":1},
+  {"name":"bad-flag", "fields":{"9":[{"1":[0,"private-value"]}]}, "commands":0,"diagnostics":1},
+  {"name":"negative", "fields":{"9":[{"1":-1}]}, "commands":0,"diagnostics":1},
+  {"name":"string-seconds", "fields":{"9":[{"1":"private-value"}]}, "commands":0,"diagnostics":1},
+  {"name":"boolean-seconds", "fields":{"9":[{"1":true}]}, "commands":0,"diagnostics":1},
+  {"name":"ambiguous", "fields":{"9":[{"1":0,"0":"Help"}]}, "commands":0,"diagnostics":1}
+]

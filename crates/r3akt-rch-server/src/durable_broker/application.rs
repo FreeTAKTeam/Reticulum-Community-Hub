@@ -67,6 +67,7 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
         .map_err(storage)?;
     let mut published = Vec::new();
     let mut telemetry = Vec::new();
+    let mut system_event_count = 1_usize;
     match event.event_type.as_str() {
         "outbound" => {
             if let (Some(operation), Some(id)) = (
@@ -107,33 +108,55 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
             let source = state.reticulumd_source.as_deref().ok_or_else(|| {
                 ApiError::ServiceUnavailable("RCH service destination required".into())
             })?;
-            match r3akt_transport_rns::reticulumd_message_to_envelope(message, source) {
+            match r3akt_transport_rns::reticulumd_message_to_payloads(message, source) {
                 Err(error) => unit
                     .reject(&format!("malformed supported inbound: {error}"))
                     .map_err(storage)?,
-                Ok(None) => {}
-                Ok(Some(envelope)) => {
-                    let logical = format!(
-                        "lxmf:{}",
-                        message
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or(&envelope.id.to_string())
-                    );
-                    let immutable = json!({"source":normalize_identity_key(envelope.source.as_str()),"destination":message.get("destination"),"title":message.get("title"),"content":message.get("content"),"timestamp":message.get("timestamp"),"fields":message.get("fields")});
-                    if unit
-                        .claim_logical_input(envelope.source.as_str(), &logical, &immutable)
-                        .map_err(storage)?
-                    {
-                        apply_envelope(
-                            &mut unit,
-                            &event,
-                            &envelope,
-                            event.event_type == "bootstrap_message",
-                            &mut published,
-                            &mut telemetry,
-                            state.outbound_identity_allowlist.as_deref(),
-                        )?;
+                Ok(decoded) => {
+                    if !decoded.command_diagnostics.is_empty() {
+                        system_event_count += 1;
+                        let diagnostic = decoded.command_diagnostics.join("; ");
+                        if decoded.envelopes.is_empty() {
+                            unit.reject(&diagnostic).map_err(storage)?;
+                        }
+                        unit.stage_system_event(&r3akt_rch_core::SystemEventRecord {
+                            event_id: format!("broker:{}:commands", unit.inbox_event_key().map_err(storage)?),
+                            event_type: "lxmf_command_diagnostic".into(),
+                            message: diagnostic,
+                            timestamp_ms: event.created_at.saturating_mul(1000),
+                            metadata: json!({"position":event.position,"valid_payloads":decoded.envelopes.len()}),
+                        }).map_err(storage)?;
+                    }
+                    if let Some(first) = decoded.envelopes.first() {
+                        let logical = format!(
+                            "lxmf:{}",
+                            message
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or(&first.id.to_string())
+                        );
+                        let immutable = json!({"source":normalize_identity_key(first.source.as_str()),"destination":message.get("destination"),"title":message.get("title"),"content":message.get("content"),"timestamp":message.get("timestamp"),"fields":message.get("fields")});
+                        if unit
+                            .claim_logical_input(first.source.as_str(), &logical, &immutable)
+                            .map_err(storage)?
+                        {
+                            for envelope in &decoded.envelopes {
+                                if event.event_type != "bootstrap_message"
+                                    && matches!(&envelope.payload, super::Payload::Command(command) if command.name == "telemetry.collect")
+                                {
+                                    system_event_count += 1;
+                                }
+                                apply_envelope(
+                                    &mut unit,
+                                    &event,
+                                    envelope,
+                                    event.event_type == "bootstrap_message",
+                                    &mut published,
+                                    &mut telemetry,
+                                    state.outbound_identity_allowlist.as_deref(),
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -200,7 +223,23 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
         }
     }
     bound_presentation(&mut messages);
-    system_events.push(system_event.clone());
+    // Read only the bounded number of diagnostics staged by this input, rather
+    // than decoding the presentation history on every ordinary upload/message.
+    let committed_events = store
+        .list_system_events_page(system_event_count.min(200), 0)
+        .map_err(storage)?;
+    let new_events = committed_events
+        .iter()
+        .filter(|event| {
+            !system_events
+                .iter()
+                .any(|old| old.event_id == event.event_id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for event in new_events.iter().rev() {
+        system_events.push(event.clone());
+    }
     if system_events.len() > 200 {
         let excess = system_events.len() - 200;
         system_events.drain(..excess);
@@ -220,7 +259,9 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
     drop(clients);
     drop(zones);
     drop(markers);
-    broadcast_system_event(state, &system_event);
+    for event in new_events.into_iter().rev() {
+        broadcast_system_event(state, &event);
+    }
     for record in telemetry {
         broadcast_telemetry_event(state, &record);
     }

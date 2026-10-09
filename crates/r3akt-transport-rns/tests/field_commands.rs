@@ -1,6 +1,7 @@
 use r3akt_protocol::Payload;
 use r3akt_transport_rns::{
     TransportError, reticulumd_event_to_envelope, reticulumd_message_to_envelope,
+    reticulumd_message_to_payloads,
 };
 use serde_json::{Value, json};
 
@@ -43,7 +44,7 @@ fn numeric_legacy_selector_decodes_leave() {
 }
 
 #[test]
-fn only_first_field_command_entry_is_used() {
+fn single_envelope_compatibility_api_returns_first_payload() {
     let command = command_from_message(&json!({
         "9": [{"Command": "join"}, {"Command": "leave"}]
     }));
@@ -93,7 +94,7 @@ fn mission_command_envelope_remains_unchanged() {
 }
 
 #[test]
-fn malformed_field_commands_are_reported_with_context() {
+fn malformed_field_commands_report_indexed_reason_without_private_identifiers() {
     let error = reticulumd_message_to_envelope(
         &message(&json!({"9": [{"not_a_selector": "join"}]})),
         "local-destination",
@@ -104,8 +105,9 @@ fn malformed_field_commands_are_reported_with_context() {
         panic!("expected receive error");
     };
     assert!(error.contains("FIELD_COMMANDS (0x09)"));
-    assert!(error.contains("field-command-test-1"));
-    assert!(error.contains("peer-field-command"));
+    assert!(error.contains("entry 0") && error.contains("no recognized selector"));
+    assert!(!error.contains("field-command-test-1"));
+    assert!(!error.contains("peer-field-command"));
 }
 
 #[test]
@@ -146,4 +148,29 @@ fn event_message_uses_the_same_field_command_decoder() {
         .expect("decode event")
         .expect("command envelope");
     assert!(matches!(envelope.payload, Payload::Command(command) if command.name == "join"));
+}
+
+#[test]
+fn batch_application_api_decodes_every_command_entry() {
+    let decoded = reticulumd_message_to_payloads(
+        &message(&json!({"9":[{"Command":"join"},{"1":[0,true]},{"Command":"leave"}]})),
+        "local-destination",
+    )
+    .unwrap();
+    assert!(decoded.command_diagnostics.is_empty());
+    let names = decoded
+        .envelopes
+        .iter()
+        .map(|envelope| {
+            let Payload::Command(command) = &envelope.payload else {
+                panic!("command");
+            };
+            command.name.as_str()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["join", "telemetry.collect", "leave"]);
+    assert_eq!(
+        decoded.envelopes[2].dedupe_key.as_deref(),
+        Some("field-command-test-1:payload:2")
+    );
 }

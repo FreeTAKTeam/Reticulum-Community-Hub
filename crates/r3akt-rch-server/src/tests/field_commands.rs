@@ -224,7 +224,12 @@ fn malformed_event_is_quarantined_and_cursor_advances_to_later_messages() {
     assert!(
         diagnostics["reticulumd_inbound"]["last_quarantine_error"]
             .as_str()
-            .is_some_and(|error| error.contains("quarantine-message-1"))
+            .is_some_and(
+                |error| error.contains("malformed LXMF FIELD_COMMANDS (0x09) entry 0")
+                    && error.contains("no recognized selector")
+                    && !error.contains("quarantine-message-1")
+                    && !error.contains("peer-field-command")
+            )
     );
     assert!(
         state
@@ -232,7 +237,10 @@ fn malformed_event_is_quarantined_and_cursor_advances_to_later_messages() {
             .read()
             .expect("system events")
             .iter()
-            .any(|event| event.event_type == "reticulumd_inbound_message_quarantined")
+            .any(
+                |event| event.event_type == "reticulumd_inbound_message_quarantined"
+                    && event.metadata["message_id"] == "quarantine-message-1"
+            )
     );
 
     let _ = std::fs::remove_file(db_path);

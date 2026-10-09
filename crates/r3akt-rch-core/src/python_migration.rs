@@ -232,6 +232,7 @@ pub fn import_legacy_telemetry_database(
     let mut count = 0_usize;
     for record in records.into_values() {
         let telemetry_record = TelemetryRecord {
+            packed_telemeter: None,
             peer_destination: record.peer_destination,
             timestamp_s: record.timestamp_s,
             telemetry: Value::Object(record.telemetry),

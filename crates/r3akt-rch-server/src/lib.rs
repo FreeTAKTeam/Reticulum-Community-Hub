@@ -1165,6 +1165,7 @@ impl AppState {
         let display_name = normalize_optional_text(display_name);
         let peer_destination = peer_destination.into();
         let record = TelemetryRecord {
+            packed_telemeter: None,
             peer_destination: peer_destination.clone(),
             timestamp_s,
             telemetry,
@@ -49661,6 +49662,7 @@ mod tests {
         let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
         snapshot.telemetry_records = vec![
             r3akt_rch_core::TelemetryRecord {
+                packed_telemeter: None,
                 peer_destination: "local-source".to_string(),
                 timestamp_s: 1,
                 telemetry: json!({"self": true}),
@@ -49668,6 +49670,7 @@ mod tests {
                 display_name: None,
             },
             r3akt_rch_core::TelemetryRecord {
+                packed_telemeter: None,
                 peer_destination: "peer-a".to_string(),
                 timestamp_s: 2,
                 telemetry: json!({"battery":{"percent": 20}}),
@@ -49675,6 +49678,7 @@ mod tests {
                 display_name: None,
             },
             r3akt_rch_core::TelemetryRecord {
+                packed_telemeter: None,
                 peer_destination: "peer-a".to_string(),
                 timestamp_s: 3,
                 telemetry: json!({"battery":{"percent": 30}}),
