@@ -140,7 +140,7 @@ impl RchSqliteStore {
         record.updated_ts_ms = now_ms;
         transaction.execute(
             "UPDATE rch_file_attachments SET payload = ?1 WHERE file_id = ?2 AND category = ?3",
-            params![encode_msgpack(&record)?, id, category],
+            params![encode_msgpack(&record)?, super::sqlite_u64(id)?, category],
         )?;
         transaction.commit()?;
         Ok(Some(record))
@@ -158,7 +158,7 @@ impl RchSqliteStore {
         if record.is_some() {
             transaction.execute(
                 "DELETE FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
-                params![id, category],
+                params![super::sqlite_u64(id)?, category],
             )?;
         }
         transaction.commit()?;
@@ -188,7 +188,7 @@ fn attachment_row(
     let payload: Option<Vec<u8>> = transaction
         .query_row(
             "SELECT payload FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
-            params![id, category],
+            params![super::sqlite_u64(id)?, category],
             |row| row.get(0),
         )
         .optional()?;

@@ -316,7 +316,7 @@ fn malformed_attachment_snapshot_is_an_observable_error() {
     assert_eq!(
         database
             .query_row("SELECT COUNT(*) FROM rch_file_attachments", [], |row| row
-                .get::<_, u64>(
+                .get::<_, i64>(
                 0
             ))
             .expect("rows"),
@@ -560,7 +560,7 @@ fn command_commit_failure_rolls_back_and_releases_the_reservation() {
     assert_eq!(
         database
             .query_row("SELECT COUNT(*) FROM fixture_commit_fault", [], |row| row
-                .get::<_, u64>(
+                .get::<_, i64>(
                 0
             ))
             .expect("rolled back"),
@@ -855,9 +855,9 @@ async fn roster_upsert_and_delete_coalesce_legacy_whitespace_aliases() {
         assert_eq!(
             database
                 .query_row("SELECT COUNT(*) FROM rch_clients", [], |row| row
-                    .get::<_, u64>(0))
+                    .get::<_, i64>(0))
                 .expect("row count"),
-            u64::from(update)
+            i64::from(update)
         );
         drop(store);
         drop(database);

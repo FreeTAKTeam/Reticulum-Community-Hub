@@ -1339,6 +1339,12 @@ enum ZmqSdkActorPayload {
         max: usize,
     },
     MessageHistory(LxmfSdkMessageHistoryListRequest),
+    BrokerAnnounces(durable_broker::AnnounceProjectionRequest),
+    BrokerAdmit(durable_broker::AdmitRequest),
+    BrokerReconcile(durable_broker::ReconcileRequest),
+    BrokerResume(durable_broker::ResumeRequest),
+    BrokerFetch(durable_broker::FetchRequest),
+    BrokerAck(durable_broker::AckStoredRequest),
     Shutdown,
 }
 
@@ -1364,12 +1370,21 @@ impl ZmqSdkActorPayload {
             | Self::Announce
             | Self::PollEvents { .. }
             | Self::MessageHistory(_)
+            | Self::BrokerAnnounces(_)
+            | Self::BrokerAdmit(_)
+            | Self::BrokerReconcile(_)
+            | Self::BrokerResume(_)
+            | Self::BrokerFetch(_)
+            | Self::BrokerAck(_)
             | Self::Shutdown => 0,
         }
     }
 
     fn is_send_lane(&self) -> bool {
-        matches!(self, Self::Single(_) | Self::Batch(_) | Self::Shutdown)
+        matches!(
+            self,
+            Self::Single(_) | Self::Batch(_) | Self::BrokerAdmit(_) | Self::Shutdown
+        )
     }
 }
 
@@ -1381,6 +1396,10 @@ enum ZmqSdkActorResponse {
     Announce(Option<String>),
     Events(ReticulumdEventBatch),
     MessageHistory(LxmfSdkMessageHistoryPage),
+    BrokerOperation(Option<durable_broker::OperationReceipt>),
+    BrokerCheckpoint(durable_broker::BrokerCheckpoint),
+    BrokerBatch(durable_broker::BrokerBatch),
+    BrokerStored(durable_broker::EventPosition),
     Shutdown,
 }
 
@@ -1744,6 +1763,10 @@ fn send_lxmf_zmq_outbound_batch_via_actor(
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
             | ZmqSdkActorResponse::Control(_)
+            | ZmqSdkActorResponse::BrokerOperation(_)
+            | ZmqSdkActorResponse::BrokerCheckpoint(_)
+            | ZmqSdkActorResponse::BrokerBatch(_)
+            | ZmqSdkActorResponse::BrokerStored(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-batch response".to_string(),
             )),
@@ -1788,6 +1811,10 @@ fn lxmf_zmq_delivery_status_via_actor(
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
             | ZmqSdkActorResponse::Control(_)
+            | ZmqSdkActorResponse::BrokerOperation(_)
+            | ZmqSdkActorResponse::BrokerCheckpoint(_)
+            | ZmqSdkActorResponse::BrokerBatch(_)
+            | ZmqSdkActorResponse::BrokerStored(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-status response".to_string(),
             )),
@@ -1831,6 +1858,10 @@ fn announce_lxmf_zmq_identity_via_actor(
             | ZmqSdkActorResponse::Events(_)
             | ZmqSdkActorResponse::MessageHistory(_)
             | ZmqSdkActorResponse::Control(_)
+            | ZmqSdkActorResponse::BrokerOperation(_)
+            | ZmqSdkActorResponse::BrokerCheckpoint(_)
+            | ZmqSdkActorResponse::BrokerBatch(_)
+            | ZmqSdkActorResponse::BrokerStored(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-announce response".to_string(),
             )),
@@ -1876,6 +1907,10 @@ fn poll_lxmf_zmq_events_via_actor(
             | ZmqSdkActorResponse::Announce(_)
             | ZmqSdkActorResponse::MessageHistory(_)
             | ZmqSdkActorResponse::Control(_)
+            | ZmqSdkActorResponse::BrokerOperation(_)
+            | ZmqSdkActorResponse::BrokerCheckpoint(_)
+            | ZmqSdkActorResponse::BrokerBatch(_)
+            | ZmqSdkActorResponse::BrokerStored(_)
             | ZmqSdkActorResponse::Shutdown => Err(TransportError::Receive(
                 "LXMF-rs ZeroMQ SDK actor returned non-event-poll response".to_string(),
             )),
@@ -1983,7 +2018,11 @@ fn run_zmq_data_plane_actor(
             }
         }
         metrics.record_result(&result, response_started.elapsed());
-        if result.is_err() {
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(transport_requires_session_restore)
+        {
             session = None;
         }
         send_actor_response(&request.response, result, "request completion");
@@ -2043,7 +2082,11 @@ fn run_zmq_sdk_actor(
             continue;
         };
         let result = send_lxmf_zmq_actor_request(active_session, request.payload);
-        if result.is_err() {
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(transport_requires_session_restore)
+        {
             session = None;
         }
         send_actor_response(&request.response, result, "legacy request completion");
@@ -2080,7 +2123,9 @@ fn open_zmq_sdk_actor_session(
 ) -> Result<ZmqSdkActorSession, TransportError> {
     let backend = ZmqPipelineBackendClient::new(config.clone()).map_err(transport_sdk_error)?;
     let client = LxmfSdkClient::new(backend);
-    let handle = LxmfSdk::start(&client, rch_lxmf_start_request()).map_err(transport_sdk_error)?;
+    let handle = client
+        .start_durable_zmq(rch_lxmf_start_request())
+        .map_err(transport_sdk_error)?;
     let runtime_info = ZmqRuntimeInfo {
         runtime_id: Some(handle.runtime_id),
         sdk_version: Some(lxmf_sdk::SDK_VERSION.to_string()),
@@ -2096,10 +2141,7 @@ fn open_zmq_sdk_actor_session(
 }
 
 fn rch_lxmf_start_request() -> LxmfSdkStartRequest {
-    let mut config = LxmfSdkConfig::desktop_local_default();
-    // Polling advances a cursor without removing retained events. Reject would
-    // permanently starve this continuous consumer once the daemon's log fills.
-    config.overflow_policy = lxmf_sdk::OverflowPolicy::DropOldest;
+    let config = LxmfSdkConfig::desktop_local_default();
     LxmfSdkStartRequest::new(config).with_requested_capabilities([
         "sdk.capability.batch_send",
         "sdk.capability.async_events",
@@ -2123,19 +2165,61 @@ fn send_lxmf_zmq_actor_request(
     payload: ZmqSdkActorPayload,
 ) -> Result<ZmqSdkActorResponse, TransportError> {
     match payload {
-        ZmqSdkActorPayload::Single(message) => {
-            let destination = message.destination.clone();
-            let result = send_lxmf_zmq_actor_single_message(session, message)?;
-            Ok(ZmqSdkActorResponse::Batch(vec![
-                LxmfSdkOutboundBatchResult {
-                    id: result.clone(),
-                    message_id: result,
-                    destination,
-                    accepted: true,
-                    error: None,
-                },
-            ]))
+        ZmqSdkActorPayload::BrokerAnnounces(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_announces(request)
+                .map(ZmqSdkActorResponse::Control)
+                .map_err(transport_sdk_error)
         }
+        ZmqSdkActorPayload::BrokerAdmit(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_admit(request)
+                .map(|r| ZmqSdkActorResponse::BrokerOperation(Some(r)))
+                .map_err(transport_sdk_error)
+        }
+        ZmqSdkActorPayload::BrokerReconcile(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_reconcile(request)
+                .map(ZmqSdkActorResponse::BrokerOperation)
+                .map_err(transport_sdk_error)
+        }
+        ZmqSdkActorPayload::BrokerResume(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_resume(request)
+                .map(ZmqSdkActorResponse::BrokerCheckpoint)
+                .map_err(transport_sdk_error)
+        }
+        ZmqSdkActorPayload::BrokerFetch(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_fetch(request)
+                .map(ZmqSdkActorResponse::BrokerBatch)
+                .map_err(transport_sdk_error)
+        }
+        ZmqSdkActorPayload::BrokerAck(mut request) => {
+            request.identity = broker_identity(session)?;
+            session
+                .client
+                .backend()
+                .broker_ack_stored(request)
+                .map(ZmqSdkActorResponse::BrokerStored)
+                .map_err(transport_sdk_error)
+        }
+        ZmqSdkActorPayload::Single(message) => single_actor_response(session, message),
         ZmqSdkActorPayload::Batch(batch) => {
             send_lxmf_zmq_actor_batch(session, batch).map(ZmqSdkActorResponse::Batch)
         }
@@ -2171,6 +2255,23 @@ fn send_lxmf_zmq_actor_request(
             .map_err(transport_sdk_error),
         ZmqSdkActorPayload::Shutdown => Ok(ZmqSdkActorResponse::Shutdown),
     }
+}
+
+fn single_actor_response(
+    session: &mut ZmqSdkActorSession,
+    message: LxmfSdkOutboundMessage,
+) -> Result<ZmqSdkActorResponse, TransportError> {
+    let destination = message.destination.clone();
+    let result = send_lxmf_zmq_actor_single_message(session, message)?;
+    Ok(ZmqSdkActorResponse::Batch(vec![
+        LxmfSdkOutboundBatchResult {
+            id: result.clone(),
+            message_id: result,
+            destination,
+            accepted: true,
+            error: None,
+        },
+    ]))
 }
 
 fn send_lxmf_zmq_actor_single_message(
@@ -2606,6 +2707,25 @@ pub fn reticulumd_message_to_envelope(
     message: &JsonValue,
     local_source: &str,
 ) -> Result<Option<ProtocolEnvelope>, TransportError> {
+    if message.get("direction").and_then(JsonValue::as_str) != Some("in") {
+        return Ok(None);
+    }
+    let authoritative_source = message
+        .get("source")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| TransportError::Receive("inbound LXMF lacks verified source".into()))?;
+    let authoritative_destination = message
+        .get("destination")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| TransportError::Receive("inbound LXMF lacks destination".into()))?;
+    let same = |a: &str, b: &str| {
+        a.trim()
+            .trim_start_matches("0x")
+            .eq_ignore_ascii_case(b.trim().trim_start_matches("0x"))
+    };
+    if !same(authoritative_destination, local_source) {
+        return Ok(None);
+    }
     let payload_b64 = message
         .get("fields")
         .and_then(|fields| fields.get(R3AKT_LXMF_FIELD_PAYLOAD_B64))
@@ -2616,6 +2736,16 @@ pub fn reticulumd_message_to_envelope(
             .map_err(|error| TransportError::Receive(error.to_string()))?;
         let envelope = ProtocolEnvelope::decode_msgpack(&bytes)
             .map_err(|error| TransportError::Receive(error.to_string()))?;
+        let destination_matches = match &envelope.destination {
+            Destination::Node(node) => same(node.as_str(), authoritative_destination),
+            Destination::Topic(topic) => topic == &envelope.topic,
+            Destination::Broadcast => false,
+        };
+        if !same(envelope.source.as_str(), authoritative_source) || !destination_matches {
+            return Err(TransportError::Receive(
+                "embedded envelope identity differs from verified LXMF sender/destination".into(),
+            ));
+        }
         return Ok(Some(envelope));
     }
     direct_lxmf_message_envelope(message, local_source)
@@ -3771,9 +3901,6 @@ mod tests {
     #[path = "../actor_request_expiry.rs"]
     mod actor_request_expiry;
 
-    #[path = "../event_retention.rs"]
-    mod event_retention;
-
     #[derive(Debug, Clone)]
     struct RecordedRpcCall {
         method: String,
@@ -3970,7 +4097,7 @@ mod tests {
                             response_endpoint: envelope.response_endpoint.clone(),
                             session_id: Some(envelope.session_id.clone()),
                         });
-                    let response = if request.method == "sdk_negotiate_v2" {
+                    let response = if request.method == "sdk_broker_negotiate_v1" {
                         complete_test_negotiation_response(response)
                     } else {
                         response
@@ -4047,7 +4174,7 @@ mod tests {
                         .expect("captured methods")
                         .push(method.clone());
                     let result = match method.as_str() {
-                        "sdk_negotiate_v2" => serde_json::json!({
+                        "sdk_broker_negotiate_v1" => serde_json::json!({"capability":rns_rpc::broker::CAPABILITY,"ack_meaning":"stored",
                             "active_contract_version": 2,
                             "effective_capabilities": [
                                 "sdk.capability.cursor_replay",
@@ -4146,6 +4273,11 @@ mod tests {
         let Some(object) = response.as_object_mut() else {
             return response;
         };
+        object.insert(
+            "capability".into(),
+            serde_json::json!(rns_rpc::broker::CAPABILITY),
+        );
+        object.insert("ack_meaning".into(), serde_json::json!("stored"));
         if !object.contains_key("active_contract_version") {
             let version = object
                 .get("accepted_contract_version")
@@ -4624,7 +4756,7 @@ mod tests {
         );
         assert_eq!(
             captured_methods.first().map(String::as_str),
-            Some("sdk_negotiate_v2")
+            Some("sdk_broker_negotiate_v1")
         );
         assert_eq!(sdk_send_count, BATCH_COUNT);
         assert_eq!(captured_methods.len(), BATCH_COUNT + 1);
@@ -4665,7 +4797,7 @@ mod tests {
                     "peer_id": "peer-alpha",
                     "payload": {
                         "message": {
-                            "id": "lxmf-1",
+                            "id": "lxmf-1","direction":"in","source":"peer-alpha",
                             "destination": "local-destination",
                             "fields": {
                                 "r3akt_payload_b64": payload_b64
@@ -4765,7 +4897,7 @@ mod tests {
         assert_eq!(message_id, "sdk-zmq-rch-1");
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 2);
-        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[0].method, "sdk_broker_negotiate_v1");
         assert_eq!(captured[1].method, "sdk_send_v2");
         assert_eq!(captured[1].params["source"], "source-destination");
         assert_eq!(captured[1].params["destination"], "target-destination");
@@ -4874,7 +5006,7 @@ mod tests {
         assert_eq!(batch.next_cursor.as_deref(), Some("cursor-idle"));
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 2);
-        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[0].method, "sdk_broker_negotiate_v1");
         assert_eq!(captured[1].method, "sdk_poll_events_v2");
         assert_eq!(
             captured[0].response_endpoint.as_deref(),
@@ -4933,7 +5065,7 @@ mod tests {
         assert_eq!(batch.next_cursor.as_deref(), Some("cursor-idle"));
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 3);
-        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[0].method, "sdk_broker_negotiate_v1");
         assert_eq!(captured[1].method, "sdk_send_v2");
         assert_eq!(captured[2].method, "sdk_poll_events_v2");
         assert_eq!(stats.completed_total, 2);
@@ -4980,7 +5112,7 @@ mod tests {
         assert_eq!(announce_id, None);
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 2);
-        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[0].method, "sdk_broker_negotiate_v1");
         assert_eq!(captured[1].method, "sdk_identity_announce_now_v2");
         assert_eq!(captured[1].params, serde_json::json!({}));
     }
@@ -5077,7 +5209,7 @@ mod tests {
         assert_eq!(snapshot.attempts, 2);
         let captured = captured.lock().expect("captured requests");
         assert_eq!(captured.len(), 2);
-        assert_eq!(captured[0].method, "sdk_negotiate_v2");
+        assert_eq!(captured[0].method, "sdk_broker_negotiate_v1");
         assert_eq!(captured[1].method, "sdk_status_v2");
         assert_eq!(captured[1].params["message_id"], "sdk-message-1");
     }
@@ -5640,7 +5772,7 @@ mod tests {
             event_type: "inbound".to_string(),
             payload: serde_json::json!({
                 "message": {
-                    "id": "lxmf-1",
+                    "id": "lxmf-1","direction":"in","source":"peer-alpha",
                     "destination": "local",
                     "fields": {
                         "r3akt_payload_b64": payload_b64
@@ -5782,6 +5914,93 @@ where
         match Pin::new(&mut future).poll(&mut context) {
             Poll::Ready(output) => return output,
             Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+pub use lxmf_sdk::durable_broker;
+
+fn transport_requires_session_restore(error: &TransportError) -> bool {
+    matches!(error,TransportError::Sdk {code,..} if matches!(code.as_str(),"SDK_BROKER_SESSION_REQUIRED"|"SDK_BROKER_NEGOTIATION_REQUIRED"|"SDK_RUNTIME_IDENTITY_NOT_FOUND"))
+}
+
+impl ZmqDataPlane {
+    pub fn broker_resume(
+        &self,
+        request: durable_broker::ResumeRequest,
+    ) -> Result<durable_broker::BrokerCheckpoint, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerResume(request))? {
+            ZmqSdkActorResponse::BrokerCheckpoint(value) => Ok(value),
+            _ => Err(TransportError::Receive("expected broker checkpoint".into())),
+        }
+    }
+    pub fn broker_fetch(
+        &self,
+        request: durable_broker::FetchRequest,
+    ) -> Result<durable_broker::BrokerBatch, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerFetch(request))? {
+            ZmqSdkActorResponse::BrokerBatch(value) => Ok(value),
+            _ => Err(TransportError::Receive("expected broker batch".into())),
+        }
+    }
+    pub fn broker_ack_stored(
+        &self,
+        request: durable_broker::AckStoredRequest,
+    ) -> Result<durable_broker::EventPosition, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerAck(request))? {
+            ZmqSdkActorResponse::BrokerStored(value) => Ok(value),
+            _ => Err(TransportError::Receive(
+                "expected broker custody checkpoint".into(),
+            )),
+        }
+    }
+}
+
+fn broker_identity(session: &ZmqSdkActorSession) -> Result<String, TransportError> {
+    session
+        .identity
+        .as_ref()
+        .map(|i| i.bundle.identity.0.clone())
+        .ok_or_else(|| TransportError::Sdk {
+            code: "SDK_RUNTIME_IDENTITY_NOT_FOUND".into(),
+            category: Some("Runtime".into()),
+            retryable: false,
+            message: "RCH service identity must be registered before durable broker use".into(),
+        })
+}
+impl ZmqDataPlane {
+    pub fn broker_announces(&self) -> Result<JsonValue, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerAnnounces(
+            durable_broker::AnnounceProjectionRequest {
+                identity: String::new(),
+            },
+        ))? {
+            ZmqSdkActorResponse::Control(value) => Ok(value),
+            _ => Err(TransportError::Receive(
+                "unexpected announce projection response".into(),
+            )),
+        }
+    }
+    pub fn broker_admit(
+        &self,
+        request: durable_broker::AdmitRequest,
+    ) -> Result<durable_broker::OperationReceipt, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerAdmit(request))? {
+            ZmqSdkActorResponse::BrokerOperation(Some(value)) => Ok(value),
+            _ => Err(TransportError::Receive(
+                "expected durable operation receipt".into(),
+            )),
+        }
+    }
+    pub fn broker_reconcile(
+        &self,
+        request: durable_broker::ReconcileRequest,
+    ) -> Result<Option<durable_broker::OperationReceipt>, TransportError> {
+        match self.request(ZmqSdkActorPayload::BrokerReconcile(request))? {
+            ZmqSdkActorResponse::BrokerOperation(value) => Ok(value),
+            _ => Err(TransportError::Receive(
+                "expected durable reconciliation".into(),
+            )),
         }
     }
 }

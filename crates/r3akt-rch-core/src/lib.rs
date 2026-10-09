@@ -13,6 +13,7 @@
     )
 )]
 
+mod command_scope;
 mod operation_rights;
 mod text;
 
@@ -412,11 +413,16 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "4";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "5";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
 const RCH_SQLITE_DATA_TABLES: &[&str] = &[
+    "rch_broker_attachment_bytes",
+    "rch_broker_dispatch",
+    "rch_broker_claims",
+    "rch_broker_inbox",
+    "rch_broker_checkpoint",
     "rch_topics",
     "rch_subscribers",
     "rch_messages",
@@ -463,6 +469,10 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
 
 #[derive(Debug, Error)]
 pub enum RchCoreError {
+    #[error("durable recovery required: {0}")]
+    RecoveryRequired(String),
+    #[error("storage backpressure: {0}")]
+    StorageBackpressure(String),
     #[error("delivery contract violation: {0}")]
     Delivery(String),
     #[error("invalid command payload: {0}")]
@@ -509,6 +519,8 @@ impl RchCoreError {
             | Self::SkillNotFound
             | Self::AssignmentNotFound
             | Self::EamNotFound => "not_found",
+            Self::RecoveryRequired(_) => "recovery_required",
+            Self::StorageBackpressure(_) => "storage_backpressure",
             Self::UnsupportedCommand(_) => "unknown_command",
             Self::Encode(_) | Self::Decode(_) | Self::Sqlite(_) => "internal_error",
         }
@@ -1085,6 +1097,8 @@ pub struct RchCommandOutcome {
     pub result: CommandResultEnvelope,
     pub event: Option<EventEnvelope>,
 }
+
+pub const MAX_DURABLE_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Default)]
 pub struct RchCore {
@@ -1930,7 +1944,7 @@ impl RchSqliteStore {
         let mut statement = self.connection.prepare(
             "SELECT payload FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
         )?;
-        let mut rows = statement.query(params![file_id, category])?;
+        let mut rows = statement.query(params![sqlite_u64(file_id)?, category])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
@@ -1942,7 +1956,7 @@ impl RchSqliteStore {
         let max_id = self.connection.query_row(
             "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
             [],
-            |row| row.get::<_, u64>(0),
+            |row| sqlite_read_u64(row, 0),
         )?;
         Ok(max_id.saturating_add(1))
     }
@@ -1954,7 +1968,11 @@ impl RchSqliteStore {
         self.connection.execute(
             "INSERT OR REPLACE INTO rch_file_attachments (file_id, category, payload)
              VALUES (?1, ?2, ?3)",
-            params![record.file_id, record.category, encode_msgpack(record)?],
+            params![
+                sqlite_u64(record.file_id)?,
+                record.category,
+                encode_msgpack(record)?
+            ],
         )?;
         Ok(())
     }
@@ -1967,13 +1985,17 @@ impl RchSqliteStore {
         let max_id = transaction.query_row(
             "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
             [],
-            |row| row.get::<_, u64>(0),
+            |row| sqlite_read_u64(row, 0),
         )?;
         record.file_id = max_id.saturating_add(1);
         transaction.execute(
             "INSERT INTO rch_file_attachments (file_id, category, payload)
              VALUES (?1, ?2, ?3)",
-            params![record.file_id, record.category, encode_msgpack(&record)?],
+            params![
+                sqlite_u64(record.file_id)?,
+                record.category,
+                encode_msgpack(&record)?
+            ],
         )?;
         transaction.commit()?;
         Ok(record)
@@ -1986,7 +2008,7 @@ impl RchSqliteStore {
     ) -> Result<(), RchCoreError> {
         self.connection.execute(
             "DELETE FROM rch_file_attachments WHERE file_id = ?1 AND category = ?2",
-            params![file_id, category],
+            params![sqlite_u64(file_id)?, category],
         )?;
         Ok(())
     }
@@ -2340,8 +2362,9 @@ impl RchSqliteStore {
         let subscribers = self.load_payload_rows::<SubscriberRecord>(
             "SELECT payload FROM rch_subscribers ORDER BY topic_id, node_id",
         )?;
-        let messages = self
-            .load_payload_rows::<MessageRecord>("SELECT payload FROM rch_messages ORDER BY id")?;
+        let messages = self.load_payload_rows::<MessageRecord>(if include_identity_announces {
+            "SELECT payload FROM rch_messages ORDER BY id"
+        } else {"SELECT payload FROM (SELECT id,payload FROM rch_messages ORDER BY created_ts_ms DESC,id DESC LIMIT 500) ORDER BY id"})?;
         let clients = self.load_payload_rows::<ClientRecord>(
             "SELECT payload FROM rch_clients ORDER BY identity",
         )?;
@@ -2711,6 +2734,10 @@ impl RchSqliteStore {
         if sqlite_table_exists(&transaction, "sqlite_sequence")? {
             transaction.execute("DELETE FROM sqlite_sequence WHERE name LIKE 'rch_%'", [])?;
         }
+        transaction.execute(
+            "UPDATE rch_broker_profile SET inbox_bytes=0,outbox_bytes=0",
+            [],
+        )?;
         transaction.commit()?;
         self.migrate()?;
         self.connection.execute_batch("VACUUM; PRAGMA optimize;")?;
@@ -2756,7 +2783,7 @@ impl RchSqliteStore {
                 |row| row.get::<_, bool>(0),
             )?;
         if migration_4_applied {
-            return Ok(());
+            return self.migrate_durable_inbox();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2922,7 +2949,7 @@ impl RchSqliteStore {
             }
         }
         self.integrity_check()?;
-        Ok(())
+        self.migrate_durable_inbox()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -3007,9 +3034,48 @@ fn configure_sqlite_connection(
             connection.execute_batch("PRAGMA query_only = ON;")?;
         }
         RchSqliteConnectionProfile::Write | RchSqliteConnectionProfile::Admin => {
-            connection.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                 PRAGMA synchronous = NORMAL;",
+            connection.execute_batch("PRAGMA journal_mode = WAL;")?;
+            let has_profile:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='rch_broker_profile')",[],|row|row.get(0))?;
+            let durable = has_profile
+                && connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM rch_broker_profile)",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )?;
+            if durable {
+                let writer: i64 = connection.query_row(
+                    "SELECT min_writer FROM rch_broker_profile WHERE singleton=1",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let native: String =
+                    connection.query_row("SELECT sqlite_version()", [], |r| r.get(0))?;
+                let version = native
+                    .split('.')
+                    .map(str::parse::<u32>)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| RchCoreError::Decode(e.to_string()))?;
+                if writer != 1 || version.as_slice() < [3, 51, 3].as_slice() {
+                    return Err(RchCoreError::RecoveryRequired(
+                        "unsupported durable writer/native SQLite version".into(),
+                    ));
+                }
+                connection.pragma_update(None, "wal_autocheckpoint", 64)?;
+                let page_size: i64 = connection.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+                let page_limit = (512 * 1024 * 1024) / page_size;
+                connection.pragma_update(None, "max_page_count", page_limit)?;
+                let actual: i64 =
+                    connection.query_row("PRAGMA max_page_count", [], |r| r.get(0))?;
+                if actual > page_limit {
+                    return Err(RchCoreError::RecoveryRequired(
+                        "existing database exceeds durable page budget".into(),
+                    ));
+                }
+            }
+            connection.pragma_update(
+                None,
+                "synchronous",
+                if durable { "FULL" } else { "NORMAL" },
             )?;
         }
     }
@@ -3665,6 +3731,9 @@ impl RchCore {
     }
 
     fn candidate_mission_uids(&self, command: &MissionCommandEnvelope) -> Vec<String> {
+        if let Some(targets) = self.stored_command_missions(command) {
+            return targets;
+        }
         let mut mission_uids = HashSet::new();
         if let Some(mission_uid) = optional_text(&command.args, &["mission_uid", "mission_id"]) {
             mission_uids.insert(mission_uid);
@@ -3766,14 +3835,12 @@ impl RchCore {
     }
 
     fn candidate_checklist_mission_uid(&self, command: &MissionCommandEnvelope) -> Option<String> {
-        if let Some(mission_uid) = optional_text(&command.args, &["mission_uid", "mission_id"]) {
-            return Some(mission_uid);
+        if let Some(checklist) = optional_text(&command.args, &["checklist_uid"])
+            .and_then(|uid| self.checklists.get(&uid))
+        {
+            return checklist.mission_uid.clone();
         }
-        optional_text(&command.args, &["checklist_uid"]).and_then(|checklist_uid| {
-            self.checklists
-                .get(&checklist_uid)
-                .and_then(|checklist| checklist.mission_uid.clone())
-        })
+        optional_text(&command.args, &["mission_uid", "mission_id"])
     }
 
     pub fn save_to_sqlite(&self, store: &mut RchSqliteStore) -> Result<(), RchCoreError> {
@@ -4283,6 +4350,13 @@ impl RchCore {
         if let Some(rejection) = self.rem_team_scope_rejection(command) {
             return vec![rejection];
         }
+        if let Some(reason) = self.command_scope_error(command) {
+            return vec![MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "invalid_payload",
+                reason,
+            ))];
+        }
         if let Some(required_capability) = required_capability(command.command_type.as_str()) {
             if self.authorization_required
                 && !self.has_identity_capability(&command.source.rns_identity, required_capability)
@@ -4406,6 +4480,13 @@ impl RchCore {
         }
         if let Some(rejection) = self.rem_team_scope_rejection(command) {
             return vec![rejection];
+        }
+        if let Some(reason) = self.command_scope_error(command) {
+            return vec![MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "invalid_payload",
+                reason,
+            ))];
         }
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
@@ -10753,6 +10834,48 @@ fn save_registry_delta_tables(
 ) -> Result<(), RchCoreError> {
     save_payload_delta(
         transaction,
+        "rch_identity_rem_modes",
+        &before.identity_rem_modes,
+        &after.identity_rem_modes,
+        |r| vec![("identity", sql_text(&r.identity))],
+        |r| vec![("identity", sql_text(&r.identity))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_clients",
+        &before.clients,
+        &after.clients,
+        |r| vec![("identity", sql_text(&r.identity))],
+        |r| vec![("identity", sql_text(&r.identity))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_topics",
+        &before.topics,
+        &after.topics,
+        |r| vec![("topic_id", sql_text(&r.topic_id))],
+        |r| vec![("topic_id", sql_text(&r.topic_id))],
+    )?;
+    save_payload_delta(
+        transaction,
+        "rch_subscribers",
+        &before.subscribers,
+        &after.subscribers,
+        |r| {
+            vec![
+                ("node_id", sql_text(&r.node_id)),
+                ("topic_id", sql_text(&r.topic_id)),
+            ]
+        },
+        |r| {
+            vec![
+                ("node_id", sql_text(&r.node_id)),
+                ("topic_id", sql_text(&r.topic_id)),
+            ]
+        },
+    )?;
+    save_payload_delta(
+        transaction,
         "rch_markers",
         &before.markers,
         &after.markers,
@@ -11121,6 +11244,14 @@ fn save_checklist_delta_tables(
     before: &RchCoreSnapshot,
     after: &RchCoreSnapshot,
 ) -> Result<(), RchCoreError> {
+    save_checklist_delta_tables_with_common(transaction, before, after, true)
+}
+fn save_checklist_delta_tables_with_common(
+    transaction: &Transaction<'_>,
+    before: &RchCoreSnapshot,
+    after: &RchCoreSnapshot,
+    include_common: bool,
+) -> Result<(), RchCoreError> {
     save_payload_delta(
         transaction,
         "rch_checklists",
@@ -11200,29 +11331,31 @@ fn save_checklist_delta_tables(
             ]
         },
     )?;
-    save_skill_assignment_delta_tables(transaction, before, after)?;
-    save_payload_delta(
-        transaction,
-        "rch_mission_changes",
-        &before.mission_changes,
-        &after.mission_changes,
-        |record| vec![("uid", sql_text(&record.uid))],
-        |record| {
-            vec![
-                ("uid", sql_text(&record.uid)),
-                ("mission_uid", sql_text(&record.mission_uid)),
-            ]
-        },
-    )?;
-    save_audit_event_delta_tables(transaction, before, after)?;
-    save_payload_delta(
-        transaction,
-        "rch_command_results",
-        &before.command_results,
-        &after.command_results,
-        |record| vec![("command_id", sql_text(&record.command_id))],
-        |record| vec![("command_id", sql_text(&record.command_id))],
-    )?;
+    if include_common {
+        save_skill_assignment_delta_tables(transaction, before, after)?;
+        save_payload_delta(
+            transaction,
+            "rch_mission_changes",
+            &before.mission_changes,
+            &after.mission_changes,
+            |record| vec![("uid", sql_text(&record.uid))],
+            |record| {
+                vec![
+                    ("uid", sql_text(&record.uid)),
+                    ("mission_uid", sql_text(&record.mission_uid)),
+                ]
+            },
+        )?;
+        save_audit_event_delta_tables(transaction, before, after)?;
+        save_payload_delta(
+            transaction,
+            "rch_command_results",
+            &before.command_results,
+            &after.command_results,
+            |record| vec![("command_id", sql_text(&record.command_id))],
+            |record| vec![("command_id", sql_text(&record.command_id))],
+        )?;
+    }
     Ok(())
 }
 
@@ -11266,7 +11399,7 @@ fn save_registry_snapshot_tables(
             "INSERT INTO rch_file_attachments (file_id, category, payload)
              VALUES (?1, ?2, ?3)",
             params![
-                attachment.file_id,
+                sqlite_u64(attachment.file_id)?,
                 attachment.category,
                 encode_msgpack(attachment)?
             ],
@@ -13045,7 +13178,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "4");
+        assert_eq!(store.schema_version().expect("schema version"), "5");
     }
 
     #[test]
@@ -16435,7 +16568,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "4");
+        assert_eq!(store.schema_version().expect("schema version"), "5");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16479,7 +16612,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 4);
+        assert_eq!(migration_count, 5);
 
         let index_exists: bool = store
             .connection
@@ -16539,7 +16672,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "4");
+        assert_eq!(store.schema_version().expect("schema version"), "5");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");
@@ -16767,4 +16900,35 @@ mod tests {
     }
 
     include!("topic_subscription_corrections_tests.rs");
+}
+
+mod durable_inbox;
+pub use durable_inbox::{
+    DurableOutboundIntent, InboxBatch, InboxCheckpoint, InboxEvent, RchConsumerLease,
+};
+
+fn sqlite_u64(value: u64) -> Result<i64, RchCoreError> {
+    i64::try_from(value).map_err(|error| {
+        RchCoreError::InvalidPayload(format!("SQLite integer out of range: {error}"))
+    })
+}
+fn sqlite_read_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(index)?;
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
+}
+fn sqlite_read_usize(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<usize> {
+    let value: i64 = row.get(index)?;
+    usize::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
 }

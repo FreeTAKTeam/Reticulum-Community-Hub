@@ -216,7 +216,6 @@ where
         return Err(error.into());
     }
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
-    let outbound_worker = r3akt_rch_server::spawn_outbound_delivery_worker(state.clone());
     let inbound_worker = r3akt_rch_server::spawn_reticulumd_inbound_worker(state.clone());
     let announce_worker = r3akt_rch_server::spawn_rch_identity_announce_worker(
         state.clone(),
@@ -236,7 +235,6 @@ where
     let shutdown_result = cli_runtime::finish(
         &state,
         [
-            ("outbound", outbound_worker),
             ("inbound", inbound_worker),
             ("identity announce", announce_worker),
         ],
@@ -343,6 +341,9 @@ fn apply_runtime_config(
         }
     }
     if let (Some(command), Some(response)) = (&args.lxmf_zmq_command, &args.lxmf_zmq_response) {
+        state
+            .enable_durable_consumer()
+            .map_err(|e| format!("durable RCH startup failed: {e}"))?;
         state = state
             .with_lxmf_zmq_sdk_identity(
                 command.as_str(),

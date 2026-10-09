@@ -107,6 +107,11 @@ require authentication even on loopback. To enroll through the local first-run
 UI instead, omit `--api-key` and add `--ui-dist-path ./ui/dist` after building
 the shared UI. Documentation and local setup remain available before enrollment.
 
+RCH requires the paired daemon durable broker (`--zmq-durable-broker`). Its
+persisted inbox and outbound intents replace legacy event polling and retry
+ownership. See [durable broker cutover](docs/durable-broker.md) before upgrading
+an existing deployment.
+
 For an already running daemon, use its command endpoint, a response endpoint
 owned by this RCH instance, and its local delivery destination:
 

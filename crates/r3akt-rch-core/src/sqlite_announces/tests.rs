@@ -59,7 +59,7 @@ fn legacy_migration_preserves_payload_bytes_and_normalizes_both_identity_keys() 
     .expect("old writer");
     drop(old);
     let store = RchSqliteStore::open(&path).expect("migration");
-    assert_eq!(store.schema_version().expect("version"), "4");
+    assert_eq!(store.schema_version().expect("version"), "5");
     assert!(store.has_identity_announce(" MIXED ").expect("destination"));
     assert!(
         store
@@ -115,7 +115,7 @@ fn malformed_legacy_payload_rolls_back_columns_indexes_version_and_bytes() {
         )
         .expect("version");
     assert_eq!(version, "3");
-    let columns: usize = old
+    let columns: i64 = old
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('rch_identity_announces')",
             [],
@@ -123,9 +123,9 @@ fn malformed_legacy_payload_rolls_back_columns_indexes_version_and_bytes() {
         )
         .expect("columns");
     assert_eq!(columns, 2);
-    let projections: usize = old.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'idx_rch_announces_%' OR name LIKE 'rch_announces_require_%'", [], |row| row.get(0)).expect("indexes");
+    let projections: i64 = old.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'idx_rch_announces_%' OR name LIKE 'rch_announces_require_%'", [], |row| row.get(0)).expect("indexes");
     assert_eq!(projections, 0);
-    let migrations: usize = old
+    let migrations: i64 = old
         .query_row(
             "SELECT COUNT(*) FROM rch_schema_migrations WHERE version=4",
             [],

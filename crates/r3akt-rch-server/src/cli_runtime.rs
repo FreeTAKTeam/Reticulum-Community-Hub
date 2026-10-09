@@ -8,9 +8,9 @@ pub(super) fn cleanup_after_startup_failure(state: &AppState, phase: &str) {
 }
 
 /// Drain the CLI's owned workers before releasing the SDK and managed daemon.
-pub(super) async fn finish(
+pub(super) async fn finish<const N: usize>(
     state: &AppState,
-    workers: [(&str, JoinHandle<()>); 3],
+    workers: [(&str, JoinHandle<()>); N],
 ) -> Result<(), String> {
     // Also covers a serve failure without a shutdown signal. Each worker retains
     // its active blocking job until this join completes.

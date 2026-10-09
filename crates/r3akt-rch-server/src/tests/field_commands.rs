@@ -30,7 +30,7 @@ fn inbound_event(
         payload: json!({
             "message": {
                 "id": message_id,
-                "source": source,
+                "source": source,"direction":"in",
                 "destination": "hub-source",
                 "content": content,
                 "fields": fields,
@@ -105,7 +105,7 @@ fn list_messages_numeric_legacy_leave_removes_source_and_replies() {
             "messages": [{
                 "id": "field-command-leave-1",
                 "direction": "inbound",
-                "source": source,
+                "source": source,"direction":"in",
                 "destination": "hub-source",
                 "content": "",
                 "fields": {"9": [{"0": "leave"}]},
@@ -143,7 +143,7 @@ fn list_messages_mission_style_join_still_dispatches() {
             "messages": [{
                 "id": "field-command-mission-join-1",
                 "direction": "in",
-                "source": source,
+                "source": source,"direction":"in",
                 "destination": "hub-source",
                 "content": "",
                 "fields": {"9": [{
@@ -350,7 +350,7 @@ async fn live_reticulumd_field_command_join_reaches_rch_and_reply_is_delivered_w
             "send_message_v2",
             Some(json!({
                 "id": command_id,
-                "source": source,
+                "source": source,"direction":"in",
                 "destination": destination,
                 "title": "RCH",
                 "content": "",

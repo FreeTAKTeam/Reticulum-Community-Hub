@@ -184,7 +184,10 @@ async fn user_topic_chat_identity_flow_persists_across_restart() {
     ] {
         let (_, created) =
             request_json(&app, Method::POST, "/Chat/Message", Some(payload), true).await;
-        assert_eq!(created.get("State").and_then(Value::as_str), Some("queued"));
+        assert_eq!(
+            created.get("State").and_then(Value::as_str),
+            Some("broker_pending")
+        );
     }
 
     let (_, messages) =

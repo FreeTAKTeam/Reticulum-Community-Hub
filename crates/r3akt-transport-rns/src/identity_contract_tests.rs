@@ -184,7 +184,7 @@ fn registration_rejects_unaccepted_or_mismatched_announce_binding() {
 }
 
 #[test]
-fn failed_update_restores_prior_config_and_binds_announce_in_new_session() {
+fn failed_update_retains_prior_config_and_existing_session() {
     let (command, response) = unused_zmq_endpoint_pair_v4();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let negotiation = serde_json::json!({"runtime_id": "recovered"});
@@ -199,10 +199,6 @@ fn failed_update_restores_prior_config_and_binds_announce_in_new_session() {
             identity_contract_bundle(),
             accepted.clone(),
             serde_json::json!({"accepted": false, "identity": "rch-identity", "delivery_destination": "rch-destination"}),
-            negotiation,
-            identity_contract_bundle(),
-            accepted,
-            identity_contract_announce(),
             identity_contract_announce(),
         ],
         Arc::clone(&captured),
@@ -220,16 +216,11 @@ fn failed_update_restores_prior_config_and_binds_announce_in_new_session() {
     plane.shutdown().expect("shutdown");
     server.join().expect("server");
     let requests = captured.lock().expect("requests");
-    assert_eq!(requests.len(), 12);
-    assert_ne!(requests[0].session_id, requests[7].session_id);
+    assert_eq!(requests.len(), 8);
+    assert_eq!(requests[0].session_id, requests[7].session_id);
     assert_eq!(requests[4].params["display_name"], "Unapproved");
-    assert_eq!(requests[8].method, "sdk_identity_import_v2");
-    assert_eq!(requests[8].params["display_name"], "RCH");
-    for request in &requests[10..] {
-        assert_eq!(request.params["identity"], "rch-identity");
-        assert_eq!(request.params["display_name"], "RCH");
-        assert_eq!(request.session_id, requests[7].session_id);
-    }
+    assert_eq!(requests[7].method, "sdk_identity_announce_now_v2");
+    assert_eq!(requests[7].params["display_name"], "RCH");
 }
 
 #[test]

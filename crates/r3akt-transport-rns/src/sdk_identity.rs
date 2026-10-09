@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 pub(super) struct RegisteredZmqIdentity {
     config: RchServiceIdentityConfig,
-    bundle: IdentityBundle,
+    pub(super) bundle: IdentityBundle,
 }
 
 pub(super) fn register_zmq_actor_identity(

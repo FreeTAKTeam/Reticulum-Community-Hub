@@ -22,12 +22,12 @@ impl RchSqliteStore {
         let transaction = self.connection.unchecked_transaction()?;
         let total =
             transaction.query_row("SELECT COUNT(*) FROM rch_identity_announces", [], |row| {
-                row.get(0)
+                super::sqlite_read_usize(row, 0)
             })?;
         let fresh = transaction.query_row(
             "SELECT COUNT(*) FROM rch_identity_announces WHERE last_seen_ts_ms >= ?1",
             [fresh_cutoff_ms],
-            |row| row.get(0),
+            |row| super::sqlite_read_usize(row, 0),
         )?;
         // Probe the timestamp index, then resolve equal timestamps in the same
         // raw destination order as the former full-history sort.
@@ -104,12 +104,17 @@ impl RchSqliteStore {
         &self,
         identities: &[String],
     ) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
+        self.consistent_read(|store| store.load_identity_announces_for_identities_rows(identities))
+    }
+    pub(super) fn load_identity_announces_for_identities_rows(
+        &self,
+        identities: &[String],
+    ) -> Result<Vec<IdentityAnnounceRecord>, RchCoreError> {
         if identities.is_empty() {
             return Ok(Vec::new());
         }
-        let transaction = self.connection.unchecked_transaction()?;
         let records = {
-            let mut statement = transaction.prepare(
+            let mut statement = self.connection.prepare(
                 "SELECT destination_hash, payload FROM rch_identity_announces
                  WHERE normalized_destination_hash = ?1
                  UNION ALL
@@ -135,7 +140,6 @@ impl RchSqliteStore {
                 .map(|payload| decode_msgpack(&payload))
                 .collect::<Result<Vec<_>, _>>()?
         };
-        transaction.commit()?;
         Ok(records)
     }
 

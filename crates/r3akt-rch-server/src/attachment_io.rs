@@ -215,6 +215,25 @@ pub(super) async fn retrieve_attachment_raw(
     category: &str,
 ) -> Result<Response, ApiError> {
     let attachment = get_attachment_record(state, file_id, category)?;
+    if attachment.path.starts_with("rch-db:") {
+        let bytes = super::with_required_core_store_write(state, |store| {
+            store.broker_attachment_bytes(file_id)
+        })?
+        .ok_or_else(|| attachment_not_found(file_id))?;
+        let media = infer_inbound_image_media_type(&bytes).unwrap_or("application/octet-stream");
+        let name = sanitize_attachment_filename(&attachment.name).replace(['"', '\r', '\n'], "_");
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, media)
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            )
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Body::from(bytes))
+            .map_err(|e| ApiError::Internal(e.to_string()));
+    }
     let mut file = tokio::fs::File::open(&attachment.path)
         .await
         .map_err(|error| {

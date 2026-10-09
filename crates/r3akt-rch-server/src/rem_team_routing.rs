@@ -1,11 +1,14 @@
 use r3akt_profile_rch::FIELD_GROUP;
 use serde_json::{Value, json};
 
+use super::ApiError;
+#[cfg(test)]
 use super::{
-    ApiError, AppState, OutboundMessageRecord, mission_team_member_destinations,
+    AppState, OutboundMessageRecord, mission_team_member_destinations,
     mission_uid_from_response_fields, record_outbound_message_with_metadata,
 };
 
+#[cfg(test)]
 pub(super) fn send_mission_sync_response_to_source(
     state: &AppState,
     source: &str,
@@ -35,7 +38,7 @@ pub(super) fn send_mission_sync_response_to_source(
     )
 }
 
-fn mission_response_fields(
+pub(super) fn mission_response_fields(
     response: &r3akt_rch_core::MissionSyncResponse,
     team_uid: Option<&str>,
 ) -> Result<Value, ApiError> {
@@ -50,6 +53,7 @@ fn mission_response_fields(
     Ok(fields)
 }
 
+#[cfg(test)]
 pub(super) fn fanout_mission_sync_response_to_team(
     state: &AppState,
     response: &r3akt_rch_core::MissionSyncResponse,
