@@ -222,7 +222,8 @@ Release blockers cleared in the latest parity pass:
 - Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
   `a424760137c7eaee5d5de7fb9ef2347871b85da1` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics, durable ZeroMQ custody, generation-aware reply-connection reuse and retained delivery-stage failures). The matching
-  ZMQ-capable `reticulumd` is bundled and described by
+  ZMQ-capable `reticulumd` is bundled; its Linux service explicitly enables the
+  durable broker on fresh databases. The runtime baseline is described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.
 - Multi-recipient dispatch now uses `sdk_send_batch_v2` over ZeroMQ so a topic

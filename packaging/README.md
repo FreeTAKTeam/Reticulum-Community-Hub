@@ -57,7 +57,8 @@ LXMF 0.13.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
 `a424760137c7eaee5d5de7fb9ef2347871b85da1` (LXMF `0.13.0`, durable ZeroMQ broker and paired RCH inbox/outbox for #659, including generation-aware response connection reuse and delivery-stage diagnostics for #657). The Rust library dependencies resolve that same immutable Git revision without
 requiring a sibling checkout. A local daemon build still uses the documented
-sibling layout.
+sibling layout. The Linux daemon service template enables `--zmq-durable-broker`
+for fresh databases, matching RCH’s required durable handoff.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,

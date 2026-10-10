@@ -1,8 +1,4 @@
-# RCH v3.0.0-preview.20 — Linux response lifecycle testing
-
-This candidate was withdrawn to draft before package acceptance. Use
-[preview.21](release-notes-v3.0.0-preview.21.md), which also corrects the Linux
-daemon service template.
+# RCH v3.0.0-preview.21 — Linux response lifecycle testing
 
 Linux AMD64 full-server testing pre-release for the paired ZeroMQ response
 lifecycle fix in [LXMF-rs PR #661](https://github.com/FreeTAKTeam/LXMF-rs/pull/661),
@@ -22,6 +18,9 @@ the merged [RCH #260 fix](telemetry-collector-compatibility.md):
 Columba/Sideband collector requests preserve valid packed telemetry, use the
 Python-compatible global snapshot without a TopicID and require subscription
 when one is supplied. Older records without packed telemetry are unavailable.
+
+The Linux `reticulumd.service` template explicitly enables `--zmq-durable-broker`
+so a fresh installation starts the required durable handoff.
 
 ## Upgrade and test
 

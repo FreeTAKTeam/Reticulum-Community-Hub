@@ -51,7 +51,7 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The [preview.20 Linux testing candidate](docs/release-notes-v3.0.0-preview.20.md)
+The [preview.21 Linux testing candidate](docs/release-notes-v3.0.0-preview.21.md)
 includes the [Columba/Sideband telemetry collector fix](docs/telemetry-collector-compatibility.md)
 and pins its SDK and bundled daemon to LXMF-rs `0.13.0` revision
 `a424760137c7eaee5d5de7fb9ef2347871b85da1`, including the ZeroMQ response

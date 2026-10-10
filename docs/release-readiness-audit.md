@@ -39,7 +39,8 @@ The existing release workflow supports Linux AMD64 server-only testing
 candidates, as documented in [packaging instructions](../packaging/README.md).
 The scope changes platform selection, not the package contents or validation
 requirements. The archive still includes the pinned daemon, UI, and TAK service.
-Verify its public checksum, embedded source identities, and runtime smoke
+The Linux daemon service template enables `--zmq-durable-broker` for fresh
+databases. Verify its public checksum, embedded source identities, and runtime smoke
 before reporting package acceptance. Production memory, swap, and reply-delay
 acceptance remains a separate test on the affected host.
 
