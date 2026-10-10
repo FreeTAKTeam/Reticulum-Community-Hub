@@ -169,10 +169,10 @@ const setupApiMocks = () => {
     if (path === "/Subscriber") {
       return Promise.resolve([subscriberAlpha]);
     }
-    if (path === "/Client") {
+    if (path === "/Client?page=1&per_page=100") {
       return Promise.resolve([{ identity: "dest-alpha", display_name: "Alpha Source" }]);
     }
-    if (path === "/Identities") {
+    if (path === "/Identities?page=1&per_page=100") {
       return Promise.resolve([{ Identity: "dest-alpha", DisplayName: "Alpha Source" }]);
     }
     if (path === "/api/rem/peers") {

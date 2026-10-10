@@ -104,19 +104,21 @@ function deferred<T>() {
 
 import { useConnectionStore } from "./connection";
 
-it("shares simultaneous roster reads and retries after failure", async () => {
+it("shares simultaneous roster reads and retries failed resources", async () => {
   localStorage.clear(); setActivePinia(createPinia()); getMock.mockReset();
   const first = deferred<unknown[]>();
-  getMock.mockReturnValueOnce(first.promise);
+  getMock.mockReturnValueOnce(first.promise).mockResolvedValueOnce([]).mockResolvedValueOnce({ items: [] });
   const store = useUsersStore();
   const a = store.fetchUsers(); const b = store.fetchUsers();
-  expect(getMock).toHaveBeenCalledTimes(1);
-  const failure = new Error("offline"); first.reject(failure);
-  await expect(a).rejects.toBe(failure); await expect(b).rejects.toBe(failure);
+  expect(getMock).toHaveBeenCalledTimes(3);
+  first.reject(new Error("offline"));
+  await Promise.all([a, b]);
+  expect(store.errors.clients).toBe("offline");
   expect(store.loading).toBe(false);
   getMock.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce({ items: [] });
   await store.fetchUsers();
-  expect(getMock).toHaveBeenCalledTimes(4);
+  expect(getMock).toHaveBeenCalledTimes(6);
+  expect(store.errors.clients).toBeNull();
 });
 
 it("isolates A to B to A requests and stale finally blocks", async () => {
@@ -124,17 +126,16 @@ it("isolates A to B to A requests and stale finally blocks", async () => {
   const original = deferred<unknown[]>(); const hubB = deferred<unknown[]>(); const newA = deferred<unknown[]>();
   getMock.mockReturnValueOnce(original.promise).mockReturnValueOnce(hubB.promise).mockReturnValueOnce(newA.promise);
   const connection = useConnectionStore(); const originalUrl = connection.baseUrl;
-  const store = useUsersStore(); const a = store.fetchUsers();
+  const store = useUsersStore(); const a = store.fetchClients();
   connection.baseUrl = "https://hub-b.example";
-  const b = store.fetchUsers();
+  const b = store.fetchClients();
   original.resolve([{ identity: "old-A" }]);
   await expect(a).rejects.toMatchObject({ name: "AbortError" });
   expect(store.loading).toBe(true); expect(store.clients).toEqual([]);
   connection.baseUrl = originalUrl;
-  const newRequest = store.fetchUsers();
-  hubB.reject(new Error("B offline")); await expect(b).rejects.toThrow("B offline");
+  const newRequest = store.fetchClients();
+  hubB.reject(new Error("B offline")); await expect(b).rejects.toMatchObject({ name: "AbortError" });
   expect(store.loading).toBe(true);
-  getMock.mockResolvedValueOnce([{ Identity: "new-A" }]).mockResolvedValueOnce({ items: [] });
   newA.resolve([{ identity: "new-A" }]); await newRequest;
   expect(store.clients[0].id).toBe("new-A"); expect(store.loading).toBe(false);
 });

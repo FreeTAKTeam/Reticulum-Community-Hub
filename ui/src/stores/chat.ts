@@ -63,15 +63,21 @@ const isStaleFailureDowngrade = (current: ChatMessage, incoming: ChatMessage): b
 export const useChatStore = defineStore("chat", () => {
   const messages = ref<ChatMessage[]>([]);
   const loading = ref(false);
-  useBackendScope([messages, loading]);
+  const backendScope = useBackendScope([messages, loading]);
 
   const fetchMessages = async (limit = 200) => {
+    const assertCurrent = backendScope();
+    const before = new Set(messages.value);
     loading.value = true;
     try {
       const response = await get<unknown>(`${endpoints.chatMessages}?limit=${limit}`);
+      assertCurrent();
+      const liveUpdates = messages.value.filter((message) => !before.has(message));
       messages.value = unwrapApiList<ChatMessagePayload>(response).map(fromApiMessage).reverse();
+      liveUpdates.forEach(upsertMessage);
     } finally {
-      loading.value = false;
+      try { assertCurrent(); loading.value = false; }
+      catch { /* The new backend owns its loading state. */ }
     }
   };
 

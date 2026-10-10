@@ -6766,6 +6766,10 @@ fn openapi_components() -> Value {
                 "Client",
                 "Paginated client list returned when page or per_page is supplied."
             ),
+            "PaginatedIdentityList": openapi_paginated_list_schema(
+                "IdentityStatus",
+                "Identity list sorted by normalized identity, excluding voice aliases. Returned when page or per_page is supplied."
+            ),
             "PaginatedTopicList": openapi_paginated_list_schema(
                 "Topic",
                 "Paginated topic list returned when page or per_page is supplied."
@@ -9039,9 +9043,9 @@ fn openapi_document() -> Value {
                 )
             },
             "/Identities": {
-                "get": openapi_array_response_operation(
-                    Vec::new(),
+                "get": openapi_paginated_list_operation(
                     "IdentityStatus",
+                    "PaginatedIdentityList",
                     "Identity moderation statuses."
                 )
             },
@@ -23275,7 +23279,15 @@ async fn list_clients(
     Ok(Json(paginated_client_payload(&records, page, per_page)))
 }
 
-async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn list_identities(
+    State(state): State<AppState>,
+    Query(query): Query<ClientListQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let pagination = if query.page.is_some() || query.per_page.is_some() {
+        Some(resolve_python_pagination(query.page, query.per_page)?)
+    } else {
+        None
+    };
     let client_records = client_records_for_state(&state)?;
     let mut records = state
         .identity_states
@@ -23312,20 +23324,37 @@ async fn list_identities(State(state): State<AppState>) -> Result<Json<Value>, A
             Some((voice_destination, owner))
         })
         .collect::<HashMap<_, _>>();
+    // Count and paginate after suppressing voice aliases, before building payloads.
+    records.retain(|record| !voice_destination_owners.contains_key(&record.identity_key()));
+    let total = records.len();
+    let (start, count) = pagination.map_or((0, total), |(page, per_page)| {
+        (page.saturating_sub(1).saturating_mul(per_page), per_page)
+    });
     let items = records
         .into_iter()
-        .filter_map(|record| {
+        .skip(start)
+        .take(count)
+        .map(|record| {
             let identity = record.identity_key();
-            if voice_destination_owners.contains_key(&identity) {
-                return None;
-            }
             let mut value = record.to_python_value(annotations.get(&identity));
             if let Some(client) = identity_display_records_by_identity.get(&identity) {
                 merge_identity_payload_client_display_metadata(&mut value, client);
             }
-            Some(value)
+            value
         })
         .collect::<Vec<_>>();
+    if let Some((page, per_page)) = pagination {
+        let total_pages = total.div_ceil(per_page);
+        return Ok(Json(json!({
+            "items": items,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1,
+        })));
+    }
     Ok(Json(json!(items)))
 }
 
@@ -24816,6 +24845,7 @@ use r3akt_transport_rns::{
 mod tests {
     mod attachment_security;
     mod auth;
+    mod directory_pagination;
     mod field_commands;
     #[path = "issue_238_live.rs"]
     mod issue_238_live;
@@ -29736,7 +29766,7 @@ mod tests {
         }
         assert_eq!(
             paths["/Identities"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-                ["items"]["$ref"],
+                ["oneOf"][0]["items"]["$ref"],
             "#/components/schemas/IdentityStatus"
         );
         for path in [

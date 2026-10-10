@@ -115,7 +115,7 @@ describe("dashboard store", () => {
       if (url.endsWith("/api/r3akt/missions") || url.endsWith("/api/r3akt/team-members")) {
         return Promise.resolve(jsonResponse([]));
       }
-      if (url.endsWith("/Client")) {
+      if (new URL(url).pathname === "/Client") {
         return Promise.resolve(
           jsonResponse([
             {
@@ -126,7 +126,7 @@ describe("dashboard store", () => {
           ])
         );
       }
-      if (url.endsWith("/Identities")) {
+      if (new URL(url).pathname === "/Identities") {
         return Promise.resolve(jsonResponse([]));
       }
       if (url.endsWith("/api/rem/peers")) {

@@ -141,7 +141,9 @@
             </div>
           </div>
 
-          <LoadingSkeleton v-if="usersStore.loading && (activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers')" />
+          <LoadingSkeleton v-if="(activeTab === 'clients' && usersStore.resourceLoading.clients && !usersStore.clients.length) ||
+              (activeTab === 'identities' && usersStore.resourceLoading.identities && !usersStore.identities.length) ||
+              (activeTab === 'rem-peers' && usersStore.resourceLoading.remPeers && !usersStore.remPeers.length)" />
           <div v-else>
             <div v-if="activeTab === 'clients'" class="card-grid">
               <div
@@ -416,6 +418,12 @@
             />
           </div>
 
+          <template v-for="(error, resource) in usersStore.errors" :key="resource">
+            <p v-if="error" role="status" class="panel-empty">Unable to load {{ resource === 'remPeers' ? 'REM peers' : resource }}: {{ error }}</p>
+          </template>
+          <p v-if="activeTab === 'identities' && !usersStore.identitiesComplete" role="status" class="panel-empty">
+            Identity directory incomplete. Loaded {{ usersStore.identities.length }}<span v-if="usersStore.identityTotal !== null"> of {{ usersStore.identityTotal }}</span>.
+          </p>
           <div class="panel-actions">
             <BaseButton
               v-if="activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers'"
@@ -1356,18 +1364,21 @@ const loadRouting = async () => {
 const loadTeamWorkspace = async () => {
   teamsLoading.value = true;
   teamMembersLoading.value = true;
+  const load = async <T,>(path: string, label: string, publish: (items: T[]) => void) => {
+    try {
+      const items = await get<unknown>(path);
+      if (!Array.isArray(items)) { throw new Error(`Invalid ${label} response.`); }
+      publish(items);
+    } catch (error) {
+      handleApiError(error, `Unable to load ${label}`);
+    }
+  };
   try {
-    const [, missions, teams, members] = await Promise.all([
-      usersStore.fetchUsers(),
-      get<MissionRecord[]>(endpoints.r3aktMissions),
-      get<TeamRecord[]>(endpoints.r3aktTeams),
-      get<TeamMemberRecord[]>(endpoints.r3aktTeamMembers)
+    await Promise.all([
+      load<MissionRecord>(endpoints.r3aktMissions, "missions", (items) => { missionRecords.value = items; }),
+      load<TeamRecord>(endpoints.r3aktTeams, "teams", (items) => { teamRecords.value = items; }),
+      load<TeamMemberRecord>(endpoints.r3aktTeamMembers, "team members", (items) => { teamMemberRecords.value = items; })
     ]);
-    missionRecords.value = Array.isArray(missions) ? missions : [];
-    teamRecords.value = Array.isArray(teams) ? teams : [];
-    teamMemberRecords.value = Array.isArray(members) ? members : [];
-  } catch (error) {
-    handleApiError(error, "Unable to load teams and team members");
   } finally {
     teamsLoading.value = false;
     teamMembersLoading.value = false;
@@ -1771,6 +1782,7 @@ watch(activeTab, (tab) => {
 });
 
 onMounted(() => {
+  void usersStore.fetchUsers().catch((error) => handleApiError(error, "Unable to load directory"));
   loadTeamWorkspace()
     .then(() => {
       applyNavigationIntent();

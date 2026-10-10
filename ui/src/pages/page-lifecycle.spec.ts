@@ -7,11 +7,11 @@ import WebMapPage from "./WebMapPage.vue";
 import DashboardPage from "./DashboardPage.vue";
 import { get } from "../api/client";
 
-const owners = vi.hoisted(() => ({ sockets: vi.fn(), removeMap: vi.fn() }));
+const owners = vi.hoisted(() => ({ sockets: vi.fn(), closeSocket: vi.fn(), removeMap: vi.fn() }));
 vi.mock("../api/client", () => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn(), getBlob: vi.fn() }));
 vi.mock("../api/ws", () => ({ WsClient: class {
   constructor() { owners.sockets(); }
-  connect() {} close() {} send() {}
+  connect() {} close() { owners.closeSocket(); } send() {}
 } }));
 vi.mock("../utils/mdi-icons", () => ({ loadMdiSvg: vi.fn().mockResolvedValue(null) }));
 vi.mock("../components/OnlineHelpLauncher.vue", () => ({ default: { template: "<span />" } }));
@@ -39,11 +39,17 @@ it.each([ChatPage, WebMapPage, DashboardPage, ReticulumConfigEditor])("does not 
   const pinia = createPinia(); setActivePinia(pinia);
   const host = document.createElement("div"); document.body.appendChild(host);
   const app = createApp(page).use(pinia); app.mount(host);
-  await nextTick(); app.unmount();
+  await nextTick();
+  const socketsBeforeUnmount = owners.sockets.mock.calls.length;
+  app.unmount();
   const timersAfterUnmount = vi.getTimerCount();
   finish([]);
   for (let i = 0; i < 40; i += 1) { await Promise.resolve(); }
-  expect(owners.sockets).not.toHaveBeenCalled();
+  expect(owners.sockets).toHaveBeenCalledTimes(socketsBeforeUnmount);
+  if (page === ChatPage) {
+    expect(socketsBeforeUnmount).toBe(1);
+    expect(owners.closeSocket).toHaveBeenCalledTimes(1);
+  }
   expect(vi.getTimerCount()).toBe(timersAfterUnmount);
   if (page === WebMapPage) { expect(owners.removeMap).toHaveBeenCalledTimes(1); }
   host.remove();

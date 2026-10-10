@@ -158,7 +158,11 @@ fn announce_free_http_commands_are_explicit_and_do_not_include_rem() {
 async fn ui_roster_reads_ignore_unrelated_stale_corruption_but_preserve_raw_history() {
     let (state, directory) = fixture();
     corrupt_announce(&directory);
-    assert!(list_identities(State(state.clone())).await.is_ok());
+    assert!(
+        list_identities(State(state.clone()), Query(ClientListQuery::default()))
+            .await
+            .is_ok()
+    );
     assert!(rem_peer_registry_payload_for_state(&state, None).is_ok());
     let database = Connection::open(directory.join("state.db")).expect("DB");
     let bytes: Vec<u8> = database
@@ -320,13 +324,26 @@ async fn identity_reader_keeps_alias_metadata_and_voice_owners_absent_from_state
         }])
         .expect("alias");
     corrupt_announce(&directory);
-    let Json(payload) = list_identities(State(state.clone()))
+    let Json(payload) = list_identities(State(state.clone()), Query(ClientListQuery::default()))
         .await
         .expect("identities");
     let items = payload.as_array().expect("rows");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["Identity"], " AaBb ");
     assert_eq!(items[0]["DisplayName"], "Alias display");
+    let Json(page) = list_identities(
+        State(state.clone()),
+        Query(ClientListQuery {
+            page: Some(1),
+            per_page: Some(1),
+        }),
+    )
+    .await
+    .expect("identity page");
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["total_pages"], 1);
+    assert_eq!(page["items"], payload);
+
     drop(store);
     drop(state);
     std::fs::remove_dir_all(directory).expect("cleanup");
