@@ -20,7 +20,8 @@ without executing old commands or replaying old relays. One RCH process owns a
 state directory, enforced by a separate SQLite lease.
 
 Paired LXMF-rs source: `a424760137c7eaee5d5de7fb9ef2347871b85da1`
-merged into Framework `main` by PR #660. Cargo dependencies and managed
+includes the durable broker from PR #660 and the response lifecycle fix from
+PR #661, both merged into Framework `main`. Cargo dependencies and managed
 daemon builds use this same immutable revision.
 
 The daemon physical budget is persisted on first enablement. Its main database
