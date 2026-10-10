@@ -160,6 +160,7 @@ curl -H 'X-API-Key: change-this-preview-key' \
 
 For operational deployment and failure diagnosis, continue with the
 [operations and troubleshooting guide](docs/operations-and-troubleshooting.md).
+For large user inventories, see [identity directory pagination](docs/identity-directory-pagination.md).
 
 ## Main components
 

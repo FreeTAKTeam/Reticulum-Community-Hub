@@ -1,6 +1,7 @@
 <template>
   <div class="chat-cosmos">
     <div class="chat-shell">
+      <p v-if="usersStore.errors.clients" role="status" class="panel-empty">Unable to load chat clients: {{ usersStore.errors.clients }}</p>
       <header class="chat-top">
         <div>
           <div class="chat-title">Communications Grid</div>
@@ -303,6 +304,20 @@ const activeLabel = computed(() => {
   return topic?.label ?? "Topic Channel";
 });
 
+const resolveMessageScope = (message: ChatMessage): "dm" | "topic" | "broadcast" => {
+  const scope = message.scope?.trim().toLowerCase();
+  if (scope === "dm" || scope === "topic" || scope === "broadcast") {
+    return scope;
+  }
+  if (message.topic_id) {
+    return "topic";
+  }
+  if (message.destination) {
+    return "dm";
+  }
+  return "broadcast";
+};
+
 const visibleMessages = computed(() => {
   if (activeScope.value === "broadcast") {
     return chatStore.messages.filter((message) => resolveMessageScope(message) === "broadcast");
@@ -367,20 +382,6 @@ const resolveMessageSource = (message: ChatMessage) => {
   }
   const peer = peers.value.find((entry) => entry.id === message.source);
   return peer?.label ?? message.source ?? "Unknown";
-};
-
-const resolveMessageScope = (message: ChatMessage): "dm" | "topic" | "broadcast" => {
-  const scope = message.scope?.trim().toLowerCase();
-  if (scope === "dm" || scope === "topic" || scope === "broadcast") {
-    return scope;
-  }
-  if (message.topic_id) {
-    return "topic";
-  }
-  if (message.destination) {
-    return "dm";
-  }
-  return "broadcast";
 };
 
 const formatTimestamp = (value?: string) => {
@@ -541,25 +542,26 @@ const fromWsMessage = (payload: Record<string, unknown>): ChatMessage => ({
 let wsClient: WsClient | null = null;
 let disposed = false;
 
-onMounted(async () => {
-  try {
-  await Promise.all([usersStore.fetchUsers(), topicsStore.fetchTopics(), chatStore.fetchMessages()]);
-  if (disposed) { return; }
-  await scrollToLatest();
-  if (disposed) { return; }
+onMounted(() => {
   wsClient = new WsClient("/messages/stream", handleWsMessage, () => {
-    if (wsClient) {
-      wsClient.send({
-        type: "message.subscribe",
-        ts: new Date().toISOString(),
-        data: { follow: true }
-      });
-    }
+    wsClient?.send({ type: "message.subscribe", ts: new Date().toISOString(), data: { follow: true } });
   });
   wsClient.connect();
-  } catch (error) {
-    if (!disposed) { console.warn("Unable to initialize chat", error); toastStore.push("Unable to load chat", "danger"); }
-  }
+  const load = async (work: () => Promise<unknown>, label: string) => {
+    try { await work(); }
+    catch (error) {
+      if (!disposed) {
+        console.warn(`Unable to load ${label}`, error);
+        toastStore.push(`Unable to load ${label}`, "danger");
+      }
+    }
+  };
+  void load(() => usersStore.fetchClients(), "chat clients");
+  void load(() => topicsStore.fetchTopics(), "chat topics");
+  void load(async () => {
+    await chatStore.fetchMessages();
+    if (!disposed) { await scrollToLatest(); }
+  }, "chat history");
 });
 
 onBeforeUnmount(() => {

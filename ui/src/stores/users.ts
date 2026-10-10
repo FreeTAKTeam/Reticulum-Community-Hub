@@ -4,6 +4,7 @@ import { useBackendScope } from "../composables/useBackendScope";
 import { ref } from "vue";
 import { endpoints } from "../api/endpoints";
 import { get } from "../api/client";
+import { loadDirectory } from "../api/directory";
 import { post } from "../api/client";
 import { put } from "../api/client";
 import type { ClientEntry } from "../api/types";
@@ -106,41 +107,66 @@ export const useUsersStore = defineStore("users", () => {
   const remPeers = ref<RemPeerEntry[]>([]);
   const remConnectedMode = ref(false);
   const loading = ref(false);
-  const backendScope = useBackendScope([clients, identities, remPeers, remConnectedMode, loading]);
-
+  type Resource = "clients" | "identities" | "remPeers";
+  const errors = ref<Record<Resource, string | null>>({ clients: null, identities: null, remPeers: null });
+  const resourceLoading = ref<Record<Resource, boolean>>({ clients: false, identities: false, remPeers: false });
+  const identityTotal = ref<number | null>(null);
+  const identitiesComplete = ref(false);
+  const backendScope = useBackendScope([
+    clients, identities, remPeers, remConnectedMode, loading, errors, resourceLoading, identityTotal, identitiesComplete
+  ]);
   const connection = useConnectionStore();
-  let pending: { identity: string; promise: Promise<void> } | undefined;
+  const pending = new Map<Resource, { identity: string; promise: Promise<void> }>();
 
-  const fetchUsers = () => {
+  const loadResource = (resource: Resource, work: (assertCurrent: () => void) => Promise<void>) => {
     const identity = connection.requestIdentity;
-    if (pending?.identity === identity) {
-      return pending.promise;
-    }
-    const promise = loadUsers().finally(() => {
-      if (pending?.promise === promise) {
-        pending = undefined;
-        if (connection.requestIdentity === identity) {
-          loading.value = false;
-        }
+    const current = pending.get(resource);
+    if (current?.identity === identity) { return current.promise; }
+    const assertCurrent = backendScope();
+    loading.value = true;
+    resourceLoading.value[resource] = true;
+    errors.value[resource] = null;
+    const promise = work(assertCurrent).catch((error: unknown) => {
+      assertCurrent();
+      errors.value[resource] = error instanceof Error ? error.message : "Unknown loading error.";
+    }).finally(() => {
+      if (pending.get(resource)?.promise === promise) {
+        pending.delete(resource);
+        if (connection.requestIdentity === identity) { resourceLoading.value[resource] = false; }
+      }
+      if (connection.requestIdentity === identity) {
+        loading.value = [...pending.values()].some((entry) => entry.identity === identity);
       }
     });
-    pending = { identity, promise };
+    pending.set(resource, { identity, promise });
     return promise;
   };
 
-  const loadUsers = async () => {
-    const assertCurrent = backendScope();
-    loading.value = true;
-    const response = await get<ClientApiPayload[]>(endpoints.clients);
+  const fetchClients = () => loadResource("clients", (assertCurrent) => loadDirectory(
+    endpoints.clients, "identity", assertCurrent, (items, _total, first) => {
+      const entries = items.map(fromApiClient);
+      clients.value = first ? entries : [...clients.value, ...entries];
+    }
+  ));
+  const fetchIdentities = () => loadResource("identities", async (assertCurrent) => {
+    identitiesComplete.value = false;
+    await loadDirectory(endpoints.identities, "Identity", assertCurrent, (items, total, first) => {
+      const entries = items.map(fromApiIdentity);
+      identities.value = dedupeIdentities(first ? entries : [...identities.value, ...entries]);
+      identityTotal.value = total;
+    });
     assertCurrent();
-    const identityResponse = await get<IdentityApiPayload[]>(endpoints.identities);
+    identitiesComplete.value = true;
+  });
+  const fetchRemPeers = () => loadResource("remPeers", async (assertCurrent) => {
+    const response = await get<RemPeersApiPayload>(endpoints.remPeers);
     assertCurrent();
-    const remPeersResponse = await get<RemPeersApiPayload>(endpoints.remPeers);
-    assertCurrent();
-    clients.value = response.map(fromApiClient);
-    identities.value = dedupeIdentities(identityResponse.map(fromApiIdentity));
-    remPeers.value = Array.isArray(remPeersResponse.items) ? remPeersResponse.items : [];
-    remConnectedMode.value = Boolean(remPeersResponse.effective_connected_mode);
+    if (!response || !Array.isArray(response.items)) { throw new Error("Invalid REM peers response."); }
+    remPeers.value = response.items;
+    remConnectedMode.value = Boolean(response.effective_connected_mode);
+  });
+  const fetchUsers = async () => {
+    await Promise.all([fetchClients(), fetchIdentities(), fetchRemPeers()]);
   };
 
   const actOnClient = async (clientId: string, action: "Ban" | "Unban" | "Blackhole") => {
@@ -186,6 +212,11 @@ export const useUsersStore = defineStore("users", () => {
     remConnectedMode,
     loading,
     fetchUsers,
+    fetchClients,
+    errors,
+    resourceLoading,
+    identityTotal,
+    identitiesComplete,
     actOnClient,
     joinIdentity,
     leaveIdentity

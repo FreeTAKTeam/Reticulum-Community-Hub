@@ -177,10 +177,10 @@ const currentIdentities = () => [identityAlpha, identityBravo];
 
 const setupApiMocks = () => {
   getMock.mockImplementation((path: string) => {
-    if (path === "/Client") {
+    if (path === "/Client?page=1&per_page=100") {
       return Promise.resolve([clientAlpha, clientRem]);
     }
-    if (path === "/Identities") {
+    if (path === "/Identities?page=1&per_page=100") {
       return Promise.resolve(currentIdentities());
     }
     if (path === "/api/rem/peers") {
@@ -306,6 +306,39 @@ describe("users page", () => {
     expect(text()).toContain("Bravo Route");
     expect(text()).toContain("route-bravo");
     expect(text()).toContain("Joined");
+  });
+
+  it("shows successfully loaded clients while identities are still pending", async () => {
+    const previous = getMock.getMockImplementation()!;
+    let resolve!: (items: unknown[]) => void;
+    getMock.mockImplementation((path: string) => path.startsWith("/Identities")
+      ? new Promise((done) => { resolve = done; }) : previous(path));
+    page = await mountPage();
+    expect(text()).toContain("Alpha Client");
+    await clickButton("Teams", 1);
+    expect(text()).toContain("No teams match the current filter");
+    resolve([]);
+    await waitForUi();
+  });
+
+  it("publishes teams and members even when identity and mission requests fail", async () => {
+    const previous = getMock.getMockImplementation()!;
+    getMock.mockImplementation((path: string) => {
+      if (path.startsWith("/Identities")) { return Promise.reject(new Error("Response exceeds the 8 MiB download limit.")); }
+      if (path === "/api/r3akt/missions") { return Promise.reject(new Error("Mission service unavailable")); }
+      if (path === "/api/r3akt/teams") { return Promise.resolve([{ uid: "team-alpha", team_name: "Rescue Alpha" }]); }
+      if (path === "/api/r3akt/team-members") { return Promise.resolve([{ uid: "member-alpha", display_name: "Member Alpha", team_uid: "team-alpha" }]); }
+      return previous(path);
+    });
+    page = await mountPage();
+    expect(text()).toContain("Alpha Client");
+    expect(text()).toContain("Unable to load identities");
+    expect(text()).toContain("8 MiB download limit");
+    await clickButton("Teams", 1);
+    expect(text()).toContain("Rescue Alpha");
+    await clickButton("Team Members", 1);
+    expect(text()).toContain("Member Alpha");
+    expect(useToastStore().messages.some((entry) => entry.message === "Unable to load missions")).toBe(true);
   });
 
   it("filters users and identity announces by client type", async () => {
