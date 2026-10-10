@@ -2,7 +2,8 @@
 
 This is the RCH implementation follow-up to [issue #260](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/issues/260).
 [Issue #258](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/issues/258)
-retains the broader compatibility diagnosis and live acceptance evidence;
+retains the broader compatibility diagnosis and live acceptance evidence
+([stage A receive contract and fixtures](telemetry-receive-compatibility.md));
 [issue #259](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/issues/259)
 is the subsequent extraction handoff.
 

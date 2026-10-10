@@ -25,6 +25,8 @@ mod sdk_path_control;
 
 use sdk_path_control::{resolve_zmq_actor_path, sync_zmq_actor_selected_node};
 
+mod telemetry_decode;
+pub use telemetry_decode::reticulumd_event_payload_to_payloads;
 mod direct_lxmf;
 pub use direct_lxmf::DecodedLxmfMessage;
 use direct_lxmf::{direct_lxmf_message_envelope, direct_lxmf_message_payloads};
@@ -2547,23 +2549,6 @@ fn direct_lxmf_fallback_envelope(
     source: &str,
     local_source: &str,
 ) -> Option<ProtocolEnvelope> {
-    if let Some(telemetry) = direct_lxmf_telemetry(fields, message) {
-        let topic = Topic::new("telemetry");
-        return Some(
-            ProtocolEnvelope::new(
-                NodeId::new(source),
-                Destination::Topic(topic.clone()),
-                topic,
-                Payload::TelemetrySample(telemetry),
-            )
-            .with_dedupe_key(
-                message
-                    .get("id")
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or(local_source),
-            ),
-        );
-    }
     let attachments = direct_lxmf_attachments(fields);
     let content = optional_message_string(message, &["content", "text", "body"])
         .unwrap_or_default()
@@ -2658,6 +2643,7 @@ pub fn reticulumd_message_to_payloads(
         return Ok(DecodedLxmfMessage {
             envelopes: vec![envelope],
             command_diagnostics: Vec::new(),
+            telemetry_diagnostics: Vec::new(),
         });
     }
     Ok(direct_lxmf_message_payloads(message, local_source))
@@ -2674,10 +2660,17 @@ pub fn reticulumd_message_to_envelope(
         && decoded
             .command_diagnostics
             .iter()
+            .chain(&decoded.telemetry_diagnostics)
             .any(|d| d.starts_with("malformed"))
     {
         return Err(TransportError::Receive(
-            decoded.command_diagnostics.join("; "),
+            decoded
+                .command_diagnostics
+                .iter()
+                .chain(&decoded.telemetry_diagnostics)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; "),
         ));
     }
     Ok(decoded.envelopes.into_iter().next())
@@ -2696,24 +2689,6 @@ pub fn reticulumd_event_to_envelope(
     }
 }
 
-fn direct_lxmf_telemetry(
-    fields: Option<&serde_json::Map<String, JsonValue>>,
-    message: &JsonValue,
-) -> Option<TelemetrySample> {
-    let fields = fields?;
-    let payload = optional_field_value(fields, &["telemetry", "FIELD_TELEMETRY", "2"])?;
-    let telemetry = parse_lxmf_telemetry_payload(payload)?;
-    let telemetry = humanize_lxmf_telemetry_payload(telemetry);
-    let packed = attachment_data_bytes(payload);
-    let timestamp_s = lxmf_telemetry_timestamp(&telemetry)
-        .or_else(|| optional_message_i64(message, &["timestamp", "timestamp_s", "time"]));
-    Some(TelemetrySample {
-        packed_telemeter: (!packed.is_empty()).then_some(packed),
-        telemetry,
-        timestamp_s,
-    })
-}
-
 fn parse_lxmf_telemetry_payload(value: &JsonValue) -> Option<JsonValue> {
     if value.as_object().is_some() {
         return Some(value.clone());
@@ -2722,22 +2697,7 @@ fn parse_lxmf_telemetry_payload(value: &JsonValue) -> Option<JsonValue> {
     if bytes.is_empty() {
         return None;
     }
-    parse_lxmf_msgpack_json(&bytes).or_else(|| {
-        rmp_serde::from_slice::<BTreeMap<i64, LxmfTelemetryValue>>(&bytes)
-            .ok()
-            .map(numeric_lxmf_telemetry_map_to_json)
-            .or_else(|| {
-                rmp_serde::from_slice::<BTreeMap<u64, LxmfTelemetryValue>>(&bytes)
-                    .ok()
-                    .map(unsigned_lxmf_telemetry_map_to_json)
-            })
-            .or_else(|| {
-                rmp_serde::from_slice::<BTreeMap<i64, JsonValue>>(&bytes)
-                    .ok()
-                    .map(numeric_key_map_to_json)
-            })
-            .or_else(|| rmp_serde::from_slice::<JsonValue>(&bytes).ok())
-    })
+    parse_lxmf_msgpack_json(&bytes)
 }
 
 #[derive(Debug)]
@@ -2754,17 +2714,31 @@ enum LxmfMsgpackValue {
 }
 
 fn parse_lxmf_msgpack_json(bytes: &[u8]) -> Option<JsonValue> {
-    let (value, offset) = parse_lxmf_msgpack_value(bytes, 0)?;
+    let (value, offset) = parse_lxmf_msgpack_value(bytes, 0, 0)?;
     (offset == bytes.len()).then(|| lxmf_msgpack_value_to_json(value))
 }
 
-fn parse_lxmf_msgpack_value(bytes: &[u8], offset: usize) -> Option<(LxmfMsgpackValue, usize)> {
+fn bounded_lxmf_wire_payload(bytes: &[u8]) -> bool {
+    parse_lxmf_msgpack_value(bytes, 0, 0).is_some_and(|(value, consumed)| {
+        consumed == bytes.len()
+            && matches!(value, LxmfMsgpackValue::Array(items) if (4..=5).contains(&items.len()))
+    })
+}
+
+fn parse_lxmf_msgpack_value(
+    bytes: &[u8],
+    offset: usize,
+    depth: usize,
+) -> Option<(LxmfMsgpackValue, usize)> {
+    if depth > 32 {
+        return None;
+    }
     let marker = *bytes.get(offset)?;
     let next = offset + 1;
     match marker {
         0x00..=0x7f => Some((LxmfMsgpackValue::U64(u64::from(marker)), next)),
-        0x80..=0x8f => parse_lxmf_msgpack_map(bytes, next, usize::from(marker & 0x0f)),
-        0x90..=0x9f => parse_lxmf_msgpack_array(bytes, next, usize::from(marker & 0x0f)),
+        0x80..=0x8f => parse_lxmf_msgpack_map(bytes, next, usize::from(marker & 0x0f), depth),
+        0x90..=0x9f => parse_lxmf_msgpack_array(bytes, next, usize::from(marker & 0x0f), depth),
         0xa0..=0xbf => parse_lxmf_msgpack_string(bytes, next, usize::from(marker & 0x1f)),
         0xc0 => Some((LxmfMsgpackValue::Nil, next)),
         0xc2 => Some((LxmfMsgpackValue::Bool(false), next)),
@@ -2781,13 +2755,68 @@ fn parse_lxmf_msgpack_value(bytes: &[u8], offset: usize) -> Option<(LxmfMsgpackV
             let len = usize::try_from(read_be_u32_at(bytes, next)?).ok()?;
             parse_lxmf_msgpack_bytes(bytes, next + 4, len)
         }
+        0xca..=0xd3 => parse_lxmf_msgpack_number(bytes, next, marker),
+        0xd9 => {
+            let len = usize::from(*bytes.get(next)?);
+            parse_lxmf_msgpack_string(bytes, next + 1, len)
+        }
+        0xda => {
+            let len = usize::from(read_be_u16_at(bytes, next)?);
+            parse_lxmf_msgpack_string(bytes, next + 2, len)
+        }
+        0xdb => {
+            let len = usize::try_from(read_be_u32_at(bytes, next)?).ok()?;
+            parse_lxmf_msgpack_string(bytes, next + 4, len)
+        }
+        0xdc => parse_lxmf_msgpack_array(
+            bytes,
+            next + 2,
+            usize::from(read_be_u16_at(bytes, next)?),
+            depth,
+        ),
+        0xdd => parse_lxmf_msgpack_array(
+            bytes,
+            next + 4,
+            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
+            depth,
+        ),
+        0xde => parse_lxmf_msgpack_map(
+            bytes,
+            next + 2,
+            usize::from(read_be_u16_at(bytes, next)?),
+            depth,
+        ),
+        0xdf => parse_lxmf_msgpack_map(
+            bytes,
+            next + 4,
+            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
+            depth,
+        ),
+        0xe0..=0xff => Some((
+            LxmfMsgpackValue::I64(i64::from(i8::from_be_bytes([marker]))),
+            next,
+        )),
+        _ => None,
+    }
+}
+
+fn parse_lxmf_msgpack_number(
+    bytes: &[u8],
+    next: usize,
+    marker: u8,
+) -> Option<(LxmfMsgpackValue, usize)> {
+    match marker {
         0xca => {
             let value = f64::from(f32::from_bits(read_be_u32_at(bytes, next)?));
-            Some((LxmfMsgpackValue::F64(value), next + 4))
+            value
+                .is_finite()
+                .then_some((LxmfMsgpackValue::F64(value), next + 4))
         }
         0xcb => {
             let value = f64::from_bits(read_be_u64_at(bytes, next)?);
-            Some((LxmfMsgpackValue::F64(value), next + 8))
+            value
+                .is_finite()
+                .then_some((LxmfMsgpackValue::F64(value), next + 8))
         }
         0xcc => Some((
             LxmfMsgpackValue::U64(u64::from(*bytes.get(next)?)),
@@ -2827,36 +2856,6 @@ fn parse_lxmf_msgpack_value(bytes: &[u8], offset: usize) -> Option<(LxmfMsgpackV
             )),
             next + 8,
         )),
-        0xd9 => {
-            let len = usize::from(*bytes.get(next)?);
-            parse_lxmf_msgpack_string(bytes, next + 1, len)
-        }
-        0xda => {
-            let len = usize::from(read_be_u16_at(bytes, next)?);
-            parse_lxmf_msgpack_string(bytes, next + 2, len)
-        }
-        0xdb => {
-            let len = usize::try_from(read_be_u32_at(bytes, next)?).ok()?;
-            parse_lxmf_msgpack_string(bytes, next + 4, len)
-        }
-        0xdc => {
-            parse_lxmf_msgpack_array(bytes, next + 2, usize::from(read_be_u16_at(bytes, next)?))
-        }
-        0xdd => parse_lxmf_msgpack_array(
-            bytes,
-            next + 4,
-            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
-        ),
-        0xde => parse_lxmf_msgpack_map(bytes, next + 2, usize::from(read_be_u16_at(bytes, next)?)),
-        0xdf => parse_lxmf_msgpack_map(
-            bytes,
-            next + 4,
-            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
-        ),
-        0xe0..=0xff => Some((
-            LxmfMsgpackValue::I64(i64::from(i8::from_be_bytes([marker]))),
-            next,
-        )),
         _ => None,
     }
 }
@@ -2865,10 +2864,14 @@ fn parse_lxmf_msgpack_array(
     bytes: &[u8],
     mut offset: usize,
     len: usize,
+    depth: usize,
 ) -> Option<(LxmfMsgpackValue, usize)> {
+    if len > bytes.len().saturating_sub(offset) {
+        return None;
+    }
     let mut items = Vec::with_capacity(len);
     for _ in 0..len {
-        let (value, next) = parse_lxmf_msgpack_value(bytes, offset)?;
+        let (value, next) = parse_lxmf_msgpack_value(bytes, offset, depth + 1)?;
         items.push(value);
         offset = next;
     }
@@ -2879,11 +2882,29 @@ fn parse_lxmf_msgpack_map(
     bytes: &[u8],
     mut offset: usize,
     len: usize,
+    depth: usize,
 ) -> Option<(LxmfMsgpackValue, usize)> {
+    if len > bytes.len().saturating_sub(offset) / 2 {
+        return None;
+    }
+    let mut keys = std::collections::HashSet::new();
     let mut items = Vec::with_capacity(len);
     for _ in 0..len {
-        let (key, next) = parse_lxmf_msgpack_value(bytes, offset)?;
-        let (value, next) = parse_lxmf_msgpack_value(bytes, next)?;
+        let (key, next) = parse_lxmf_msgpack_value(bytes, offset, depth + 1)?;
+        let key_name = match &key {
+            LxmfMsgpackValue::I64(v) => v.to_string(),
+            LxmfMsgpackValue::U64(v) => v.to_string(),
+            LxmfMsgpackValue::String(v) => v.clone(),
+            LxmfMsgpackValue::Bytes(v) => format!(
+                "base64:{}",
+                base64::engine::general_purpose::STANDARD.encode(v)
+            ),
+            _ => return None,
+        };
+        if !keys.insert(key_name) {
+            return None;
+        }
+        let (value, next) = parse_lxmf_msgpack_value(bytes, next, depth + 1)?;
         items.push((key, value));
         offset = next;
     }
@@ -2945,6 +2966,10 @@ fn lxmf_msgpack_key_to_string(value: LxmfMsgpackValue) -> Option<String> {
         LxmfMsgpackValue::I64(value) => Some(value.to_string()),
         LxmfMsgpackValue::U64(value) => Some(value.to_string()),
         LxmfMsgpackValue::String(value) => Some(value),
+        LxmfMsgpackValue::Bytes(value) => Some(format!(
+            "base64:{}",
+            base64::engine::general_purpose::STANDARD.encode(value)
+        )),
         _ => None,
     }
 }
@@ -2965,71 +2990,6 @@ fn read_be_u64_at(bytes: &[u8], offset: usize) -> Option<u64> {
     Some(u64::from_be_bytes(
         bytes.get(offset..offset + 8)?.try_into().ok()?,
     ))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum LxmfTelemetryValue {
-    Null(()),
-    Bool(bool),
-    Integer(i64),
-    Unsigned(u64),
-    Float(f64),
-    String(String),
-    Binary(Vec<u8>),
-    Array(Vec<LxmfTelemetryValue>),
-    StringMap(BTreeMap<String, LxmfTelemetryValue>),
-    IntegerMap(BTreeMap<i64, LxmfTelemetryValue>),
-}
-
-fn numeric_lxmf_telemetry_map_to_json(map: BTreeMap<i64, LxmfTelemetryValue>) -> JsonValue {
-    let object = map
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), lxmf_telemetry_value_to_json(value)))
-        .collect::<serde_json::Map<_, _>>();
-    JsonValue::Object(object)
-}
-
-fn unsigned_lxmf_telemetry_map_to_json(map: BTreeMap<u64, LxmfTelemetryValue>) -> JsonValue {
-    let object = map
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), lxmf_telemetry_value_to_json(value)))
-        .collect::<serde_json::Map<_, _>>();
-    JsonValue::Object(object)
-}
-
-fn lxmf_telemetry_value_to_json(value: LxmfTelemetryValue) -> JsonValue {
-    match value {
-        LxmfTelemetryValue::Null(()) => JsonValue::Null,
-        LxmfTelemetryValue::Bool(value) => JsonValue::Bool(value),
-        LxmfTelemetryValue::Integer(value) => JsonValue::from(value),
-        LxmfTelemetryValue::Unsigned(value) => JsonValue::from(value),
-        LxmfTelemetryValue::Float(value) => JsonValue::from(value),
-        LxmfTelemetryValue::String(value) => JsonValue::String(value),
-        LxmfTelemetryValue::Binary(bytes) => {
-            JsonValue::Array(bytes.into_iter().map(JsonValue::from).collect())
-        }
-        LxmfTelemetryValue::Array(items) => JsonValue::Array(
-            items
-                .into_iter()
-                .map(lxmf_telemetry_value_to_json)
-                .collect(),
-        ),
-        LxmfTelemetryValue::StringMap(map) => JsonValue::Object(
-            map.into_iter()
-                .map(|(key, value)| (key, lxmf_telemetry_value_to_json(value)))
-                .collect(),
-        ),
-        LxmfTelemetryValue::IntegerMap(map) => numeric_lxmf_telemetry_map_to_json(map),
-    }
-}
-
-fn numeric_key_map_to_json(map: BTreeMap<i64, JsonValue>) -> JsonValue {
-    let object = map
-        .into_iter()
-        .map(|(key, value)| (key.to_string(), value))
-        .collect::<serde_json::Map<_, _>>();
-    JsonValue::Object(object)
 }
 
 fn humanize_lxmf_telemetry_payload(payload: JsonValue) -> JsonValue {
@@ -3112,6 +3072,7 @@ fn humanize_lxmf_telemetry_payload(payload: JsonValue) -> JsonValue {
     if let Some(information) = object.get("15").and_then(decode_lxmf_information_sensor) {
         humanized.insert("information".to_string(), information);
     }
+    telemetry_decode::preserve_unconverted_sensors(object, &mut humanized);
     if humanized.is_empty() {
         payload
     } else {
@@ -3133,9 +3094,9 @@ fn decode_lxmf_location_sensor(value: &JsonValue) -> Option<JsonValue> {
     }
     let latitude = f64::from(read_i32_be(&attachment_data_bytes(&items[0]))?) / 1_000_000.0;
     let longitude = f64::from(read_i32_be(&attachment_data_bytes(&items[1]))?) / 1_000_000.0;
-    let altitude = f64::from(read_u32_be(&attachment_data_bytes(&items[2]))?) / 100.0;
+    let altitude = f64::from(read_i32_be(&attachment_data_bytes(&items[2]))?) / 100.0;
     let speed = f64::from(read_u32_be(&attachment_data_bytes(&items[3]))?) / 100.0;
-    let bearing = f64::from(read_u32_be(&attachment_data_bytes(&items[4]))?) / 100.0;
+    let bearing = f64::from(read_i32_be(&attachment_data_bytes(&items[4]))?) / 100.0;
     let accuracy = f64::from(read_u16_be(&attachment_data_bytes(&items[5]))?) / 100.0;
     let last_update = json_number_to_f64(&items[6])?;
     Some(serde_json::json!({

@@ -33,6 +33,14 @@ The matching preview.13 publication is described in
 [its release notes](release-notes-v3.0.0-preview.13.md); package acceptance
 requires successful builds and independent public-download verification.
 
+## Preview.22 telemetry testing candidate
+
+The [preview.22 notes](release-notes-v3.0.0-preview.22.md) describe the #258
+receive normalization candidate. Its server, SDK, CI and bundled daemon retain
+preview.21's `a424760137c7eaee5d5de7fb9ef2347871b85da1` pairing and explicit
+Linux durable-broker service flag. Live client/deployment telemetry acceptance
+remains separate from synthetic codec, persistence and package evidence.
+
 ## Linux AMD64 testing scope
 
 The existing release workflow supports Linux AMD64 server-only testing
