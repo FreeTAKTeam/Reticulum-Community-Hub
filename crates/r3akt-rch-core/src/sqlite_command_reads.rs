@@ -103,5 +103,7 @@ fn text(args: &Value, keys: &[&str]) -> Option<String> {
 mod access;
 mod dependencies;
 mod merge;
+mod mission_dependencies;
 mod seeds;
+mod supplemental_seeds;
 pub(super) use merge::extend;
