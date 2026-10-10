@@ -30,7 +30,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: e237f80c0c9e219e4090be04a4229d3328074f73
+  LXMF_REF: a424760137c7eaee5d5de7fb9ef2347871b85da1
 
 jobs:
   server-package:

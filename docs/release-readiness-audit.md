@@ -16,7 +16,7 @@ The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier 
 ## Issue #238 development baseline
 
 Development dependencies and CI now use LXMF-rs `0.13.0` plus the ZeroMQ
-connection/response, restart-cursor recovery and storage-contention reactor fixes plus the indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics at `fb5c2a1f938a7aab2f68e67976ef4e074218f258`.
+connection/response, restart-cursor recovery and storage-contention reactor fixes plus the indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics, durable ZeroMQ custody, generation-aware reply-connection reuse and retained delivery-stage failures at `a424760137c7eaee5d5de7fb9ef2347871b85da1`.
 This includes a daemon response-writer fix; pairing the new RCH SDK with an
 unpatched old daemon does not provide the complete fix. See
 [the issue evidence](issue-238-inbound-zmq.md) for fresh validation and limits.
