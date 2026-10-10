@@ -88,8 +88,8 @@ impl RchSqliteStore {
         let mut record: MarkerRecord = decode_msgpack(&payload)?;
         update(&mut record);
         transaction.execute(
-            "UPDATE rch_markers SET payload = ?1 WHERE object_destination_hash = ?2",
-            params![encode_msgpack(&record)?, id],
+            "UPDATE rch_markers SET payload = ?1, local_id=?3 WHERE object_destination_hash = ?2",
+            params![encode_msgpack(&record)?, id, record.local_id],
         )?;
         transaction.commit()?;
         Ok(Some(record))
@@ -139,8 +139,8 @@ impl RchSqliteStore {
         record.topic_id = topic;
         record.updated_ts_ms = now_ms;
         transaction.execute(
-            "UPDATE rch_file_attachments SET payload = ?1 WHERE file_id = ?2 AND category = ?3",
-            params![encode_msgpack(&record)?, super::sqlite_u64(id)?, category],
+            "UPDATE rch_file_attachments SET payload = ?1, topic_id=?4 WHERE file_id = ?2 AND category = ?3",
+            params![encode_msgpack(&record)?, super::sqlite_u64(id)?, category, super::normalize_topic_id(record.topic_id.as_deref())],
         )?;
         transaction.commit()?;
         Ok(Some(record))

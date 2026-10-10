@@ -1,4 +1,4 @@
-use super::{ClientRecord, RchCoreError, RchSqliteStore, encode_msgpack, normalize_hash, params};
+use super::{ClientRecord, RchCoreError, RchSqliteStore, normalize_hash};
 use rusqlite::{Transaction, TransactionBehavior};
 
 impl RchSqliteStore {
@@ -7,9 +7,11 @@ impl RchSqliteStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let key = remove_aliases(&transaction, &record.identity)?;
-        transaction.execute(
-            "INSERT INTO rch_clients (identity, payload) VALUES (?1, ?2)",
-            params![key, encode_msgpack(record)?],
+        super::upsert_payload_row(
+            &transaction,
+            "rch_clients",
+            vec![("identity", super::sql_text(key))],
+            record,
         )?;
         transaction.commit()?;
         Ok(())
@@ -28,12 +30,12 @@ impl RchSqliteStore {
 fn remove_aliases(transaction: &Transaction<'_>, identity: &str) -> Result<String, RchCoreError> {
     let key = normalize_hash(Some(identity))
         .ok_or_else(|| RchCoreError::InvalidPayload("client identity is required".to_string()))?;
-    // Legacy stores used raw identity strings as keys. Match those with the same
-    // Rust normalization as the live roster, including Unicode whitespace;
-    // SQLite's default trim() only removes ASCII spaces. Read keys, not payloads.
+    // Legacy external writers may omit the derived key. Inspect only their IDs,
+    // preserving alias cleanup without hydrating any unrelated payload.
     let aliases = {
-        let mut statement = transaction.prepare("SELECT identity FROM rch_clients")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut statement =
+            transaction.prepare("SELECT identity FROM rch_clients WHERE identity_normalized=?1 OR identity_normalized IS NULL")?;
+        let rows = statement.query_map([&key], |row| row.get::<_, String>(0))?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
     for alias in aliases {

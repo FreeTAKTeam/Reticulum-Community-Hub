@@ -47,6 +47,8 @@ mod first_run_setup;
 mod marker_idempotency;
 #[cfg(test)]
 mod message_persistence;
+mod message_residency;
+pub use message_residency::spawn_message_cache_maintenance;
 mod operation_right_persistence;
 mod rem_team_routing;
 #[cfg(test)]
@@ -270,6 +272,7 @@ pub struct AppState {
     markers: Arc<RwLock<HashMap<String, MarkerRecord>>>,
     zones: Arc<RwLock<HashMap<String, ZoneRecord>>>,
     messages: Arc<RwLock<Vec<OutboundMessageRecord>>>,
+    message_cache_activity: Arc<RwLock<HashMap<String, Instant>>>,
     message_events: broadcast::Sender<OutboundMessageRecord>,
     system_events: Arc<RwLock<Vec<SystemEventRecord>>>,
     system_event_broadcast: broadcast::Sender<SystemEventRecord>,
@@ -375,6 +378,12 @@ struct RuntimeMetricCounters {
     ws_telemetry_dropped_oldest: AtomicU64,
     ws_message_dropped_oldest: AtomicU64,
     operation_rights: operation_right_persistence::Metrics,
+    command_rows_read: AtomicU64,
+    command_payload_bytes: AtomicU64,
+    command_rows_written: AtomicU64,
+    command_duration_us: AtomicU64,
+    message_evictions: AtomicU64,
+    message_hydrations: AtomicU64,
     sqlite_transactions: AtomicU64,
     sqlite_latency_total_ms: AtomicU64,
     sqlite_latency_max_ms: AtomicU64,
@@ -553,6 +562,7 @@ impl Default for AppState {
             markers: Arc::default(),
             zones: Arc::default(),
             messages: Arc::default(),
+            message_cache_activity: Arc::default(),
             message_events,
             system_events: Arc::default(),
             system_event_broadcast,
@@ -1057,6 +1067,7 @@ impl AppState {
         let snapshot = store.load_snapshot_without_identity_announces()?;
         let mut state = Self {
             messages: Arc::default(),
+            message_cache_activity: Arc::default(),
             sqlite_path: Some(Arc::new(path)),
             ..Self::default()
         };
@@ -1126,7 +1137,8 @@ impl AppState {
                 .into_iter()
                 .map(OutboundMessageRecord::from)
                 .collect::<Vec<_>>();
-            durable_broker::bound_presentation(&mut messages);
+            message_residency::bound(&state, &mut messages, &[])
+                .map_err(|error| r3akt_rch_core::RchCoreError::Decode(error.to_string()))?;
             state.messages = Arc::new(RwLock::new(messages));
             state.system_events = Arc::new(RwLock::new(snapshot.system_events));
             state.telemetry_records = Arc::new(RwLock::new(snapshot.telemetry_records));
@@ -4254,7 +4266,7 @@ fn process_reticulumd_inbound_mission_sync_command(
 ) -> Result<(), ApiError> {
     let mission_command = mission_sync_command_from_reticulumd(envelope, command);
     let (responses, team_uid, team_destinations) =
-        command_persistence::mutate(state, checklist, |core| {
+        command_persistence::mutate_command(state, &mission_command, checklist, |core| {
             let team_uid = command
                 .args
                 .get("_rem_team_uid")
@@ -9377,6 +9389,7 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "lxmf_sdk": lxmf_sdk_diagnostics_payload(state, &outbound_delivery)?,
         "reticulumd_inbound": reticulumd_inbound_worker_diagnostics(state),
         "announce_cache": announce_cache_diagnostics(state)?,
+        "message_residency": message_residency::diagnostics(state)?,
         "persistence": persistence_diagnostics(&state)?,
         "mission_change_fanout_cache": mission_change_fanout_cache_diagnostics(&state)?,
         "updated_at_unix": runtime_metrics["updated_at_unix"].clone(),
@@ -18278,6 +18291,32 @@ async fn list_chat_messages(
     let topic_id = normalize_optional_text(query.topic_id);
     let destination = normalize_optional_text(query.destination);
     let source = normalize_optional_text(query.source);
+    if let Some(path) = &state.sqlite_path {
+        let path = path.clone();
+        let rows = tokio::task::spawn_blocking(move || {
+            let store = RchSqliteStore::open_read_only(path.as_ref())
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            store
+                .chat_history(
+                    &r3akt_rch_core::ChatHistoryFilter {
+                        direction: direction.as_deref(),
+                        topic_id: topic_id.as_deref(),
+                        destination: destination.as_deref(),
+                        source: source.as_deref(),
+                    },
+                    limit,
+                )
+                .map_err(|e| ApiError::Internal(e.to_string()))
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))??;
+        return Ok(Json(json!(
+            rows.into_iter()
+                .map(OutboundMessageRecord::from)
+                .map(chat_message_payload)
+                .collect::<Vec<_>>()
+        )));
+    }
     let messages = state
         .messages
         .read()
@@ -18515,14 +18554,32 @@ fn mark_recovered_delivery_failure_event(state: &AppState, payload: &mut Value) 
     else {
         return;
     };
-    let Ok(messages) = state.messages.read() else {
-        return;
+    let cached = match state.messages.read() {
+        Ok(messages) => messages
+            .iter()
+            .find(|message| message.message_id == message_id)
+            .cloned(),
+        Err(error) => {
+            eprintln!("delivery event cache read failed: {error}");
+            return;
+        }
     };
-    let Some(current) = messages
-        .iter()
-        .find(|message| message.message_id == message_id)
-        .cloned()
-    else {
+    let current = if let Some(message) = cached {
+        Some(message)
+    } else if let Some(path) = &state.sqlite_path {
+        match RchSqliteStore::open_read_only(path.as_ref())
+            .and_then(|store| store.message_by_id(&message_id))
+        {
+            Ok(message) => message.map(OutboundMessageRecord::from),
+            Err(error) => {
+                eprintln!("delivery event durable point read failed for {message_id}: {error}");
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let Some(current) = current else {
         return;
     };
     let current_state = effective_delivery_state(&current);
@@ -20496,17 +20553,18 @@ fn checklist_command(state: &AppState, command_type: &str, args: Value) -> Resul
         record_sqlite_latency(state, started.elapsed());
         return checklist_command_outcome_value(outcome);
     }
-    let (outcome, mission_changes_after) = command_persistence::mutate(state, true, |core| {
-        let mission_change_uids_before = mission_change_uid_set(core);
-        let outcome = core.handle_command(&command);
-        let accepted = outcome.result.status == CommandResultStatus::Accepted;
-        let mission_changes_after = if accepted {
-            mission_change_payload_map_excluding(core, &mission_change_uids_before)
-        } else {
-            HashMap::new()
-        };
-        Ok(((outcome, mission_changes_after), accepted))
-    })?;
+    let (outcome, mission_changes_after) =
+        command_persistence::mutate_command(state, &command, true, |core| {
+            let mission_change_uids_before = mission_change_uid_set(core);
+            let outcome = core.handle_command(&command);
+            let accepted = outcome.result.status == CommandResultStatus::Accepted;
+            let mission_changes_after = if accepted {
+                mission_change_payload_map_excluding(core, &mission_change_uids_before)
+            } else {
+                HashMap::new()
+            };
+            Ok(((outcome, mission_changes_after), accepted))
+        })?;
     record_sqlite_latency(state, started.elapsed());
     if outcome.result.status == CommandResultStatus::Accepted {
         notify_mission_changes_after_commit(state, HashMap::new(), mission_changes_after);
@@ -21457,7 +21515,7 @@ fn r3akt_command(state: &AppState, command_type: &str, args: Value) -> Result<Va
         return r3akt_command_outcome_value(outcome);
     }
     let (outcome, mission_changes_before, mission_changes_after) =
-        command_persistence::mutate(state, false, |core| {
+        command_persistence::mutate_command(state, &command, false, |core| {
             let mission_changes_before = mission_change_payload_map(core);
             let outcome = core.handle_command(&command);
             let accepted = outcome.result.status == CommandResultStatus::Accepted;
@@ -42958,7 +43016,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "5");
+        assert_eq!(payload["persistence"]["schema_version"], "6");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

@@ -256,3 +256,31 @@ CoT response.
 
 See `docs/release-readiness-audit.md` for the prompt-to-artifact release
 checklist and the current release decision.
+
+## Bounded message residency and command transactions
+
+Issues #252 and #255 use SQLite schema 6. Startup selects recent messages within
+500 records, 32 MiB of estimated retained storage, and 30 minutes of persisted
+activity. Publication refreshes a bounded runtime activity map; an owned worker
+checks idle entries every 30 seconds and joins normal shutdown. Durable chat reads,
+receipt resolution, admission reconciliation, and retries remain independent of
+cache residency. `/diagnostics/runtime.message_residency` reports cache budgets,
+counts, estimated bytes, durable history and active dispatch-operation counts,
+cache insertions/evictions, and cumulative command rows, payload bytes and time.
+
+Ordinary HTTP, bridge and broker mutations hydrate explicit keyed command read
+sets under one immediate SQLite transaction. Existing core handlers still own
+validation and event payloads. Authorization resolves against staged domain state
+before the matching authority rows are loaded. Commit publishes changed rows and
+tombstones; a later rejected envelope restores only its command's domain changes.
+Explicit full exports and compatibility snapshot APIs remain full-state operations.
+
+Schema 6 adds derived relationship columns and companion indexes. Migration backs
+up existing databases, streams one payload at a time, and commits columns/indexes
+and version together. Decode failure aborts visibly. Current record writers update
+the projections in their transaction. Payload-only external writes and downgrading
+to a writer that predates these indexes are unsupported; do not use raw SQLite
+inserts to import records. Cache activity is preserved during projection rebuilds.
+
+See [validation evidence](goals/bounded-persistence/EVIDENCE.md) for measured bounds
+and the limits of the local fixture runs.

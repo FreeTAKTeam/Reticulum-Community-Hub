@@ -555,10 +555,98 @@ fn rem_rejected_result(
 
 pub fn handle_json_request_with_sqlite(db_path: &str, input: &str) -> Result<String, BridgeError> {
     let mut store = RchSqliteStore::open(db_path)?;
-    let mut core = RchCore::load_from_sqlite(&store)?.unwrap_or_default();
-    let response = handle_json_request(&mut core, input)?;
-    core.save_to_sqlite(&mut store)?;
-    Ok(response)
+    let request: BridgeRequest =
+        serde_json::from_str(input).map_err(|error| BridgeError::Decode(error.to_string()))?;
+    if matches!(request, BridgeRequest::StateSnapshot) {
+        // Explicit compatibility reads never rewrite durable state.
+        let mut core = RchCore::load_from_sqlite(&store)?.unwrap_or_default();
+        let response = handle_request(&mut core, request);
+        return serde_json::to_string(&response)
+            .map_err(|error| BridgeError::Encode(error.to_string()));
+    }
+    let collection = match &request {
+        BridgeRequest::ListTopics | BridgeRequest::ListSubscribers => Some("topic.list"),
+        BridgeRequest::ListMarkers => Some("mission.marker.list"),
+        BridgeRequest::ListZones => Some("mission.zone.list"),
+        _ => None,
+    };
+    if let Some(kind) = collection {
+        let command = MissionCommandEnvelope {
+            command_id: String::new(),
+            command_type: kind.into(),
+            source: r3akt_profile_rch::RchSource::new("bridge-reader"),
+            timestamp: String::new(),
+            args: serde_json::json!({}),
+            correlation_id: None,
+            topics: vec![],
+        };
+        let mut unit = store.begin_scoped_command(&command, false)?;
+        let response = handle_request(unit.core_mut(), request);
+        return serde_json::to_string(&response)
+            .map_err(|error| BridgeError::Encode(error.to_string()));
+    }
+    let context = match &request {
+        BridgeRequest::MissionCommand { command, .. }
+        | BridgeRequest::ChecklistCommand { command, .. } => command.clone(),
+        other => {
+            let args = serde_json::to_value(other)
+                .map_err(|error| BridgeError::Encode(error.to_string()))?;
+            let identity = args
+                .get("identity")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("bridge-admin");
+            MissionCommandEnvelope {
+                command_id: "bridge-state-update".to_string(),
+                command_type: "mission.registry.rights.bridge.update".into(),
+                source: r3akt_profile_rch::RchSource::new(identity),
+                timestamp: String::new(),
+                args,
+                correlation_id: None,
+                topics: vec![],
+            }
+        }
+    };
+    let checklist = matches!(request, BridgeRequest::ChecklistCommand { .. });
+    let mut transaction = store.begin_scoped_command(&context, checklist)?;
+    let topics_before = transaction.row_count("rch_topics")?;
+    let messages_before = transaction.row_count("rch_messages")?;
+    let checklists_before = transaction.row_count("rch_checklists")?;
+    let loaded_topics = transaction.core_mut().topics().len();
+    let loaded_messages = transaction.core_mut().messages().len();
+    let loaded_checklists = transaction.core_mut().checklists().len();
+    let mut response = handle_request(transaction.core_mut(), request);
+    let accepted = match &response {
+        BridgeResponse::MissionCommand { responses, .. }
+        | BridgeResponse::ChecklistCommand { responses, .. } => !responses.iter().any(|response| {
+            response
+                .results_field()
+                .is_some_and(|value| value["status"] == "rejected")
+        }),
+        BridgeResponse::StateUpdated { ok } => *ok,
+        _ => false,
+    };
+    match &mut response {
+        BridgeResponse::MissionCommand {
+            topics, messages, ..
+        } => {
+            *topics = topics_before
+                .saturating_add(*topics)
+                .saturating_sub(loaded_topics);
+            *messages = messages_before
+                .saturating_add(*messages)
+                .saturating_sub(loaded_messages);
+        }
+        BridgeResponse::ChecklistCommand { checklists, .. } => {
+            *checklists = checklists_before
+                .saturating_add(*checklists)
+                .saturating_sub(loaded_checklists);
+        }
+        _ => {}
+    }
+    if accepted {
+        transaction.commit()?;
+    }
+    serde_json::to_string(&response).map_err(|error| BridgeError::Encode(error.to_string()))
 }
 
 pub fn handle_json_request_with_sqlite_or_reticulumd(
@@ -737,6 +825,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sqlite_bridge_preserves_counts_rejection_and_normalized_grant_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "rch-bridge-scoped-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let mut store = RchSqliteStore::open(&path).expect("store");
+        let mut core = RchCore::new();
+        core.set_authorization_required(false);
+        core.handle_command(&MissionCommandEnvelope {
+            command_id: "old-message".into(),
+            source: RchSource::new("operator"),
+            timestamp: String::new(),
+            command_type: "mission.message.send".into(),
+            args: serde_json::json!({"content":"Old history","destination":"peer"}),
+            correlation_id: None,
+            topics: vec![],
+        });
+        store.save_snapshot(&core.snapshot()).expect("state");
+        let call = |request: BridgeRequest| -> JsonValue {
+            serde_json::from_str(
+                &handle_json_request_with_sqlite(
+                    path.to_str().expect("path"),
+                    &serde_json::to_string(&request).expect("request"),
+                )
+                .expect("bridge"),
+            )
+            .expect("response")
+        };
+        let command = MissionCommandEnvelope {
+            command_id: "bridge-create".into(),
+            source: RchSource::new("operator"),
+            timestamp: "2026-10-10T00:00:00Z".into(),
+            command_type: "topic.create".into(),
+            args: serde_json::json!({"topic_id":"ops","topic_name":"Ops","topic_path":"ops"}),
+            correlation_id: None,
+            topics: vec![],
+        };
+        let response = call(BridgeRequest::MissionCommand {
+            command: command.clone(),
+            source_identity: None,
+        });
+        assert_eq!(response["type"], "mission_command");
+        assert_eq!(response["topics"], 1);
+        assert_eq!(response["messages"], 1);
+        let mut denied = command;
+        denied.command_id = "bridge-denied".into();
+        denied.command_type = "mission.unknown".into();
+        let response = call(BridgeRequest::MissionCommand {
+            command: denied,
+            source_identity: None,
+        });
+        assert_eq!(response["type"], "mission_command");
+        assert_eq!(response["topics"], 1);
+        assert_eq!(response["messages"], 1);
+        for identity in [" AABB ", "aabb"] {
+            let response = call(BridgeRequest::GrantOperationRight {
+                subject_type: "identity".into(),
+                subject_id: identity.into(),
+                operation: "mission.read".into(),
+                scope_type: "global".into(),
+                scope_id: String::new(),
+            });
+            assert_eq!(response["type"], "state_updated");
+            assert_eq!(response["ok"], true);
+        }
+        let rights = store
+            .load_r3akt_read_snapshot()
+            .expect("snapshot")
+            .subject_operation_rights;
+        assert_eq!(rights.len(), 1);
+        assert_eq!(rights[0].subject_id, "aabb");
+        assert_eq!(store.row_count("rch_command_results").expect("results"), 1);
+        assert_eq!(store.row_count("rch_messages").expect("history"), 1);
+        drop(store);
+        std::fs::remove_file(path).expect("cleanup");
+    }
     #[test]
     fn reticulumd_rpc_call_times_out_when_peer_accepts_without_response() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");

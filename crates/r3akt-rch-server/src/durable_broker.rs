@@ -249,30 +249,14 @@ pub(super) fn diagnostics(state: &AppState) -> Result<Value, ApiError> {
 }
 
 pub(super) fn bound_presentation(messages: &mut Vec<OutboundMessageRecord>) {
-    fn value_bytes(value: &Value) -> usize {
-        match value {
-            Value::String(s) => s.capacity() + 32,
-            Value::Array(a) => a
-                .iter()
-                .fold(a.capacity() * 32, |n, v| n.saturating_add(value_bytes(v))),
-            Value::Object(o) => o.iter().fold(0usize, |n, (k, v)| {
-                n.saturating_add(k.capacity() + 128)
-                    .saturating_add(value_bytes(v))
-            }),
-            _ => 32,
-        }
-    }
-    let size = |m: &OutboundMessageRecord| {
-        m.content
-            .capacity()
-            .saturating_add(value_bytes(&m.delivery_metadata))
-            .saturating_add(4096)
-    };
+    let size = super::message_residency::estimated_bytes;
     let mut bytes = messages
         .iter()
         .fold(0usize, |n, m| n.saturating_add(size(m)));
     let mut remove = 0;
-    while messages.len() - remove > 500 || bytes > 32 * 1024 * 1024 {
+    while messages.len() - remove > r3akt_rch_core::RECENT_MESSAGE_COUNT
+        || bytes > r3akt_rch_core::RECENT_MESSAGE_BYTES
+    {
         bytes = bytes.saturating_sub(size(&messages[remove]));
         remove += 1;
     }

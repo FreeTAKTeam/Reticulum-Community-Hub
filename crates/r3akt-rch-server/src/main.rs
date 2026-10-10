@@ -216,6 +216,7 @@ where
         return Err(error.into());
     }
     let app = create_app_for_runtime(state.clone(), ui_dist_path.as_ref());
+    let cache_worker = r3akt_rch_server::spawn_message_cache_maintenance(state.clone());
     let inbound_worker = r3akt_rch_server::spawn_reticulumd_inbound_worker(state.clone());
     let announce_worker = r3akt_rch_server::spawn_rch_identity_announce_worker(
         state.clone(),
@@ -235,6 +236,7 @@ where
     let shutdown_result = cli_runtime::finish(
         &state,
         [
+            ("message cache", cache_worker),
             ("inbound", inbound_worker),
             ("identity announce", announce_worker),
         ],

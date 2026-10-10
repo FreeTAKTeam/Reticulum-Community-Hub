@@ -3,8 +3,8 @@ mod broker_delivery;
 use super::{
     FileAttachmentRecord, MessageRecord, RchCore, RchCoreError, RchCoreSnapshot, RchSqliteStore,
     SubscriberRecord, TelemetryRecord, Transaction, decode_msgpack, encode_msgpack,
-    message_queue_projection, normalize_topic_id, params, save_checklist_delta_tables,
-    save_registry_delta_tables, utc_now_ms,
+    normalize_topic_id, params, save_checklist_delta_tables, save_registry_delta_tables,
+    utc_now_ms,
 };
 use rusqlite::{OptionalExtension, TransactionBehavior};
 
@@ -18,6 +18,10 @@ pub struct RchCommandTransaction<'conn> {
     inbox: Option<(String, String, i64)>,
     rejection: Option<String>,
     domain_snapshot: bool,
+    rows_read: usize,
+    payload_bytes_read: usize,
+    started: std::time::Instant,
+    changes_before: u64,
 }
 
 impl RchSqliteStore {
@@ -33,15 +37,7 @@ impl RchSqliteStore {
     pub fn upsert_messages(&mut self, records: &[MessageRecord]) -> Result<(), RchCoreError> {
         let transaction = self.connection.transaction()?;
         for record in records {
-            let projection = message_queue_projection(record);
-            transaction.execute(
-                "DELETE FROM rch_messages WHERE message_id = ?1",
-                [record.message_id.as_str()],
-            )?;
-            transaction.execute("INSERT INTO rch_messages (message_id, payload, delivery_state, dispatch_status,
-                next_attempt_at_ts_ms, attempts, priority, batch_id, created_ts_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![record.message_id, encode_msgpack(record)?, projection.delivery_state, projection.dispatch_status,
-                    projection.next_attempt_at_ts_ms, projection.attempts, projection.priority, projection.batch_id, projection.created_ts_ms])?;
+            super::sqlite_message_history::write_message(&transaction, record)?;
         }
         transaction.commit()?;
         Ok(())
@@ -70,6 +66,8 @@ impl RchSqliteStore {
         };
         let core = RchCore::from_snapshot(before.clone())?;
         Ok(RchCommandTransaction {
+            changes_before: transaction.total_changes(),
+            started: std::time::Instant::now(),
             transaction,
             before,
             core,
@@ -77,6 +75,8 @@ impl RchSqliteStore {
             inbox: None,
             rejection: None,
             domain_snapshot: true,
+            rows_read: 0,
+            payload_bytes_read: 0,
         })
     }
 
@@ -131,12 +131,57 @@ impl RchCommandTransaction<'_> {
     }
 
     pub fn commit(self) -> Result<RchCoreSnapshot, RchCoreError> {
+        self.commit_delta().map(|delta| delta.after)
+    }
+
+    pub fn commit_delta(self) -> Result<CommandDelta, RchCoreError> {
         let after = self.core.snapshot();
         if !self.domain_snapshot {
         } else if self.checklist {
             save_checklist_delta_tables(&self.transaction, &self.before, &after)?;
         } else {
             save_registry_delta_tables(&self.transaction, &self.before, &after)?;
+            super::save_payload_delta(
+                &self.transaction,
+                "rch_identity_states",
+                &self.before.identity_states,
+                &after.identity_states,
+                |r| vec![("identity", super::sql_text(&r.identity))],
+                |r| vec![("identity", super::sql_text(&r.identity))],
+            )?;
+            for record in &after.identity_announces {
+                if !self.before.identity_announces.contains(record) {
+                    super::sqlite_announces::write_identity_announce(
+                        &self.transaction,
+                        record,
+                        true,
+                    )?;
+                }
+            }
+            if self.before.authorization_required != after.authorization_required {
+                self.transaction.execute(
+                    "INSERT OR REPLACE INTO rch_settings VALUES('authorization_required',?1)",
+                    [if after.authorization_required {
+                        "true"
+                    } else {
+                        "false"
+                    }],
+                )?;
+            }
+            for record in &after.messages {
+                if !self.before.messages.contains(record) {
+                    super::sqlite_message_history::write_message(&self.transaction, record)?;
+                }
+            }
+            for previous in &self.before.topics {
+                if !after
+                    .topics
+                    .iter()
+                    .any(|record| record.topic_id == previous.topic_id)
+                {
+                    detach_topic_attachments(&self.transaction, &previous.topic_id)?;
+                }
+            }
             if self.inbox.is_some() {
                 super::save_checklist_delta_tables_with_common(
                     &self.transaction,
@@ -165,8 +210,20 @@ impl RchCommandTransaction<'_> {
                 params![applied, consumer],
             )?;
         }
+        let rows_written = self
+            .transaction
+            .total_changes()
+            .saturating_sub(self.changes_before);
         self.transaction.commit()?;
-        Ok(after)
+        let duration_us = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        Ok(CommandDelta {
+            before: self.before,
+            after,
+            rows_read: self.rows_read,
+            payload_bytes_read: self.payload_bytes_read,
+            rows_written,
+            duration_us,
+        })
     }
 }
 
@@ -175,9 +232,10 @@ pub(super) fn detach_topic_attachments(
     topic_id: &str,
 ) -> Result<(), RchCoreError> {
     let records = {
-        let mut statement =
-            transaction.prepare("SELECT payload FROM rch_file_attachments ORDER BY file_id")?;
-        let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+        let mut statement = transaction.prepare(
+            "SELECT payload FROM rch_file_attachments WHERE topic_id=?1 ORDER BY file_id",
+        )?;
+        let rows = statement.query_map([topic_id], |row| row.get::<_, Vec<u8>>(0))?;
         rows.map(|row| decode_msgpack::<FileAttachmentRecord>(&row?))
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -186,7 +244,7 @@ pub(super) fn detach_topic_attachments(
             record.topic_id = None;
             record.updated_ts_ms = utc_now_ms();
             transaction.execute(
-                "UPDATE rch_file_attachments SET payload = ?1 WHERE file_id = ?2",
+                "UPDATE rch_file_attachments SET payload = ?1, topic_id=NULL WHERE file_id = ?2",
                 params![encode_msgpack(&record)?, super::sqlite_u64(record.file_id)?],
             )?;
         }
@@ -204,6 +262,8 @@ impl RchSqliteStore {
         let core = RchCore::new();
         let before = core.snapshot();
         Ok(RchCommandTransaction {
+            changes_before: transaction.total_changes(),
+            started: std::time::Instant::now(),
             transaction,
             before,
             core,
@@ -211,6 +271,8 @@ impl RchSqliteStore {
             inbox: None,
             rejection: None,
             domain_snapshot: false,
+            rows_read: 0,
+            payload_bytes_read: 0,
         })
     }
     pub fn begin_inbox_application(
@@ -224,33 +286,11 @@ impl RchSqliteStore {
             Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
         // No announce/message history is decoded. Authorization and routing rows share this snapshot.
         let domain_snapshot = matches!(event.event_type.as_str(), "inbound" | "bootstrap_message");
-        let mut before = if domain_snapshot {
-            self.load_r3akt_read_snapshot_rows_with_announces(false)?
-        } else {
-            RchCore::new().snapshot()
-        };
-        let mut identities = before
-            .team_member_client_links
-            .iter()
-            .map(|link| link.client_identity.clone())
-            .collect::<Vec<_>>();
-        for member in &before.team_members {
-            identities.push(member.rns_identity.clone());
-            identities.extend(member.client_identities.iter().cloned());
-        }
-        identities.sort();
-        identities.dedup();
-        if let Some(source) = event
-            .payload
-            .pointer("/message/source")
-            .and_then(serde_json::Value::as_str)
-        {
-            identities.push(source.into());
-        }
-        before.identity_announces =
-            self.load_identity_announces_for_identities_rows(&identities)?;
-        let core = RchCore::from_snapshot(before.clone())?;
+        let core = RchCore::new();
+        let before = core.snapshot();
         let mut unit = RchCommandTransaction {
+            changes_before: transaction.total_changes(),
+            started: std::time::Instant::now(),
             transaction,
             before,
             core,
@@ -258,6 +298,8 @@ impl RchSqliteStore {
             inbox: None,
             rejection: None,
             domain_snapshot,
+            rows_read: 0,
+            payload_bytes_read: 0,
         };
         let (journal,position,payload,status):(String,i64,String,String)=unit.transaction.query_row("SELECT i.journal_id,i.position,i.payload,i.status FROM rch_broker_inbox i JOIN rch_broker_checkpoint c USING(journal_id) WHERE c.consumer_id=?1 AND i.status NOT IN ('applied','rejected') ORDER BY i.position LIMIT 1",[consumer],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
         let saved: super::InboxEvent =
@@ -294,12 +336,7 @@ impl RchCommandTransaction<'_> {
                     .len(),
             ),
         )?;
-        let projection = message_queue_projection(record);
-        self.transaction.execute(
-            "DELETE FROM rch_messages WHERE message_id=?1",
-            [&record.message_id],
-        )?;
-        self.transaction.execute("INSERT INTO rch_messages (message_id,payload,delivery_state,dispatch_status,next_attempt_at_ts_ms,attempts,priority,batch_id,created_ts_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ",params![record.message_id,encode_msgpack(record)?,projection.delivery_state,projection.dispatch_status,projection.next_attempt_at_ts_ms,projection.attempts,projection.priority,projection.batch_id,projection.created_ts_ms])?;
+        super::sqlite_message_history::write_message(&self.transaction, record)?;
         Ok(())
     }
     pub fn stage_system_event(
@@ -407,6 +444,14 @@ impl RchCommandTransaction<'_> {
         self.rejection = Some(reason.chars().take(2048).collect());
         Ok(())
     }
+    /// Mark one input failure without discarding independently accepted envelopes.
+    pub fn diagnose_rejection(&mut self, reason: &str) {
+        self.rejection = Some(reason.chars().take(2048).collect());
+    }
+    pub fn restore_domain(&mut self, checkpoint: RchCoreSnapshot) -> Result<(), RchCoreError> {
+        self.core = RchCore::from_snapshot(checkpoint)?;
+        Ok(())
+    }
     pub fn message(&self, id: &str) -> Result<Option<MessageRecord>, RchCoreError> {
         let payload: Option<Vec<u8>> = self
             .transaction
@@ -472,8 +517,12 @@ impl RchCommandTransaction<'_> {
         }
         super::durable_inbox::admit_effect_bytes(&self.transaction, bytes.len())?;
         self.transaction.execute(
-            "INSERT INTO rch_file_attachments(category,payload) VALUES(?1,?2)",
-            params![record.category, encode_msgpack(&record)?],
+            "INSERT INTO rch_file_attachments(category,payload,topic_id) VALUES(?1,?2,?3)",
+            params![
+                record.category,
+                encode_msgpack(&record)?,
+                normalize_topic_id(record.topic_id.as_deref())
+            ],
         )?;
         record.file_id = u64::try_from(self.transaction.last_insert_rowid())
             .map_err(|e| RchCoreError::Decode(e.to_string()))?;
@@ -496,5 +545,146 @@ impl RchCommandTransaction<'_> {
             .as_ref()
             .map(|(_, journal, position)| format!("{journal}:{position}"))
             .ok_or_else(|| RchCoreError::RecoveryRequired("not an inbox unit of work".into()))
+    }
+}
+
+/// Only the loaded command read set participates in this committed delta.
+pub struct CommandDelta {
+    pub before: RchCoreSnapshot,
+    pub after: RchCoreSnapshot,
+    pub rows_read: usize,
+    pub payload_bytes_read: usize,
+    pub rows_written: u64,
+    pub duration_us: u64,
+}
+impl RchSqliteStore {
+    pub fn begin_scoped_command(
+        &mut self,
+        command: &super::MissionCommandEnvelope,
+        checklist: bool,
+    ) -> Result<RchCommandTransaction<'_>, RchCoreError> {
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let core = RchCore::new();
+        let before = core.snapshot();
+        let mut unit = RchCommandTransaction {
+            changes_before: transaction.total_changes(),
+            started: std::time::Instant::now(),
+            transaction,
+            before,
+            core,
+            checklist,
+            inbox: None,
+            rejection: None,
+            domain_snapshot: true,
+            rows_read: 0,
+            payload_bytes_read: 0,
+        };
+        unit.prepare_command(command)?;
+        Ok(unit)
+    }
+}
+impl RchCommandTransaction<'_> {
+    pub fn prepare_command(
+        &mut self,
+        command: &super::MissionCommandEnvelope,
+    ) -> Result<(), RchCoreError> {
+        let mut read = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        let inactive_modes = self
+            .core
+            .identity_rem_modes()
+            .into_iter()
+            .filter(|record| record.mode.trim() != "connected")
+            .map(|record| record.identity)
+            .collect::<Vec<_>>();
+        read.command(command, &inactive_modes)?;
+        self.rows_read += read.rows;
+        self.payload_bytes_read += read.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            read.snapshot,
+            read.authorization,
+        )?;
+        // Resolve access against staged domain state: earlier envelopes may have
+        // changed the caller's member identity or the target's mission scope.
+        let mut authority = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        authority.authorization(command, &self.core)?;
+        self.rows_read += authority.rows;
+        self.payload_bytes_read += authority.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            authority.snapshot,
+            None,
+        )
+    }
+    pub fn prepare_recipients(
+        &mut self,
+        mission: Option<&str>,
+        team: Option<&str>,
+    ) -> Result<(), RchCoreError> {
+        let mut read = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        read.recipients(mission, team)?;
+        self.rows_read += read.rows;
+        self.payload_bytes_read += read.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            read.snapshot,
+            read.authorization,
+        )
+    }
+    pub fn prepare_collector(&mut self, topic: Option<&str>) -> Result<(), RchCoreError> {
+        let mut read = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        read.collector(topic)?;
+        self.rows_read += read.rows;
+        self.payload_bytes_read += read.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            read.snapshot,
+            read.authorization,
+        )
+    }
+    pub fn prepare_source(&mut self, source: &str) -> Result<(), RchCoreError> {
+        let mut read = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        read.source(source)?;
+        self.rows_read += read.rows;
+        self.payload_bytes_read += read.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            read.snapshot,
+            read.authorization,
+        )
+    }
+    pub fn take_generated_messages(&mut self) -> Vec<MessageRecord> {
+        std::mem::take(&mut self.core.messages)
+    }
+    pub fn prepare_routing(&mut self, source: &str, topic: &str) -> Result<(), RchCoreError> {
+        let mut read = super::sqlite_command_reads::ReadSet::new(&self.transaction);
+        read.routing(source, topic)?;
+        self.rows_read += read.rows;
+        self.payload_bytes_read += read.bytes;
+        super::sqlite_command_reads::extend(
+            &mut self.before,
+            &mut self.core,
+            read.snapshot,
+            read.authorization,
+        )
+    }
+}
+
+impl RchCommandTransaction<'_> {
+    pub fn row_count(&self, table: &str) -> Result<usize, RchCoreError> {
+        if !super::RCH_SQLITE_DATA_TABLES.contains(&table) {
+            return Err(RchCoreError::InvalidPayload("unsupported table".into()));
+        }
+        self.transaction
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                super::sqlite_read_usize(row, 0)
+            })
+            .map_err(Into::into)
     }
 }

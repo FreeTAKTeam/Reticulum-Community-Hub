@@ -1,0 +1,713 @@
+{
+  "small": {
+    "command_payload_bytes_max": 305,
+    "command_rows_read_max": 1,
+    "command_rows_read_min": 1,
+    "command_rust_allocation_peak_bytes_max": 25846,
+    "elapsed_ms": 21724,
+    "history": 100,
+    "iterations": 5000,
+    "peak_rss_kib": 28088,
+    "resident_count_max": 100,
+    "resident_estimated_bytes_max": 889709,
+    "rss_kib": 28088,
+    "samples": [
+      {
+        "iteration": 0,
+        "rss_kib": 26268
+      },
+      {
+        "iteration": 100,
+        "rss_kib": 26548
+      },
+      {
+        "iteration": 200,
+        "rss_kib": 26632
+      },
+      {
+        "iteration": 300,
+        "rss_kib": 26700
+      },
+      {
+        "iteration": 400,
+        "rss_kib": 26780
+      },
+      {
+        "iteration": 500,
+        "rss_kib": 26860
+      },
+      {
+        "iteration": 600,
+        "rss_kib": 26944
+      },
+      {
+        "iteration": 700,
+        "rss_kib": 27008
+      },
+      {
+        "iteration": 800,
+        "rss_kib": 27080
+      },
+      {
+        "iteration": 900,
+        "rss_kib": 27168
+      },
+      {
+        "iteration": 1000,
+        "rss_kib": 27260
+      },
+      {
+        "iteration": 1100,
+        "rss_kib": 27336
+      },
+      {
+        "iteration": 1200,
+        "rss_kib": 27408
+      },
+      {
+        "iteration": 1300,
+        "rss_kib": 27492
+      },
+      {
+        "iteration": 1400,
+        "rss_kib": 27564
+      },
+      {
+        "iteration": 1500,
+        "rss_kib": 27632
+      },
+      {
+        "iteration": 1600,
+        "rss_kib": 27696
+      },
+      {
+        "iteration": 1700,
+        "rss_kib": 27796
+      },
+      {
+        "iteration": 1800,
+        "rss_kib": 27868
+      },
+      {
+        "iteration": 1900,
+        "rss_kib": 27952
+      },
+      {
+        "iteration": 2000,
+        "rss_kib": 28008
+      },
+      {
+        "iteration": 2100,
+        "rss_kib": 28008
+      },
+      {
+        "iteration": 2200,
+        "rss_kib": 28008
+      },
+      {
+        "iteration": 2300,
+        "rss_kib": 28008
+      },
+      {
+        "iteration": 2400,
+        "rss_kib": 28008
+      },
+      {
+        "iteration": 2500,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 2600,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 2700,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 2800,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 2900,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 3000,
+        "rss_kib": 28012
+      },
+      {
+        "iteration": 3100,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3200,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3300,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3400,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3500,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3600,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3700,
+        "rss_kib": 28076
+      },
+      {
+        "iteration": 3800,
+        "rss_kib": 28080
+      },
+      {
+        "iteration": 3900,
+        "rss_kib": 28080
+      },
+      {
+        "iteration": 4000,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4100,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4200,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4300,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4400,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4500,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4600,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4700,
+        "rss_kib": 28084
+      },
+      {
+        "iteration": 4800,
+        "rss_kib": 28088
+      },
+      {
+        "iteration": 4900,
+        "rss_kib": 28088
+      },
+      {
+        "iteration": 4999,
+        "rss_kib": 28088
+      }
+    ],
+    "fixture": {
+      "announces": 100,
+      "created_at_ms": 1791663315044,
+      "database": "/home/pgiuseppe/Documents/Reticulum-Community-Hub/target/rch-252-255-validation/small-final.db",
+      "messages": 100,
+      "payload_content_bytes": 4096,
+      "typed_message_round_trips": 100
+    }
+  },
+  "large": {
+    "command_payload_bytes_max": 305,
+    "command_rows_read_max": 1,
+    "command_rows_read_min": 1,
+    "command_rust_allocation_peak_bytes_max": 25846,
+    "elapsed_ms": 56696,
+    "history": 25000,
+    "iterations": 5000,
+    "peak_rss_kib": 29928,
+    "resident_count_max": 500,
+    "resident_estimated_bytes_max": 4448700,
+    "rss_kib": 29928,
+    "samples": [
+      {
+        "iteration": 0,
+        "rss_kib": 29524
+      },
+      {
+        "iteration": 100,
+        "rss_kib": 29836
+      },
+      {
+        "iteration": 200,
+        "rss_kib": 29856
+      },
+      {
+        "iteration": 300,
+        "rss_kib": 29864
+      },
+      {
+        "iteration": 400,
+        "rss_kib": 29864
+      },
+      {
+        "iteration": 500,
+        "rss_kib": 29864
+      },
+      {
+        "iteration": 600,
+        "rss_kib": 29868
+      },
+      {
+        "iteration": 700,
+        "rss_kib": 29872
+      },
+      {
+        "iteration": 800,
+        "rss_kib": 29868
+      },
+      {
+        "iteration": 900,
+        "rss_kib": 29868
+      },
+      {
+        "iteration": 1000,
+        "rss_kib": 29876
+      },
+      {
+        "iteration": 1100,
+        "rss_kib": 29876
+      },
+      {
+        "iteration": 1200,
+        "rss_kib": 29872
+      },
+      {
+        "iteration": 1300,
+        "rss_kib": 29880
+      },
+      {
+        "iteration": 1400,
+        "rss_kib": 29876
+      },
+      {
+        "iteration": 1500,
+        "rss_kib": 29880
+      },
+      {
+        "iteration": 1600,
+        "rss_kib": 29880
+      },
+      {
+        "iteration": 1700,
+        "rss_kib": 29876
+      },
+      {
+        "iteration": 1800,
+        "rss_kib": 29884
+      },
+      {
+        "iteration": 1900,
+        "rss_kib": 29880
+      },
+      {
+        "iteration": 2000,
+        "rss_kib": 29884
+      },
+      {
+        "iteration": 2100,
+        "rss_kib": 29880
+      },
+      {
+        "iteration": 2200,
+        "rss_kib": 29884
+      },
+      {
+        "iteration": 2300,
+        "rss_kib": 29884
+      },
+      {
+        "iteration": 2400,
+        "rss_kib": 29884
+      },
+      {
+        "iteration": 2500,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 2600,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 2700,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 2800,
+        "rss_kib": 29892
+      },
+      {
+        "iteration": 2900,
+        "rss_kib": 29892
+      },
+      {
+        "iteration": 3000,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 3100,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 3200,
+        "rss_kib": 29888
+      },
+      {
+        "iteration": 3300,
+        "rss_kib": 29896
+      },
+      {
+        "iteration": 3400,
+        "rss_kib": 29896
+      },
+      {
+        "iteration": 3500,
+        "rss_kib": 29892
+      },
+      {
+        "iteration": 3600,
+        "rss_kib": 29896
+      },
+      {
+        "iteration": 3700,
+        "rss_kib": 29900
+      },
+      {
+        "iteration": 3800,
+        "rss_kib": 29900
+      },
+      {
+        "iteration": 3900,
+        "rss_kib": 29900
+      },
+      {
+        "iteration": 4000,
+        "rss_kib": 29900
+      },
+      {
+        "iteration": 4100,
+        "rss_kib": 29900
+      },
+      {
+        "iteration": 4200,
+        "rss_kib": 29904
+      },
+      {
+        "iteration": 4300,
+        "rss_kib": 29912
+      },
+      {
+        "iteration": 4400,
+        "rss_kib": 29912
+      },
+      {
+        "iteration": 4500,
+        "rss_kib": 29920
+      },
+      {
+        "iteration": 4600,
+        "rss_kib": 29920
+      },
+      {
+        "iteration": 4700,
+        "rss_kib": 29920
+      },
+      {
+        "iteration": 4800,
+        "rss_kib": 29920
+      },
+      {
+        "iteration": 4900,
+        "rss_kib": 29928
+      },
+      {
+        "iteration": 4999,
+        "rss_kib": 29928
+      }
+    ],
+    "fixture": {
+      "announces": 25000,
+      "created_at_ms": 1791663313450,
+      "database": "/home/pgiuseppe/Documents/Reticulum-Community-Hub/target/rch-252-255-validation/large-final.db",
+      "messages": 25000,
+      "payload_content_bytes": 4096,
+      "typed_message_round_trips": 25000
+    }
+  },
+  "registry": {
+    "command_payload_bytes_max": 305,
+    "command_rows_read_max": 1,
+    "command_rows_read_min": 1,
+    "command_rust_allocation_peak_bytes_max": 25846,
+    "elapsed_ms": 53073,
+    "history": 25000,
+    "iterations": 5000,
+    "peak_rss_kib": 30008,
+    "resident_count_max": 500,
+    "resident_estimated_bytes_max": 4448700,
+    "rss_kib": 30008,
+    "samples": [
+      {
+        "iteration": 0,
+        "rss_kib": 29548
+      },
+      {
+        "iteration": 100,
+        "rss_kib": 29928
+      },
+      {
+        "iteration": 200,
+        "rss_kib": 29936
+      },
+      {
+        "iteration": 300,
+        "rss_kib": 29932
+      },
+      {
+        "iteration": 400,
+        "rss_kib": 29940
+      },
+      {
+        "iteration": 500,
+        "rss_kib": 29940
+      },
+      {
+        "iteration": 600,
+        "rss_kib": 29940
+      },
+      {
+        "iteration": 700,
+        "rss_kib": 29944
+      },
+      {
+        "iteration": 800,
+        "rss_kib": 29944
+      },
+      {
+        "iteration": 900,
+        "rss_kib": 29944
+      },
+      {
+        "iteration": 1000,
+        "rss_kib": 29948
+      },
+      {
+        "iteration": 1100,
+        "rss_kib": 29948
+      },
+      {
+        "iteration": 1200,
+        "rss_kib": 29948
+      },
+      {
+        "iteration": 1300,
+        "rss_kib": 29944
+      },
+      {
+        "iteration": 1400,
+        "rss_kib": 29952
+      },
+      {
+        "iteration": 1500,
+        "rss_kib": 29952
+      },
+      {
+        "iteration": 1600,
+        "rss_kib": 29948
+      },
+      {
+        "iteration": 1700,
+        "rss_kib": 29952
+      },
+      {
+        "iteration": 1800,
+        "rss_kib": 29952
+      },
+      {
+        "iteration": 1900,
+        "rss_kib": 29960
+      },
+      {
+        "iteration": 2000,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2100,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2200,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2300,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2400,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2500,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2600,
+        "rss_kib": 29952
+      },
+      {
+        "iteration": 2700,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2800,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 2900,
+        "rss_kib": 29956
+      },
+      {
+        "iteration": 3000,
+        "rss_kib": 29964
+      },
+      {
+        "iteration": 3100,
+        "rss_kib": 29960
+      },
+      {
+        "iteration": 3200,
+        "rss_kib": 29964
+      },
+      {
+        "iteration": 3300,
+        "rss_kib": 29964
+      },
+      {
+        "iteration": 3400,
+        "rss_kib": 29960
+      },
+      {
+        "iteration": 3500,
+        "rss_kib": 29968
+      },
+      {
+        "iteration": 3600,
+        "rss_kib": 29968
+      },
+      {
+        "iteration": 3700,
+        "rss_kib": 29968
+      },
+      {
+        "iteration": 3800,
+        "rss_kib": 29968
+      },
+      {
+        "iteration": 3900,
+        "rss_kib": 29968
+      },
+      {
+        "iteration": 4000,
+        "rss_kib": 29976
+      },
+      {
+        "iteration": 4100,
+        "rss_kib": 29976
+      },
+      {
+        "iteration": 4200,
+        "rss_kib": 29980
+      },
+      {
+        "iteration": 4300,
+        "rss_kib": 29976
+      },
+      {
+        "iteration": 4400,
+        "rss_kib": 29980
+      },
+      {
+        "iteration": 4500,
+        "rss_kib": 30000
+      },
+      {
+        "iteration": 4600,
+        "rss_kib": 30000
+      },
+      {
+        "iteration": 4700,
+        "rss_kib": 30000
+      },
+      {
+        "iteration": 4800,
+        "rss_kib": 30008
+      },
+      {
+        "iteration": 4900,
+        "rss_kib": 30008
+      },
+      {
+        "iteration": 4999,
+        "rss_kib": 30008
+      }
+    ],
+    "fixture": {
+      "messages": 25000,
+      "announces": 25000,
+      "unrelated_missions": 25000,
+      "unrelated_actor_rights": 5000
+    }
+  },
+  "release_runtime": {
+    "history": 25000,
+    "chat_reads": 30,
+    "rss_kib_min": 37612,
+    "rss_kib_max": 37860,
+    "message_residency": {
+      "active_delivery_count": 0,
+      "command_duration_us_total": 0,
+      "command_payload_bytes_read_total": 0,
+      "command_rows_read_total": 0,
+      "command_rows_written_total": 0,
+      "estimated_resident_bytes": 4448700,
+      "evictions_total": 0,
+      "history_count": 25000,
+      "hydrations_total": 500,
+      "max_count": 500,
+      "max_estimated_bytes": 33554432,
+      "max_idle_ms": 1800000,
+      "resident_count": 500
+    }
+  },
+  "validation": {
+    "workspace": "passed",
+    "server_only_readiness": "passed",
+    "clippy": "passed",
+    "base": "f2e90c4826dc944134b2fe4339009fda3eeb01a1",
+    "rust_allocation_scope": "requested live Rust bytes above each command baseline; excludes SQLite C allocations and allocator overhead"
+  },
+  "allocation_harness_sha256": {
+    "main.rs": "f87eb1edc990b993a0274edc19fcddd73fb216d79fc577987f056665e1c59d9f",
+    "allocator.rs": "9da083285bb8ba5720ea2964daeb76170e2969e8d6dca22b6c615c21ae7a04cf"
+  }
+}

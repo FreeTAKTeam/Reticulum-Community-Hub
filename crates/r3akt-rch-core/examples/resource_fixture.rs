@@ -2,7 +2,7 @@
 use r3akt_rch_core::{
     ChatAttachmentRecord, DeliveryMode, IdentityAnnounceRecord, MessageRecord, RchSqliteStore,
 };
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -40,9 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Result<Vec<_>, _>>()?;
         store.upsert_identity_announces(&records)?;
     }
-    drop(store);
-    let mut connection = Connection::open(&path)?;
-    let transaction = connection.transaction()?;
+    let mut pending = Vec::with_capacity(1000);
     for index in 0..messages {
         let record = MessageRecord {
             message_id: format!("{:064x}", index + 1),
@@ -74,14 +72,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if restored != record {
             return Err(format!("message round trip failed at {index}").into());
         }
-        transaction.execute(
-            "INSERT INTO rch_messages (message_id,payload,delivery_state,dispatch_status,created_ts_ms)
-             VALUES (?1,?2,'delivered','accepted',?3)",
-            params![record.message_id, payload, record.created_ts_ms],
-        )?;
+        pending.push(record);
+        if pending.len() == 1000 {
+            store.upsert_messages(&pending)?;
+            pending.clear();
+        }
     }
-    transaction.commit()?;
+    store.upsert_messages(&pending)?;
+    drop(store);
+    let connection = Connection::open(&path)?;
     connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+
     println!(
         "{}",
         json!({"database":path,"announces":announces,"messages":messages,

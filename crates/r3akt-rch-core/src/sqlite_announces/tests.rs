@@ -59,7 +59,7 @@ fn legacy_migration_preserves_payload_bytes_and_normalizes_both_identity_keys() 
     .expect("old writer");
     drop(old);
     let store = RchSqliteStore::open(&path).expect("migration");
-    assert_eq!(store.schema_version().expect("version"), "5");
+    assert_eq!(store.schema_version().expect("version"), "6");
     assert!(store.has_identity_announce(" MIXED ").expect("destination"));
     assert!(
         store
