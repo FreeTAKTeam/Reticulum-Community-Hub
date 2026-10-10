@@ -296,3 +296,6 @@ fn retry_delay(failures: u32) -> Duration {
 mod tests;
 
 mod telemetry_collector;
+
+#[cfg(test)]
+mod telemetry_compatibility_tests;
