@@ -99,6 +99,7 @@ impl Fixture {
                     let mut commands = PullSocket::new();
                     commands.bind(&ep).await.unwrap();
                     ready_tx.send(()).unwrap();
+                    let mut replies = replies::Writer::default();
                     while !ending.load(Ordering::Acquire) {
                         let incoming =
                             match tokio::time::timeout(Duration::from_millis(50), commands.recv())
@@ -120,7 +121,7 @@ impl Fixture {
                                 &envelope.payload,
                             )
                             .unwrap();
-                        if let Err(error) = replies::deliver(envelope, payload).await {
+                        if let Err(error) = replies.deliver(envelope, payload).await {
                             // A cancelled SDK attempt can close its reply endpoint. Keep serving
                             // the replay-safe retry, as the production response writer does.
                             failures.fetch_add(1, Ordering::Release);

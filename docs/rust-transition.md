@@ -257,6 +257,11 @@ CoT response.
 See `docs/release-readiness-audit.md` for the prompt-to-artifact release
 checklist and the current release decision.
 
+The [preview.22 telemetry candidate](release-notes-v3.0.0-preview.22.md) uses
+the existing Linux AMD64 package workflow. It retains the preview.21 paired
+SDK/daemon at `a424760137c7eaee5d5de7fb9ef2347871b85da1` and fixes #258
+receive normalization without extracting the stage-B library.
+
 ## Bounded message residency and command transactions
 
 Issues #252 and #255 use SQLite schema 6. Startup selects recent messages within

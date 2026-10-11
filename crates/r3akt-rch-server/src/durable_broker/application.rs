@@ -108,20 +108,27 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
             let source = state.reticulumd_source.as_deref().ok_or_else(|| {
                 ApiError::ServiceUnavailable("RCH service destination required".into())
             })?;
-            match r3akt_transport_rns::reticulumd_message_to_payloads(message, source) {
+            match r3akt_transport_rns::reticulumd_event_payload_to_payloads(&event.payload, source)
+            {
                 Err(error) => unit
                     .reject(&format!("malformed supported inbound: {error}"))
                     .map_err(storage)?,
                 Ok(decoded) => {
-                    if !decoded.command_diagnostics.is_empty() {
+                    for (kind, diagnostics) in [
+                        ("command", &decoded.command_diagnostics),
+                        ("telemetry", &decoded.telemetry_diagnostics),
+                    ] {
+                        if diagnostics.is_empty() {
+                            continue;
+                        }
                         system_event_count += 1;
-                        let diagnostic = decoded.command_diagnostics.join("; ");
+                        let diagnostic = diagnostics.join("; ");
                         if decoded.envelopes.is_empty() {
                             unit.reject(&diagnostic).map_err(storage)?;
                         }
                         unit.stage_system_event(&r3akt_rch_core::SystemEventRecord {
-                            event_id: format!("broker:{}:commands", unit.inbox_event_key().map_err(storage)?),
-                            event_type: "lxmf_command_diagnostic".into(),
+                            event_id: format!("broker:{}:{kind}s", unit.inbox_event_key().map_err(storage)?),
+                            event_type: format!("lxmf_{kind}_diagnostic"),
                             message: diagnostic,
                             timestamp_ms: event.created_at.saturating_mul(1000),
                             metadata: json!({"position":event.position,"valid_payloads":decoded.envelopes.len()}),

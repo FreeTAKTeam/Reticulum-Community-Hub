@@ -1,15 +1,17 @@
 use super::{
     Destination, JsonValue, NodeId, Payload, ProtocolEnvelope, Topic, TransportError,
-    direct_lxmf_fallback_envelope, direct_lxmf_telemetry, optional_field_string,
-    optional_field_value, optional_message_string,
+    direct_lxmf_fallback_envelope, optional_field_string, optional_field_value,
+    optional_message_string,
 };
 use crate::field_commands::{DirectLxmfCommandResult, direct_lxmf_commands};
+use crate::telemetry_decode::direct_lxmf_telemetry;
 
 /// Independently decoded application payloads and privacy-safe command diagnostics.
 #[derive(Debug, Default)]
 pub struct DecodedLxmfMessage {
     pub envelopes: Vec<ProtocolEnvelope>,
     pub command_diagnostics: Vec<String>,
+    pub telemetry_diagnostics: Vec<String>,
 }
 
 pub(super) fn direct_lxmf_message_envelope(
@@ -21,10 +23,17 @@ pub(super) fn direct_lxmf_message_envelope(
         && decoded
             .command_diagnostics
             .iter()
+            .chain(&decoded.telemetry_diagnostics)
             .any(|d| d.starts_with("malformed"))
     {
         return Err(TransportError::Receive(
-            decoded.command_diagnostics.join("; "),
+            decoded
+                .command_diagnostics
+                .iter()
+                .chain(&decoded.telemetry_diagnostics)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; "),
         ));
     }
     Ok(decoded.envelopes.into_iter().next())
@@ -39,14 +48,18 @@ pub(super) fn direct_lxmf_message_payloads(
         .unwrap_or("unknown");
     let mut decoded = DecodedLxmfMessage::default();
     // Telemetry is processed first, so a same-message collector query sees it.
-    if let Some(telemetry) = direct_lxmf_telemetry(fields, message) {
-        let topic = Topic::new("telemetry");
-        decoded.envelopes.push(ProtocolEnvelope::new(
-            NodeId::new(source),
-            Destination::Topic(topic.clone()),
-            topic,
-            Payload::TelemetrySample(telemetry),
-        ));
+    match direct_lxmf_telemetry(fields, message) {
+        Ok(Some(telemetry)) => {
+            let topic = Topic::new("telemetry");
+            decoded.envelopes.push(ProtocolEnvelope::new(
+                NodeId::new(source),
+                Destination::Topic(topic.clone()),
+                topic,
+                Payload::TelemetrySample(telemetry),
+            ));
+        }
+        Ok(None) => {}
+        Err(reason) => decoded.telemetry_diagnostics.push(reason.into()),
     }
     for (index, result) in direct_lxmf_commands(fields).into_iter().enumerate() {
         match result {
