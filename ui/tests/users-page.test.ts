@@ -180,8 +180,14 @@ const setupApiMocks = () => {
     if (path === "/Client?page=1&per_page=100") {
       return Promise.resolve([clientAlpha, clientRem]);
     }
-    if (path === "/Identities?page=1&per_page=100") {
-      return Promise.resolve(currentIdentities());
+    if (path === "/api/v1/app/info") { return Promise.resolve({ identity_directory: { supported: true, page_size: 50, recent_hours: 24, lookup_max_entries: 500, lookup_concurrency: 4 } }); }
+    if (path.startsWith("/Identities?")) {
+      const params = new URLSearchParams(path.split("?")[1]);
+      const identity = params.get("identity"); const type = params.get("client_type");
+      const entries = currentIdentities().filter((entry) => (!identity || entry.Identity === identity) &&
+        (type === "all" || (type === "rem" ? entry.IsRemCapable : !entry.IsRemCapable)));
+      const size = Number(params.get("per_page"));
+      return Promise.resolve({ items: entries.slice(0, size), total: entries.length, page: 1, per_page: size, total_pages: Math.ceil(entries.length / size), has_next: entries.length > size });
     }
     if (path === "/api/rem/peers") {
       return Promise.resolve({ effective_connected_mode: true, items: [remPeerAlpha] });
@@ -205,7 +211,7 @@ const setupApiMocks = () => {
       return Promise.resolve({ ...identityAlpha, IsBanned: true, IsBlackholed: true });
     }
     if (path === "/Client/identity-bravo/Ban") {
-      return Promise.resolve({ ...identityBravo, IsBanned: true });
+      identityBravo.IsBanned = true; return Promise.resolve(identityBravo);
     }
     if (path === "/Client/identity-bravo/Unban") {
       return Promise.resolve({ ...identityBravo, IsBanned: false, IsBlackholed: false });
@@ -236,6 +242,7 @@ describe("users page", () => {
     getMock.mockReset();
     postMock.mockReset();
     putMock.mockReset();
+    identityBravo.IsBanned = false; identityBravo.IsBlackholed = false;
     setupApiMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -251,6 +258,8 @@ describe("users page", () => {
     const toastStore = useToastStore();
 
     expect(text()).toContain("Alpha Client");
+    const directoryNavigation = [...document.querySelectorAll(".tree-item")].find((item) => item.textContent?.includes("Identities"));
+    expect(directoryNavigation?.querySelector(".tree-count")?.textContent).toBe("—");
     expect(text()).toContain("Generic LXMF");
     expect(text()).toContain("announce:destination_hash=client-alpha");
     expect(text()).not.toContain("[object Object]");
@@ -317,8 +326,8 @@ describe("users page", () => {
     expect(text()).toContain("Alpha Client");
     await clickButton("Teams", 1);
     expect(text()).toContain("No teams match the current filter");
-    resolve([]);
-    await waitForUi();
+    expect(getMock.mock.calls.filter(([path]) => path.startsWith("/Identities")).every(([path]) => path.includes("identity="))).toBe(true);
+    resolve([]); await waitForUi();
   });
 
   it("publishes teams and members even when identity and mission requests fail", async () => {
@@ -332,7 +341,7 @@ describe("users page", () => {
     });
     page = await mountPage();
     expect(text()).toContain("Alpha Client");
-    expect(text()).toContain("Unable to load identities");
+    await clickButton("Identities", 1);
     expect(text()).toContain("8 MiB download limit");
     await clickButton("Teams", 1);
     expect(text()).toContain("Rescue Alpha");
@@ -353,12 +362,15 @@ describe("users page", () => {
     expect(text()).toContain("Rescue Mobile");
 
     await clickButton("Identities", 1);
-    await clickClientTypeFilter("Filter announces by client type", "REM");
+    const select = document.querySelectorAll("select")[1];
+    select.value = "rem"; select.dispatchEvent(new Event("change"));
+    await vi.advanceTimersByTimeAsync(250); await waitForUi();
 
     expect(text()).not.toContain("Alpha Client");
     expect(text()).toContain("Bravo Identity");
 
-    await clickClientTypeFilter("Filter announces by client type", "LXMF");
+    select.value = "generic_lxmf"; select.dispatchEvent(new Event("change"));
+    await vi.advanceTimersByTimeAsync(250); await waitForUi();
 
     expect(text()).toContain("Alpha Client");
     expect(text()).not.toContain("Bravo Identity");

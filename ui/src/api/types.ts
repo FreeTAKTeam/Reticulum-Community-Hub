@@ -57,6 +57,7 @@ export interface FileEntry {
 }
 
 export interface IdentityEntry {
+  recently_heard_at?: string;
   id?: string;
   display_name?: string;
   status?: string;
@@ -77,6 +78,7 @@ export interface IdentityEntry {
 }
 
 export interface ClientEntry {
+  last_chat_at?: string;
   id?: string;
   last_seen_at?: string;
   identity_id?: string;

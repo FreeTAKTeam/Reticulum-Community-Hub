@@ -44,6 +44,10 @@ mod auth_throttle;
 mod browser_security;
 mod command_persistence;
 mod first_run_setup;
+mod identity_directory;
+mod identity_directory_config;
+use identity_directory::IdentityListQuery;
+pub use identity_directory_config::IdentityDirectoryConfig;
 mod marker_idempotency;
 #[cfg(test)]
 mod message_persistence;
@@ -269,6 +273,7 @@ pub struct AppState {
     subscribers: Arc<RwLock<HashMap<String, SubscriberRecord>>>,
     clients: Arc<RwLock<HashMap<String, ClientRecord>>>,
     identity_states: Arc<RwLock<HashMap<String, IdentityStatusRecord>>>,
+    identity_directory_config: IdentityDirectoryConfig,
     markers: Arc<RwLock<HashMap<String, MarkerRecord>>>,
     zones: Arc<RwLock<HashMap<String, ZoneRecord>>>,
     messages: Arc<RwLock<Vec<OutboundMessageRecord>>>,
@@ -559,6 +564,7 @@ impl Default for AppState {
             subscribers: Arc::default(),
             clients: Arc::default(),
             identity_states: Arc::default(),
+            identity_directory_config: IdentityDirectoryConfig::default(),
             markers: Arc::default(),
             zones: Arc::default(),
             messages: Arc::default(),
@@ -6397,7 +6403,7 @@ fn openapi_components() -> Value {
             },
             "IdentityStatus": {
                 "type": "object",
-                "description": "Identity moderation status.",
+                "description": "Identity moderation and discovery status; active does not imply online presence.",
                 "properties": {
                     "Identity": { "type": "string" },
                     "DisplayName": {
@@ -6409,7 +6415,8 @@ fn openapi_components() -> Value {
                     "LastSeen": openapi_nullable_string(),
                     "Metadata": { "type": "object" },
                     "IsBanned": { "type": "boolean" },
-                    "IsBlackholed": { "type": "boolean" }
+                    "IsBlackholed": { "type": "boolean" },
+                    "RecentlyHeardAt": openapi_nullable_string()
                 }
             },
             "ConfigApplyResult": {
@@ -9055,11 +9062,7 @@ fn openapi_document() -> Value {
                 )
             },
             "/Identities": {
-                "get": openapi_paginated_list_operation(
-                    "IdentityStatus",
-                    "PaginatedIdentityList",
-                    "Identity moderation statuses."
-                )
+                "get": identity_directory::openapi_operation()
             },
             "/Client/{identity}/Ban": {
                 "post": openapi_schema_response_operation(
@@ -11730,6 +11733,13 @@ fn app_info_payload(state: &AppState) -> Value {
     let has_reticulum_runtime =
         state.lxmf_zmq_data_plane.is_some() || state.reticulumd_rpc_endpoint.is_some();
     json!({
+        "identity_directory": {
+            "supported": state.sqlite_path.is_some(),
+            "page_size": state.identity_directory_config.page_size,
+            "recent_hours": state.identity_directory_config.recent_hours,
+            "lookup_max_entries": state.identity_directory_config.lookup_max_entries,
+            "lookup_concurrency": state.identity_directory_config.lookup_concurrency
+        },
         "is_transport_enabled": has_reticulum_runtime,
         "is_connected_to_shared_instance": has_reticulum_runtime,
         "reticulum_config_path": reticulum_config_path,
@@ -23339,7 +23349,23 @@ async fn list_clients(
 
 async fn list_identities(
     State(state): State<AppState>,
-    Query(query): Query<ClientListQuery>,
+    Query(query): Query<IdentityListQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let permit = Arc::clone(&state.sqlite_blocking_permits)
+        .acquire_owned()
+        .await
+        .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        identity_directory::list(&state, &query)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(error.to_string()))?
+}
+
+fn legacy_identity_payload(
+    state: &AppState,
+    query: &ClientListQuery,
 ) -> Result<Json<Value>, ApiError> {
     let pagination = if query.page.is_some() || query.per_page.is_some() {
         Some(resolve_python_pagination(query.page, query.per_page)?)
@@ -43016,7 +43042,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "6");
+        assert_eq!(payload["persistence"]["schema_version"], "7");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

@@ -289,3 +289,36 @@ inserts to import records. Cache activity is preserved during projection rebuild
 
 See [validation evidence](goals/bounded-persistence/EVIDENCE.md) for measured bounds
 and the limits of the local fixture runs.
+
+### Lazy identity directory
+
+The shared UI opens the Identities directory on demand and requests a single page.
+It defaults to Recently heard (24 hours), ordered by newest announce with a stable
+identity tie-breaker. Joined, team-linked, REM and moderated identities remain
+included when stale. All history is an explicit paginated view; announces and
+moderation history are retained. Discovery/active status does not establish online
+presence. Dashboard, Chat and Topics resolve only their visible identities through
+bounded exact lookups rather than loading the historical directory.
+
+Operators configure `[identity_directory]` in the server INI: `page_size` (default
+50, 1–500), `recent_hours` (default 24, positive), `lookup_max_entries` (default 500,
+1–10000), and `lookup_concurrency` (default 4, 1–16). Environment overrides are
+`RCH_IDENTITY_PAGE_SIZE`, `RCH_IDENTITY_RECENT_HOURS`,
+`RCH_IDENTITY_LOOKUP_MAX_ENTRIES`, and `RCH_IDENTITY_LOOKUP_CONCURRENCY`.
+Validated settings and capability are exposed by `/api/v1/app/info`.
+
+`/Identities` accepts additive `view=recent|all`, `search`, `identity`,
+`client_type=all|rem|generic_lxmf` and `order=last_seen_desc|identity_asc` filters.
+`identity` resolves a canonical identity or advertised destination. Search applies
+within the selected view. Existing unpaged calls retain their array response; an
+explicit `page`/`per_page` returns the existing envelope and is limited to 500
+records. Legacy calls default to all history and identity ordering. Opt-in filtered
+responses expose `RecentlyHeardAt` without changing the preferred announce's
+metadata. SQLite schema 7 maintains scalar directory projections transactionally;
+filtering, counts and ordering precede page payload decoding. The transient actual
+roster contributes scalar name/voice overlays only. This work bounds request and
+browser residency; the server's existing startup identity-state mirror remains.
+
+The Python 2.9.x directory has no matching search/page capability. The shared UI
+reports that directory view as unsupported when capability is absent rather than
+crawling a legacy response. Ordinary client, topic and chat pages remain supported.

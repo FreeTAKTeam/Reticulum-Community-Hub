@@ -891,7 +891,16 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
   }
 
   if (pathname === "/Identities") {
-    return jsonResponse(mockState.identities);
+    const page = Number(url.searchParams.get("page") || 1);
+    const size = Number(url.searchParams.get("per_page") || 50);
+    const identity = url.searchParams.get("identity")?.trim().toLowerCase();
+    const search = url.searchParams.get("search")?.trim().toLowerCase() ?? "";
+    const type = url.searchParams.get("client_type") ?? "all";
+    const entries = mockState.identities.filter((entry) => (!identity || entry.Identity.toLowerCase() === identity) &&
+      (!search || `${entry.Identity} ${entry.Metadata.display_name}`.toLowerCase().includes(search)) &&
+      (type === "all" || type === "generic_lxmf"));
+    return jsonResponse({ items: entries.slice((page - 1) * size, page * size), total: entries.length, page,
+      per_page: size, total_pages: Math.ceil(entries.length / size), has_next: page < Math.ceil(entries.length / size) });
   }
 
   if (pathname === "/Telemetry") {
@@ -1150,6 +1159,7 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
       name: "RCH UI",
       version: "1.35.1",
       description: "Mock hub",
+      identity_directory: { supported: true, page_size: 50, recent_hours: 24, lookup_max_entries: 500, lookup_concurrency: 4 },
       rns_version: "0.9.0",
       lxmf_version: "0.7.0",
       storage_paths: {

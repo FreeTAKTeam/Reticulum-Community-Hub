@@ -216,3 +216,10 @@ export const resolveEventFeedMessage = (
     .reduce((current, entry) => replaceToken(current, entry.token, entry.callsign), message);
   return formatMarkerCreatedMessage(event, resolvedMessage);
 };
+
+/** Only metadata identities from the currently visible event page need enrichment. */
+export const eventIdentityTokens = (events: EventEntry[]): string[] => {
+  const tokens = new Set<string>();
+  events.forEach((event) => collectIdentityTokens(event.metadata, tokens));
+  return [...tokens];
+};

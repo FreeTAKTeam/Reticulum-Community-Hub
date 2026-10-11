@@ -7,36 +7,32 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 
 const page = (items: unknown[], index: number, total: number) => ({
   items, page: index, per_page: 100, total, total_pages: Math.ceil(total / 100), has_next: index < Math.ceil(total / 100)
 });
-const identities = Array.from({ length: 203 }, (_, index) => ({ Identity: `identity-${index}` }));
+const clients = Array.from({ length: 203 }, (_, index) => ({ identity: `client-${index}` }));
 const pathOf = (input: RequestInfo | URL) => new URL(String(input));
 
 describe("bounded users directory", () => {
   beforeEach(() => { setActivePinia(createPinia()); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("loads every bounded page incrementally without truncating identities", async () => {
+  it("loads the independent client roster without downloading identity history", async () => {
     const seen: string[] = [];
-    const fetch = vi.fn((input: RequestInfo | URL) => {
-      const url = pathOf(input);
-      seen.push(url.pathname + url.search);
-      if (url.pathname === "/Client") { return Promise.resolve(json(page([{ identity: "client" }], 1, 1))); }
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = pathOf(input); seen.push(url.pathname + url.search);
+      if (url.pathname === "/Client") {
+        const index = Number(url.searchParams.get("page"));
+        return Promise.resolve(json(page(clients.slice((index - 1) * 100, index * 100), index, clients.length)));
+      }
       if (url.pathname === "/api/rem/peers") { return Promise.resolve(json({ items: [], effective_connected_mode: false })); }
-      const index = Number(url.searchParams.get("page"));
-      expect(url.searchParams.get("per_page")).toBe("100");
-      return Promise.resolve(json(page(identities.slice((index - 1) * 100, index * 100), index, identities.length)));
-    });
-    vi.stubGlobal("fetch", fetch);
-    const store = useUsersStore();
-    await store.fetchUsers();
-    expect(store.identities.map((entry) => entry.id)).toEqual(identities.map((entry) => entry.Identity));
-    expect(store.identityTotal).toBe(203);
-    expect(store.identitiesComplete).toBe(true);
-    expect(store.loading).toBe(false);
-    expect(seen).toContain("/Identities?page=3&per_page=100");
-    expect(Object.values(store.errors)).toEqual([null, null, null]);
+      throw new Error("Unexpected historical directory request");
+    }));
+    const store = useUsersStore(); await store.fetchUsers();
+    expect(store.clients.map((entry) => entry.id)).toEqual(clients.map((entry) => entry.identity));
+    expect(seen).toContain("/Client?page=3&per_page=100");
+    expect(seen.some((path) => path.startsWith("/Identities"))).toBe(false);
+    expect(Object.values(store.errors)).toEqual([null, null]);
   });
 
-  it("retains clients and REM peers when a legacy identity body exceeds 8 MiB", async () => {
+  it("retains clients and REM peers without requesting an oversized legacy directory", async () => {
     const oversized = [{ Identity: "large", Metadata: { payload: "x".repeat(8 * 1024 * 1024) } }];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = pathOf(input);
@@ -48,9 +44,7 @@ describe("bounded users directory", () => {
     await store.fetchUsers();
     expect(store.clients[0].id).toBe("client");
     expect(store.remPeers[0].identity).toBe("rem");
-    expect(store.errors.identities).toContain("8 MiB download limit");
-    expect(store.identitiesComplete).toBe(false);
-    expect(store.identities).toEqual([]);
+    expect(Object.values(store.errors)).toEqual([null, null]);
   });
 
   it.each([
@@ -59,17 +53,14 @@ describe("bounded users directory", () => {
   ])("keeps successful pages visible and diagnoses a $label continuation", async ({ response }) => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = pathOf(input);
-      if (url.pathname === "/Client") { return Promise.resolve(json([])); }
+      if (url.pathname === "/Client" && url.searchParams.get("page") === "1") { return Promise.resolve(json(page(clients.slice(0, 100), 1, 203))); }
       if (url.pathname === "/api/rem/peers") { return Promise.resolve(json({ items: [] })); }
-      if (url.searchParams.get("page") === "1") { return Promise.resolve(json(page(identities.slice(0, 100), 1, 203))); }
       return Promise.resolve(json(response));
     }));
     const store = useUsersStore();
     await store.fetchUsers();
-    expect(store.identities).toHaveLength(100);
-    expect(store.identityTotal).toBe(203);
-    expect(store.identitiesComplete).toBe(false);
-    expect(store.errors.identities).toContain("Invalid /Identities");
+    expect(store.clients).toHaveLength(100);
+    expect(store.errors.clients).toContain("Invalid /Client");
   });
 
   it("does not publish old pages or errors after connection credentials change", async () => {

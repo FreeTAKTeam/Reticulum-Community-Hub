@@ -317,7 +317,8 @@ import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatNumber } from "../utils/format";
 import { formatTimestamp } from "../utils/format";
-import { resolveEventFeedMessage } from "../utils/event-feed";
+import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
+import { resolveEventFeedMessage, eventIdentityTokens, buildEventCallsignLookup } from "../utils/event-feed";
 import ReticulumClock from "../components/ReticulumClock.vue";
 import type { EventEntry } from "../api/types";
 
@@ -652,7 +653,17 @@ watch(eventPageCount, (pageCount) => {
   }
 });
 
-const eventFeedMessage = (event: EventEntry) => resolveEventFeedMessage(event, dashboard.eventCallsignLookup);
+const identityDirectory = useIdentityEnrichment(computed(() => eventIdentityTokens(pagedEvents.value)));
+const eventFeedMessage = (event: EventEntry) => {
+  const lookup = new Map(dashboard.eventCallsignLookup);
+  const enriched = buildEventCallsignLookup({ identities: [...identityDirectory.cache.values()].filter((entry): entry is import("../api/types").IdentityEntry => entry !== null) });
+  enriched.forEach((name, id) => { if (!lookup.has(id)) { lookup.set(id, name); } });
+  identityDirectory.cache.forEach((entry, requestKey) => {
+    const name = entry?.id ? enriched.get(entry.id.trim().toLowerCase()) : undefined;
+    if (name && !lookup.has(requestKey)) { lookup.set(requestKey, name); }
+  });
+  return resolveEventFeedMessage(event, lookup);
+};
 
 const isEventExpanded = (key: string) => Boolean(expandedEvents.value[key]);
 

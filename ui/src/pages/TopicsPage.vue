@@ -163,7 +163,7 @@
             <BaseButton
               variant="secondary"
               icon-left="refresh"
-              @click="activeTab === 'topics' ? refreshTopicsView() : subscribersStore.fetchSubscribers()"
+              @click="refreshActiveView()"
             >
               Refresh
             </BaseButton>
@@ -299,6 +299,8 @@ import { useSubscribersStore } from "../stores/subscribers";
 import { useTopicsStore } from "../stores/topics";
 import { useToastStore } from "../stores/toasts";
 import { useUsersStore } from "../stores/users";
+import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
+import { useIdentityDirectoryStore } from "../stores/identity-directory";
 import { resolveIdentityLabel } from "../utils/identity";
 
 type TreeEntry = {
@@ -528,6 +530,9 @@ const resolveTopicLabel = (topicId?: string) => {
   return topicLabelById.value.get(topicId) ?? "Unknown topic";
 };
 
+const identityDirectory = useIdentityDirectoryStore();
+useIdentityEnrichment(computed(() => [...pagedSubscribers.value.map((subscriber) => subscriber.destination ?? ""), subscriberDraft.value.destination ?? ""]));
+
 const sourceNameById = computed(() => {
   const map = new Map<string, string>();
   usersStore.clients.forEach((client) => {
@@ -535,7 +540,9 @@ const sourceNameById = computed(() => {
       map.set(client.id, resolveIdentityLabel(client.display_name, client.id));
     }
   });
-  usersStore.identities.forEach((identity) => {
+  identityDirectory.cache.forEach((identity, key) => {
+    if (!identity) { return; }
+    if (identity.display_name) { map.set(key, resolveIdentityLabel(identity.display_name, identity.id)); }
     if (identity.id && !map.has(identity.id)) {
       map.set(identity.id, resolveIdentityLabel(identity.display_name, identity.id));
     }
@@ -570,7 +577,7 @@ const resolveSourceName = (subscriber: Subscriber) => {
   if (!subscriber.destination) {
     return undefined;
   }
-  return sourceNameById.value.get(subscriber.destination) ?? resolveIdentityLabel(undefined, subscriber.destination);
+  return sourceNameById.value.get(subscriber.destination.trim().toLowerCase()) ?? sourceNameById.value.get(subscriber.destination) ?? resolveIdentityLabel(undefined, subscriber.destination);
 };
 
 const selectBranch = (path: string) => {
@@ -592,18 +599,12 @@ const topicOptions = computed(() => {
 });
 
 const destinationOptions = computed(() => {
-  const identityDisplayNameById = new Map<string, string>();
-  usersStore.identities.forEach((identity) => {
-    if (identity.id && identity.display_name) {
-      identityDisplayNameById.set(identity.id, identity.display_name);
-    }
-  });
   const options = usersStore.clients
     .filter((client) => client.id)
     .map((client) => ({
       value: client.id as string,
       label: resolveIdentityLabel(
-        client.display_name ?? identityDisplayNameById.get(client.id as string),
+        client.display_name ?? identityDirectory.lookup(client.id)?.display_name,
         client.id
       )
     }));
@@ -844,6 +845,12 @@ const detachSelectedAsset = async (category: AssetCategory) => {
   } else {
     linkedFileSelection.value = "";
   }
+};
+
+const refreshActiveView = async () => {
+  identityDirectory.refreshVisible();
+  if (activeTab.value === "topics") { await refreshTopicsView(); }
+  else { await subscribersStore.fetchSubscribers(); }
 };
 
 const refreshTopicsView = async () => {

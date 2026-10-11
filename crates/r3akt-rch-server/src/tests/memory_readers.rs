@@ -159,7 +159,7 @@ async fn ui_roster_reads_ignore_unrelated_stale_corruption_but_preserve_raw_hist
     let (state, directory) = fixture();
     corrupt_announce(&directory);
     assert!(
-        list_identities(State(state.clone()), Query(ClientListQuery::default()))
+        list_identities(State(state.clone()), Query(IdentityListQuery::default()))
             .await
             .is_ok()
     );
@@ -312,6 +312,23 @@ async fn identity_reader_keeps_alias_metadata_and_voice_owners_absent_from_state
     }
     let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
     store
+        .upsert_identity_states(
+            &state
+                .identity_states
+                .read()
+                .expect("states")
+                .values()
+                .cloned()
+                .map(|record| CoreIdentityStateRecord {
+                    identity: record.identity,
+                    is_banned: record.is_banned,
+                    is_blackholed: record.is_blackholed,
+                    updated_ts_ms: record.updated_ts_ms,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("durable states");
+    store
         .upsert_identity_announces(&[r3akt_rch_core::IdentityAnnounceRecord {
             destination_hash: " DDEE ".into(),
             announced_identity_hash: Some(" AaBb ".into()),
@@ -324,7 +341,7 @@ async fn identity_reader_keeps_alias_metadata_and_voice_owners_absent_from_state
         }])
         .expect("alias");
     corrupt_announce(&directory);
-    let Json(payload) = list_identities(State(state.clone()), Query(ClientListQuery::default()))
+    let Json(payload) = list_identities(State(state.clone()), Query(IdentityListQuery::default()))
         .await
         .expect("identities");
     let items = payload.as_array().expect("rows");
@@ -333,9 +350,10 @@ async fn identity_reader_keeps_alias_metadata_and_voice_owners_absent_from_state
     assert_eq!(items[0]["DisplayName"], "Alias display");
     let Json(page) = list_identities(
         State(state.clone()),
-        Query(ClientListQuery {
+        Query(IdentityListQuery {
             page: Some(1),
             per_page: Some(1),
+            ..IdentityListQuery::default()
         }),
     )
     .await

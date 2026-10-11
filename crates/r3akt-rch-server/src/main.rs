@@ -11,14 +11,13 @@
 
 mod cli_runtime;
 
-use std::env;
-use std::fs;
 use std::future::Future;
 use std::io::{IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration as StdDuration;
+use std::{env, fs};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8000;
@@ -197,7 +196,8 @@ where
         reticulum_config_path.as_deref(),
         &hub_service_config,
     )?
-    .with_api_bind(api_bind);
+    .with_api_bind(api_bind)
+    .configure_identity_directory()?;
     state.start_managed_reticulumd()?;
     if let Err(error) = state.register_lxmf_zmq_service_identity() {
         cli_runtime::cleanup_after_startup_failure(&state, "identity registration");

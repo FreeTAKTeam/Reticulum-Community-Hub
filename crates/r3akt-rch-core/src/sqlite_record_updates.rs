@@ -23,9 +23,11 @@ impl RchSqliteStore {
             let record = if let Some(existing) = existing {
                 existing
             } else {
-                transaction.execute(
-                    "INSERT INTO rch_identity_states (identity, payload) VALUES (?1, ?2)",
-                    params![candidate.identity, encode_msgpack(candidate)?],
+                super::upsert_payload_row(
+                    &transaction,
+                    "rch_identity_states",
+                    vec![("identity", super::sql_text(&candidate.identity))],
+                    candidate,
                 )?;
                 candidate.clone()
             };
@@ -59,9 +61,11 @@ impl RchSqliteStore {
             record.is_blackholed = value;
         }
         record.updated_ts_ms = now_ms;
-        transaction.execute(
-            "INSERT OR REPLACE INTO rch_identity_states (identity, payload) VALUES (?1, ?2)",
-            params![identity, encode_msgpack(&record)?],
+        super::upsert_payload_row(
+            &transaction,
+            "rch_identity_states",
+            vec![("identity", super::sql_text(identity))],
+            &record,
         )?;
         transaction.commit()?;
         Ok(record)

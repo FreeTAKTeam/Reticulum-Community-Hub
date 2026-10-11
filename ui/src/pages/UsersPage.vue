@@ -22,7 +22,7 @@
             <button class="tree-item" :class="{ active: activeTab === 'identities' }" type="button" @click="activeTab = 'identities'">
               <span class="tree-dot" aria-hidden="true"></span>
               <span class="tree-label">Identities</span>
-              <span class="tree-count">{{ usersStore.identities.length }}</span>
+              <span class="tree-count">{{ identityDirectory.total ?? "—" }}</span>
             </button>
             <button class="tree-item" :class="{ active: activeTab === 'rem-peers' }" type="button" @click="activeTab = 'rem-peers'">
               <span class="tree-dot" aria-hidden="true"></span>
@@ -67,22 +67,6 @@
                 type="button"
                 :aria-pressed="clientTypeFilter === option.value"
                 @click="clientTypeFilter = option.value"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-          </div>
-          <div v-else-if="activeTab === 'identities'" class="tree-search">
-            <input v-model="identityFilter" type="text" placeholder="Filter identities by name/hash" />
-            <div class="client-type-filter" role="group" aria-label="Filter announces by client type">
-              <button
-                v-for="option in clientTypeFilterOptions"
-                :key="`identity-${option.value}`"
-                class="client-type-filter__option"
-                :class="{ active: identityTypeFilter === option.value }"
-                type="button"
-                :aria-pressed="identityTypeFilter === option.value"
-                @click="identityTypeFilter = option.value"
               >
                 {{ option.label }}
               </button>
@@ -142,7 +126,6 @@
           </div>
 
           <LoadingSkeleton v-if="(activeTab === 'clients' && usersStore.resourceLoading.clients && !usersStore.clients.length) ||
-              (activeTab === 'identities' && usersStore.resourceLoading.identities && !usersStore.identities.length) ||
               (activeTab === 'rem-peers' && usersStore.resourceLoading.remPeers && !usersStore.remPeers.length)" />
           <div v-else>
             <div v-if="activeTab === 'clients'" class="card-grid">
@@ -187,78 +170,7 @@
               />
             </div>
 
-            <div v-else-if="activeTab === 'identities'" class="card-grid">
-              <div
-                v-for="(identity, index) in pagedIdentities"
-                :key="`identity-${identity.id ?? index}`"
-                class="registry-card cui-panel"
-              >
-                <div class="registry-card-header">
-                  <div>
-                    <div class="registry-card-title">{{ resolveIdentityLabel(identity.display_name, identity.id) }}</div>
-                    <div class="registry-card-subtitle mono">{{ identity.id || "Unknown destination" }}</div>
-                  </div>
-                  <div class="registry-card-tag">{{ identity.status || "Unknown" }}</div>
-                </div>
-                <div class="registry-card-meta">
-                  <div><span>Last Seen</span><span>{{ formatTimestamp(identity.last_seen) }}</span></div>
-                  <div><span>Status</span><span>{{ identity.status || "-" }}</span></div>
-                  <div v-if="identity.is_announced">
-                    <span>Announce Source</span>
-                    <span>{{ identity.announce_source || "-" }}</span>
-                  </div>
-                  <div v-if="identity.is_announced">
-                    <span>Destination</span>
-                    <span class="mono" :title="identity.announce_destination_hash || '-'">
-                      {{ identityAnnounceDestinationLabel(identity) }}
-                    </span>
-                  </div>
-                  <div v-if="identityVoiceDestination(identity)">
-                    <span>Voice</span>
-                    <span class="mono" :title="identityVoiceDestination(identity)">
-                      {{ identityVoiceDestinationLabel(identity) }}
-                    </span>
-                  </div>
-                  <div v-if="identity.is_announced">
-                    <span>First Announce</span>
-                    <span>{{ formatTimestamp(identity.announce_first_seen) }}</span>
-                  </div>
-                </div>
-                <div class="registry-card-badges">
-                  <BaseBadge v-if="identity.is_announced" tone="success">Announce</BaseBadge>
-                  <BaseBadge v-if="identityVoiceDestination(identity)" tone="warning">Voice</BaseBadge>
-                  <BaseBadge :tone="identity.is_rem_capable ? 'success' : 'neutral'">
-                    {{ clientTypeLabel(identity.client_type, identity.is_rem_capable) }}
-                  </BaseBadge>
-                  <BaseBadge v-if="identity.rem_mode" tone="warning">{{ identity.rem_mode }}</BaseBadge>
-                  <BaseBadge v-if="identity.banned" tone="danger">Banned</BaseBadge>
-                  <BaseBadge v-if="identity.blackholed" tone="warning">Blackholed</BaseBadge>
-                </div>
-                <div class="registry-card-actions">
-                  <BaseButton variant="danger" icon-left="ban" @click="actOnIdentity(identity.id, 'Ban')">Ban</BaseButton>
-                  <BaseButton variant="success" icon-left="unban" @click="actOnIdentity(identity.id, 'Unban')">Unban</BaseButton>
-                  <BaseButton variant="secondary" icon-left="blackhole" @click="actOnIdentity(identity.id, 'Blackhole')">
-                    Blackhole
-                  </BaseButton>
-                  <BaseButton
-                    variant="secondary"
-                    icon-left="plus"
-                    :disabled="isIdentityJoined(identity.id)"
-                    @click="joinIdentity(identity.id)"
-                  >
-                    {{ isIdentityJoined(identity.id) ? "Joined" : "Join" }}
-                  </BaseButton>
-                </div>
-              </div>
-              <div v-if="pagedIdentities.length === 0" class="panel-empty">No identities match the current filter.</div>
-              <BasePagination
-                v-if="filteredIdentities.length"
-                v-model:page="identitiesPage"
-                class="panel-pagination"
-                :page-size="identitiesPageSize"
-                :total="filteredIdentities.length"
-              />
-            </div>
+            <IdentityDirectoryPanel v-else-if="activeTab === 'identities'" :joined-ids="clientIdentitySet" @action="actOnIdentity" @join="joinIdentity" />
 
             <div v-else-if="activeTab === 'rem-peers'" class="card-grid">
               <div
@@ -421,15 +333,12 @@
           <template v-for="(error, resource) in usersStore.errors" :key="resource">
             <p v-if="error" role="status" class="panel-empty">Unable to load {{ resource === 'remPeers' ? 'REM peers' : resource }}: {{ error }}</p>
           </template>
-          <p v-if="activeTab === 'identities' && !usersStore.identitiesComplete" role="status" class="panel-empty">
-            Identity directory incomplete. Loaded {{ usersStore.identities.length }}<span v-if="usersStore.identityTotal !== null"> of {{ usersStore.identityTotal }}</span>.
-          </p>
           <div class="panel-actions">
             <BaseButton
-              v-if="activeTab === 'clients' || activeTab === 'identities' || activeTab === 'rem-peers'"
+              v-if="activeTab === 'clients' || activeTab === 'rem-peers'"
               variant="secondary"
               icon-left="refresh"
-              @click="usersStore.fetchUsers()"
+              @click="refreshActiveDirectory"
             >
               Refresh
             </BaseButton>
@@ -538,6 +447,9 @@ import BaseModal from "../components/BaseModal.vue";
 import BasePagination from "../components/BasePagination.vue";
 import BaseSelect from "../components/BaseSelect.vue";
 import LoadingSkeleton from "../components/LoadingSkeleton.vue";
+import IdentityDirectoryPanel from "../components/users/IdentityDirectoryPanel.vue";
+import { useIdentityDirectoryStore } from "../stores/identity-directory";
+import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
 import TeamRightsMatrixPanel from "../components/users/TeamRightsMatrixPanel.vue";
 import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
@@ -645,6 +557,7 @@ const queryFlag = (value: unknown): boolean => {
 
 const usersStore = useUsersStore();
 const toastStore = useToastStore();
+const identityDirectory = useIdentityDirectoryStore();
 const route = useRoute();
 const router = useRouter();
 const routing = ref<unknown>(null);
@@ -652,17 +565,13 @@ const routingLoading = ref(false);
 const routingError = ref<string | null>(null);
 const activeTab = ref<ActiveTab>("clients");
 const clientsPage = ref(1);
-const identitiesPage = ref(1);
 const teamsPage = ref(1);
 const teamMembersPage = ref(1);
 const clientsPageSize = 9;
-const identitiesPageSize = 9;
 const teamsPageSize = 9;
 const teamMembersPageSize = 9;
-const identityFilter = ref("");
 const clientFilter = ref("");
 const clientTypeFilter = ref<ClientTypeFilter>("all");
-const identityTypeFilter = ref<ClientTypeFilter>("all");
 const remPeerFilter = ref("");
 const teamFilter = ref("");
 const teamMemberFilter = ref("");
@@ -705,7 +614,7 @@ const teamMemberEditor = ref({
 const totalRecords = computed(
   () =>
     usersStore.clients.length +
-    usersStore.identities.length +
+    (identityDirectory.total ?? 0) +
     usersStore.remPeers.length +
     teamRecords.value.length +
     teamMemberRecords.value.length
@@ -766,23 +675,6 @@ const pagedClients = computed(() => {
   return sortedClients.value.slice(start, start + clientsPageSize);
 });
 
-const filteredIdentities = computed(() => {
-  const filter = identityFilter.value.trim().toLowerCase();
-  return usersStore.identities.filter((identity) => {
-    const displayName = identity.display_name ?? "";
-    const id = identity.id ?? "";
-    const announceSource = identity.announce_source ?? "";
-    const announceDestination = identity.announce_destination_hash ?? "";
-    const matchesText =
-      !filter ||
-      displayName.toLowerCase().includes(filter) ||
-      id.toLowerCase().includes(filter) ||
-      announceSource.toLowerCase().includes(filter) ||
-      announceDestination.toLowerCase().includes(filter);
-    return matchesText && matchesClientType(identity.client_type, identity.is_rem_capable, identityTypeFilter.value);
-  });
-});
-
 const filteredRemPeers = computed(() => {
   const filter = remPeerFilter.value.trim().toLowerCase();
   if (!filter) {
@@ -802,16 +694,6 @@ const filteredRemPeers = computed(() => {
   });
 });
 
-const sortedIdentities = computed(() => {
-  return [...filteredIdentities.value].sort((a, b) => {
-    const delta = lastSeenValue(b.last_seen) - lastSeenValue(a.last_seen);
-    if (delta !== 0) {
-      return delta;
-    }
-    return (a.id ?? "").localeCompare(b.id ?? "");
-  });
-});
-
 const sortedRemPeers = computed(() => {
   return [...filteredRemPeers.value].sort((a, b) => {
     const delta = lastSeenValue(b.last_seen) - lastSeenValue(a.last_seen);
@@ -820,11 +702,6 @@ const sortedRemPeers = computed(() => {
     }
     return String(a.identity ?? "").localeCompare(String(b.identity ?? ""));
   });
-});
-
-const pagedIdentities = computed(() => {
-  const start = (identitiesPage.value - 1) * identitiesPageSize;
-  return sortedIdentities.value.slice(start, start + identitiesPageSize);
 });
 
 const missionNameByUid = computed(() => {
@@ -906,7 +783,9 @@ const pagedTeamMembers = computed(() => {
 
 const identityDisplayNameById = computed(() => {
   const map = new Map<string, string>();
-  usersStore.identities.forEach((identity) => {
+  identityDirectory.cache.forEach((identity, requestKey) => {
+    if (!identity) { return; }
+    if (identity.display_name) { map.set(requestKey, identity.display_name); }
     if (identity.id && identity.display_name) {
       map.set(identity.id, identity.display_name);
       map.set(identity.id.toLowerCase(), identity.display_name);
@@ -916,7 +795,7 @@ const identityDisplayNameById = computed(() => {
 });
 
 const clientPageCount = computed(() => Math.max(1, Math.ceil(filteredClients.value.length / clientsPageSize)));
-const identityPageCount = computed(() => Math.max(1, Math.ceil(filteredIdentities.value.length / identitiesPageSize)));
+
 const teamsPageCount = computed(() => Math.max(1, Math.ceil(filteredTeams.value.length / teamsPageSize)));
 const teamMembersPageCount = computed(
   () => Math.max(1, Math.ceil(filteredTeamMembers.value.length / teamMembersPageSize))
@@ -1256,38 +1135,13 @@ const matchesClientType = (
   return resolvedType === filter;
 };
 
-type IdentityWithAnnounce = {
-  id?: string;
-  announce_destination_hash?: string;
-  metadata?: Record<string, unknown>;
-};
-
-const identityAnnounceDestinationLabel = (identity: IdentityWithAnnounce): string => {
-  const destination = identity.announce_destination_hash;
-  if (!destination) {
-    return "-";
-  }
-  if (destination === identity.id) {
-    return "same identity";
-  }
-  return shortHash(destination, 6, 6);
-};
-
-const identityVoiceDestination = (identity: IdentityWithAnnounce): string | undefined => {
-  const voice = identity.metadata?.voice;
-  if (!voice || typeof voice !== "object") {
-    return undefined;
-  }
-  const destination = (voice as Record<string, unknown>).destination_hash;
-  return typeof destination === "string" && destination.trim() ? destination : undefined;
-};
-
-const identityVoiceDestinationLabel = (identity: IdentityWithAnnounce): string => {
-  const destination = identityVoiceDestination(identity);
-  return destination ? shortHash(destination, 6, 6) : "-";
-};
-
 type IdentityModerationAction = "Ban" | "Unban" | "Blackhole";
+
+const refreshActiveDirectory = async () => {
+  identityDirectory.invalidate();
+  if (activeTab.value === "rem-peers") { await usersStore.fetchRemPeers(); }
+  else { await usersStore.fetchClients(); }
+};
 
 const actOnClient = async (clientId?: string, action?: IdentityModerationAction) => {
   if (!clientId || !action) {
@@ -1319,7 +1173,7 @@ const leaveClient = async (clientId?: string) => {
   }
   try {
     await usersStore.leaveIdentity(clientId);
-    await usersStore.fetchUsers();
+    await refreshActiveDirectory();
     toastStore.push("Client left the hub", "warning");
   } catch (error) {
     handleApiError(error, "Unable to remove client");
@@ -1332,7 +1186,7 @@ const joinIdentity = async (identityId?: string) => {
   }
   try {
     await usersStore.joinIdentity(identityId);
-    await usersStore.fetchUsers();
+    await refreshActiveDirectory();
     toastStore.push("Identity joined", "success");
   } catch (error) {
     handleApiError(error, "Unable to join identity");
@@ -1629,6 +1483,11 @@ const formatMetadata = (metadata?: Record<string, unknown>) => {
   return parts.length ? parts.join(" / ") : "-";
 };
 
+useIdentityEnrichment(computed(() => activeTab.value === "clients"
+  ? pagedClients.value.map((client) => client.id ?? "")
+  : activeTab.value === "routing" ? routingEntries.value.map((entry) => entry.identity)
+  : teamMemberEditorOpen.value ? usersStore.clients.map((client) => client.id ?? "") : []));
+
 const resolveClientDisplayName = (client: { id?: string; display_name?: string }) => {
   if (client.display_name) {
     return client.display_name;
@@ -1703,16 +1562,6 @@ watch([clientFilter, clientTypeFilter], () => {
   clientsPage.value = 1;
 });
 
-watch(identityPageCount, (count) => {
-  if (identitiesPage.value > count) {
-    identitiesPage.value = count;
-  }
-});
-
-watch([identityFilter, identityTypeFilter], () => {
-  identitiesPage.value = 1;
-});
-
 watch(teamsPageCount, (count) => {
   if (teamsPage.value > count) {
     teamsPage.value = count;
@@ -1757,9 +1606,6 @@ watch(
 watch(activeTab, (tab) => {
   if (tab === "clients") {
     clientsPage.value = 1;
-  }
-  if (tab === "identities") {
-    identitiesPage.value = 1;
   }
   if (tab === "routing") {
     void loadRouting();
