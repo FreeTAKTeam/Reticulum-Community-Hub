@@ -1,6 +1,6 @@
 use super::{
     ApiError, AppState, CoreMessageRecord, DurableOutboundIntent, OutboundMessageRecord,
-    RchCommandTransaction, Value, bound_presentation, broadcast_message_event, broker,
+    RchCommandTransaction, Value, broadcast_message_event, broker,
     ensure_kill_switch_persistence_unlocked, json, merge_delivery_metadata, open,
     outbound_destination_text_only, outbound_destinations, outbound_identity_allowed,
     outbound_lxmf_content, outbound_lxmf_fields, outbound_lxmf_title, plane, sha256_lower_hex,
@@ -74,7 +74,7 @@ pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
     } else {
         messages.push(record.clone());
     }
-    bound_presentation(&mut messages);
+    super::super::message_residency::bound(state, &mut messages, &[&record.message_id])?;
     drop(messages);
     broadcast_message_event(state, &record);
     Ok(true)
@@ -112,7 +112,7 @@ pub(crate) fn queue_northbound(
     message = stage_business_message(&unit, message, destinations)?;
     unit.commit().map_err(storage)?;
     messages.push(message.clone());
-    bound_presentation(&mut messages);
+    super::super::message_residency::bound(state, &mut messages, &[&message.message_id])?;
     drop(messages);
     broadcast_message_event(state, &message);
     Ok(message)
@@ -198,7 +198,7 @@ fn reject_dispatch(state: &AppState, operation: &str, reason: &str) -> Result<()
     } else {
         messages.push(record.clone());
     }
-    bound_presentation(&mut messages);
+    super::super::message_residency::bound(state, &mut messages, &[&record.message_id])?;
     drop(messages);
     broadcast_message_event(state, &record);
     Ok(())

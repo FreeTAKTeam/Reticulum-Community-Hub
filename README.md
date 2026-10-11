@@ -23,6 +23,12 @@ RCH adds shared services and persistent state to a Reticulum network:
 - a REST and WebSocket API for clients and integrations;
 - an optional TAK connector for Cursor-on-Target chat and position exchange.
 
+SQLite is the durable message-history and delivery-recovery owner. The runtime message
+cache keeps at most 500 records and an estimated 32 MiB, with a 30-minute inactivity
+limit. `/Chat/Messages` reads durable history, so cache eviction does not remove old
+messages or abandon pending delivery. See [bounded persistence](docs/goals/bounded-persistence/EVIDENCE.md)
+for the transaction, migration, and validation details.
+
 RCH does not replace Reticulum. Reticulum provides the network. RCH provides the shared coordination services that a community or field team needs on top of it.
 
 ## Where it fits

@@ -45,8 +45,8 @@ impl RchSqliteStore {
             return Ok(MarkerCreation::Replayed(original));
         }
         transaction.execute(
-            "INSERT INTO rch_markers (object_destination_hash, payload) VALUES (?1, ?2)",
-            params![marker.object_destination_hash, encode_msgpack(marker)?],
+            "INSERT INTO rch_markers (object_destination_hash, payload, local_id) VALUES (?1, ?2, ?3)",
+            params![marker.object_destination_hash, encode_msgpack(marker)?, marker.local_id],
         )?;
         let result = CommandResultEnvelope {
             command_id: command_id.to_string(),

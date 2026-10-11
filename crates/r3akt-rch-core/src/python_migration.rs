@@ -129,7 +129,7 @@ pub fn migrate_python_database(
     record_unmapped_tables(&source, &mut report)?;
     transaction.execute(
         "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value) VALUES (?1, ?2)",
-        params!["schema_version", "1"],
+        params!["schema_version", super::RCH_SQLITE_SCHEMA_VERSION],
     )?;
     transaction.execute(
         "INSERT OR REPLACE INTO rch_settings (setting_key, setting_value) VALUES (?1, ?2)",
@@ -145,6 +145,7 @@ pub fn migrate_python_database(
             Utc::now().to_rfc3339_opts(SecondsFormat::AutoSi, true)
         ],
     )?;
+    super::sqlite_command_projections::rebuild(&transaction)?;
     transaction.commit()?;
     Ok(report)
 }

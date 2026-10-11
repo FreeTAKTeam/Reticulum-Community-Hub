@@ -348,3 +348,89 @@ async fn identity_reader_keeps_alias_metadata_and_voice_owners_absent_from_state
     drop(state);
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
+
+#[tokio::test]
+async fn durable_chat_survives_eviction_restart_and_keeps_old_filters() {
+    let (state, directory) = fixture();
+    let mut first = message("old", 10);
+    first.attachments.push(ChatAttachmentRecord {
+        file_id: 7,
+        category: "file".into(),
+        name: "kept.txt".into(),
+        size: 11,
+        media_type: Some("text/plain".into()),
+    });
+    let mut inbound = message("inbound", 30);
+    inbound.delivery_metadata = json!({"direction":"inbound"});
+    let mut hidden = message("hidden", 40);
+    hidden.delivery_metadata = json!({"fanout_channel":"rem_log_command"});
+    let rows = [first, message("tie", 10), inbound, hidden];
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    store
+        .upsert_messages(
+            &rows
+                .into_iter()
+                .map(CoreMessageRecord::from)
+                .collect::<Vec<_>>(),
+        )
+        .expect("history");
+    drop(store);
+    let restored = AppState::from_sqlite_path(directory.join("state.db")).expect("restart");
+    restored.messages.write().expect("cache").clear();
+    let Json(history) = list_chat_messages(
+        State(restored.clone()),
+        Query(ChatListQuery {
+            limit: Some(10),
+            direction: Some("outbound".into()),
+            topic_id: Some("ops".into()),
+            destination: Some("peer".into()),
+            source: Some("northbound".into()),
+        }),
+    )
+    .await
+    .expect("durable chat");
+    assert_eq!(history.as_array().expect("rows").len(), 2);
+    assert_eq!(history[0]["MessageID"], "old");
+    assert_eq!(history[1]["MessageID"], "tie");
+    assert_eq!(history[0]["Attachments"][0]["Name"], "kept.txt");
+    drop(restored);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}
+
+#[test]
+fn inactive_cache_eviction_does_not_evict_recent_delivery_updates_or_history() {
+    let (state, directory) = fixture();
+    let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+    let mut messages = vec![message("idle", 1), message("active", 2)];
+    store
+        .upsert_messages(
+            &messages
+                .iter()
+                .cloned()
+                .map(CoreMessageRecord::from)
+                .collect::<Vec<_>>(),
+        )
+        .expect("durable");
+    let now = Instant::now();
+    message_residency::bound_at(&state, &mut messages, &[], now).expect("initialize");
+    let later = now + Duration::from_millis(r3akt_rch_core::RECENT_MESSAGE_IDLE_MS as u64);
+    message_residency::bound_at(&state, &mut messages, &["active"], later).expect("evict");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].message_id, "active");
+    assert_eq!(
+        state.message_cache_activity.read().expect("activity").len(),
+        1
+    );
+    assert_eq!(store.message_history_counts().expect("history").0, 2);
+    assert_eq!(
+        state
+            .runtime_metrics
+            .message_evictions
+            .load(Ordering::Relaxed),
+        1
+    );
+    drop(store);
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}

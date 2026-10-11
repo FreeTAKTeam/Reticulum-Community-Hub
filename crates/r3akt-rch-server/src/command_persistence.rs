@@ -6,9 +6,33 @@ use super::{
 /// Reserve projection owners before `SQLite`, commit the domain command, then publish its delta.
 /// HTTP marker/zone mutations use the same lock order, preventing a later cache write
 /// from being overwritten by an older command snapshot. Rejected commands roll back.
+#[cfg(test)]
 pub(super) fn mutate<T>(
     state: &AppState,
     checklist: bool,
+    operation: impl FnOnce(&mut RchCore) -> Result<(T, bool), ApiError>,
+) -> Result<T, ApiError> {
+    mutate_inner(state, checklist, Selection::Compatibility, operation)
+}
+
+pub(super) fn mutate_command<T>(
+    state: &AppState,
+    command: &super::MissionCommandEnvelope,
+    checklist: bool,
+    operation: impl FnOnce(&mut RchCore) -> Result<(T, bool), ApiError>,
+) -> Result<T, ApiError> {
+    mutate_inner(state, checklist, Selection::Scoped(command), operation)
+}
+
+enum Selection<'a> {
+    Scoped(&'a super::MissionCommandEnvelope),
+    #[cfg(test)]
+    Compatibility,
+}
+fn mutate_inner<T>(
+    state: &AppState,
+    checklist: bool,
+    command: Selection<'_>,
     operation: impl FnOnce(&mut RchCore) -> Result<(T, bool), ApiError>,
 ) -> Result<T, ApiError> {
     ensure_kill_switch_persistence_unlocked(state)?;
@@ -27,30 +51,23 @@ pub(super) fn mutate<T>(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let mut store = RchSqliteStore::open(path.as_ref())
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut transaction = if checklist {
-        store.begin_checklist_command()
-    } else {
-        store.begin_r3akt_command()
+    let mut transaction = match command {
+        Selection::Scoped(command) => store.begin_scoped_command(command, checklist),
+        #[cfg(test)]
+        Selection::Compatibility if checklist => store.begin_checklist_command(),
+        #[cfg(test)]
+        Selection::Compatibility => store.begin_r3akt_command(),
     }
     .map_err(|error| ApiError::Internal(error.to_string()))?;
-    // Cache publication only compares these two projections. Cloning the
-    // complete core here duplicated announce/domain history before every
-    // command, including checklist commands that never publish either cache.
-    let before_markers = if checklist {
-        Vec::new()
-    } else {
-        transaction.core_mut().markers()
-    };
-    let before_zones = if checklist {
-        Vec::new()
-    } else {
-        transaction.core_mut().zones()
-    };
     let (result, accepted) = operation(transaction.core_mut())?;
     if accepted {
-        let after = transaction
-            .commit()
+        let delta = transaction
+            .commit_delta()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
+        super::message_residency::record_command(state, &delta);
+        let after = delta.after;
+        let before_markers = delta.before.markers;
+        let before_zones = delta.before.zones;
         if !checklist {
             let mut prior_markers = before_markers
                 .into_iter()

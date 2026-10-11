@@ -58,6 +58,7 @@ pub(super) fn reply(
             None,
         );
     }
+    unit.prepare_collector(topic).map_err(storage)?;
     let source = normalize_identity_key(envelope.source.as_str());
     let destinations = topic.map(|topic| {
         unit.core_mut()

@@ -7,6 +7,7 @@ use rns_rpc::{MessageRecord, MessagesStore};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use zeromq::{PullSocket, Socket, SocketRecv};
 
+mod envelope_isolation;
 mod replies;
 
 #[derive(Default)]
@@ -98,6 +99,7 @@ impl Fixture {
                     let mut commands = PullSocket::new();
                     commands.bind(&ep).await.unwrap();
                     ready_tx.send(()).unwrap();
+                    let mut replies = replies::Writer::default();
                     while !ending.load(Ordering::Acquire) {
                         let incoming =
                             match tokio::time::timeout(Duration::from_millis(50), commands.recv())
@@ -119,7 +121,7 @@ impl Fixture {
                                 &envelope.payload,
                             )
                             .unwrap();
-                        if let Err(error) = replies::deliver(envelope, payload).await {
+                        if let Err(error) = replies.deliver(envelope, payload).await {
                             // A cancelled SDK attempt can close its reply endpoint. Keep serving
                             // the replay-safe retry, as the production response writer does.
                             failures.fetch_add(1, Ordering::Release);
@@ -384,6 +386,8 @@ fn paired_outbound_reconciles_lost_admission_reply_and_applies_terminal_receipt(
         .unwrap()
         .broker_admit(serde_json::from_value(intent.request.clone()).unwrap())
         .unwrap();
+    // Presentation eviction cannot abandon durable unresolved admission.
+    state.messages.write().unwrap().clear();
     // Daemon stored the operation, but RCH never recorded its reply. Dispatch must reconcile.
     assert!(dispatch(&state).unwrap());
     assert!(!dispatch(&state).unwrap());
@@ -392,6 +396,8 @@ fn paired_outbound_reconciles_lost_admission_reply_and_applies_terminal_receipt(
         .broker_admit(serde_json::from_value(intent.request).unwrap())
         .unwrap();
     assert_eq!(same.message_id, admitted.message_id);
+    // A late receipt must resolve its parent from SQLite after another eviction.
+    state.messages.write().unwrap().clear();
     fixture
         .daemon
         .record_network_receipt(

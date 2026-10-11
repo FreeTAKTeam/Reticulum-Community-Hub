@@ -19,7 +19,14 @@ mod text;
 
 mod sqlite_announces;
 pub use sqlite_announces::IdentityAnnounceSummary;
+mod sqlite_command_projections;
+mod sqlite_command_reads;
 mod sqlite_commands;
+mod sqlite_message_history;
+pub use sqlite_message_history::{
+    ChatHistoryFilter, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT, RECENT_MESSAGE_IDLE_MS,
+    json_resident_bytes,
+};
 mod sqlite_marker_idempotency;
 mod sqlite_operation_rights;
 mod sqlite_payload_deltas;
@@ -28,7 +35,7 @@ mod sqlite_read_snapshots;
 mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
-pub use sqlite_commands::RchCommandTransaction;
+pub use sqlite_commands::{CommandDelta, RchCommandTransaction};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
 
@@ -413,7 +420,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "5";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "6";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -452,6 +459,8 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "rch_task_skill_requirements",
     "rch_assignments",
     "rch_assignment_asset_links",
+    "rch_assignment_payload_assets",
+    "rch_member_payload_clients",
     "rch_checklists",
     "rch_checklist_templates",
     "rch_checklist_columns",
@@ -1526,6 +1535,7 @@ impl RchSqliteStore {
                 params![result.command_id, encode_msgpack(result)?],
             )?;
         }
+        sqlite_command_projections::rebuild(&transaction)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1623,6 +1633,7 @@ impl RchSqliteStore {
                 params![key, value],
             )?;
         }
+        sqlite_command_projections::rebuild(&transaction)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1969,12 +1980,13 @@ impl RchSqliteStore {
         record: &FileAttachmentRecord,
     ) -> Result<(), RchCoreError> {
         self.connection.execute(
-            "INSERT OR REPLACE INTO rch_file_attachments (file_id, category, payload)
-             VALUES (?1, ?2, ?3)",
+            "INSERT OR REPLACE INTO rch_file_attachments (file_id, category, payload, topic_id)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
                 sqlite_u64(record.file_id)?,
                 record.category,
-                encode_msgpack(record)?
+                encode_msgpack(record)?,
+                normalize_topic_id(record.topic_id.as_deref())
             ],
         )?;
         Ok(())
@@ -1992,12 +2004,13 @@ impl RchSqliteStore {
         )?;
         record.file_id = max_id.saturating_add(1);
         transaction.execute(
-            "INSERT INTO rch_file_attachments (file_id, category, payload)
-             VALUES (?1, ?2, ?3)",
+            "INSERT INTO rch_file_attachments (file_id, category, payload, topic_id)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
                 sqlite_u64(record.file_id)?,
                 record.category,
-                encode_msgpack(&record)?
+                encode_msgpack(&record)?,
+                normalize_topic_id(record.topic_id.as_deref())
             ],
         )?;
         transaction.commit()?;
@@ -2092,9 +2105,13 @@ impl RchSqliteStore {
 
     pub fn upsert_marker(&mut self, record: &MarkerRecord) -> Result<(), RchCoreError> {
         self.connection.execute(
-            "INSERT OR REPLACE INTO rch_markers (object_destination_hash, payload)
-             VALUES (?1, ?2)",
-            params![record.object_destination_hash, encode_msgpack(record)?],
+            "INSERT OR REPLACE INTO rch_markers (object_destination_hash, payload, local_id)
+             VALUES (?1, ?2, ?3)",
+            params![
+                record.object_destination_hash,
+                encode_msgpack(record)?,
+                record.local_id
+            ],
         )?;
         Ok(())
     }
@@ -2365,9 +2382,11 @@ impl RchSqliteStore {
         let subscribers = self.load_payload_rows::<SubscriberRecord>(
             "SELECT payload FROM rch_subscribers ORDER BY topic_id, node_id",
         )?;
-        let messages = self.load_payload_rows::<MessageRecord>(if include_identity_announces {
-            "SELECT payload FROM rch_messages ORDER BY id"
-        } else {"SELECT payload FROM (SELECT id,payload FROM rch_messages ORDER BY created_ts_ms DESC,id DESC LIMIT 500) ORDER BY id"})?;
+        let messages = if include_identity_announces {
+            self.load_payload_rows::<MessageRecord>("SELECT payload FROM rch_messages ORDER BY id")?
+        } else {
+            self.recent_messages()?
+        };
         let clients = self.load_payload_rows::<ClientRecord>(
             "SELECT payload FROM rch_clients ORDER BY identity",
         )?;
@@ -2786,7 +2805,8 @@ impl RchSqliteStore {
                 |row| row.get::<_, bool>(0),
             )?;
         if migration_4_applied {
-            return self.migrate_durable_inbox();
+            self.migrate_durable_inbox()?;
+            return self.migrate_command_indexes();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2952,7 +2972,8 @@ impl RchSqliteStore {
             }
         }
         self.integrity_check()?;
-        self.migrate_durable_inbox()
+        self.migrate_durable_inbox()?;
+        self.migrate_command_indexes()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -10652,12 +10673,20 @@ fn delete_payload_row(
 fn upsert_payload_row<T>(
     transaction: &Transaction<'_>,
     table: &str,
-    indexed_columns: Vec<(&'static str, SqlValue)>,
+    mut indexed_columns: Vec<(&'static str, SqlValue)>,
     payload: &T,
 ) -> Result<(), RchCoreError>
 where
     T: Serialize,
 {
+    for (column, value) in sqlite_command_projections::columns(table, payload)? {
+        if !indexed_columns
+            .iter()
+            .any(|(existing, _)| *existing == column)
+        {
+            indexed_columns.push((column, value));
+        }
+    }
     let column_names = indexed_columns
         .iter()
         .map(|(column, _)| *column)
@@ -10677,6 +10706,7 @@ where
         &format!("INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})"),
         params_from_iter(values),
     )?;
+    sqlite_command_projections::maintain_companion_indexes(transaction, table, payload)?;
     Ok(())
 }
 
@@ -10756,31 +10786,7 @@ fn save_topic_snapshot_tables(
         )?;
     }
     for message in &snapshot.messages {
-        let projection = message_queue_projection(message);
-        transaction.execute(
-            "INSERT INTO rch_messages (
-                message_id,
-                payload,
-                delivery_state,
-                dispatch_status,
-                next_attempt_at_ts_ms,
-                attempts,
-                priority,
-                batch_id,
-                created_ts_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                message.message_id,
-                encode_msgpack(message)?,
-                projection.delivery_state,
-                projection.dispatch_status,
-                projection.next_attempt_at_ts_ms,
-                projection.attempts,
-                projection.priority,
-                projection.batch_id,
-                projection.created_ts_ms,
-            ],
-        )?;
+        sqlite_message_history::write_message(transaction, message)?;
     }
     for client in &snapshot.clients {
         transaction.execute(
@@ -11369,8 +11375,8 @@ fn save_registry_snapshot_tables(
 ) -> Result<(), RchCoreError> {
     for marker in &snapshot.markers {
         transaction.execute(
-            "INSERT INTO rch_markers (object_destination_hash, payload) VALUES (?1, ?2)",
-            params![marker.object_destination_hash, encode_msgpack(marker)?],
+            "INSERT INTO rch_markers (object_destination_hash, payload, local_id) VALUES (?1, ?2, ?3)",
+            params![marker.object_destination_hash, encode_msgpack(marker)?, marker.local_id],
         )?;
     }
     for zone in &snapshot.zones {
@@ -11399,12 +11405,13 @@ fn save_registry_snapshot_tables(
     }
     for attachment in &snapshot.file_attachments {
         transaction.execute(
-            "INSERT INTO rch_file_attachments (file_id, category, payload)
-             VALUES (?1, ?2, ?3)",
+            "INSERT INTO rch_file_attachments (file_id, category, payload, topic_id)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
                 sqlite_u64(attachment.file_id)?,
                 attachment.category,
-                encode_msgpack(attachment)?
+                encode_msgpack(attachment)?,
+                normalize_topic_id(attachment.topic_id.as_deref())
             ],
         )?;
     }
@@ -13181,7 +13188,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "5");
+        assert_eq!(store.schema_version().expect("schema version"), "6");
     }
 
     #[test]
@@ -16571,7 +16578,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "5");
+        assert_eq!(store.schema_version().expect("schema version"), "6");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16615,7 +16622,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 5);
+        assert_eq!(migration_count, 6);
 
         let index_exists: bool = store
             .connection
@@ -16675,7 +16682,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "5");
+        assert_eq!(store.schema_version().expect("schema version"), "6");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");
@@ -16903,6 +16910,7 @@ mod tests {
     }
 
     include!("topic_subscription_corrections_tests.rs");
+    include!("sqlite_scoped_tests.rs");
 }
 
 mod durable_inbox;

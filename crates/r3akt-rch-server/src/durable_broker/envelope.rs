@@ -78,14 +78,15 @@ pub(super) fn apply_envelope(
     telemetry: &mut Vec<TelemetryRecord>,
     allowlist: Option<&HashSet<String>>,
 ) -> Result<(), ApiError> {
+    unit.prepare_source(envelope.source.as_str())
+        .map_err(storage)?;
     let source = normalize_identity_key(envelope.source.as_str());
     if !bootstrap
         && unit.core_mut().identity_states().iter().any(|s| {
             normalize_identity_key(&s.identity) == source && (s.is_banned || s.is_blackholed)
         })
     {
-        unit.reject("inbound identity is banned or blackholed")
-            .map_err(storage)?;
+        unit.diagnose_rejection("inbound identity is banned or blackholed");
         return Ok(());
     }
     fn allowed(core: &mut RchCore, destination: &str, allowlist: Option<&HashSet<String>>) -> bool {
@@ -135,6 +136,8 @@ pub(super) fn apply_envelope(
         {
             return Ok(());
         }
+        unit.prepare_command(&mission).map_err(storage)?;
+        let checkpoint = unit.core_mut().snapshot();
         let checklist = is_supported_checklist_command(&command.name);
         let mut responses = if checklist {
             unit.core_mut().handle_checklist_sync_command(&mission)
@@ -145,7 +148,7 @@ pub(super) fn apply_envelope(
             .iter()
             .any(|r| r.results_field().is_some_and(|v| v["status"] == "rejected"))
         {
-            let generated = unit.core_mut().messages().to_vec();
+            let generated = unit.take_generated_messages();
             if generated.len() > 1 {
                 return Err(ApiError::Internal(
                     "command generated more than one business message".into(),
@@ -200,7 +203,7 @@ pub(super) fn apply_envelope(
                 match super::outbound::stage_business_message(unit, message, destinations) {
                     Ok(message) => published.push(message),
                     Err(ApiError::BadRequest(reason)) => {
-                        unit.reject(&reason).map_err(storage)?;
+                        unit.diagnose_rejection(&reason);
                         responses = vec![r3akt_rch_core::MissionSyncResponse::results(
                             r3akt_profile_rch::CommandResultEnvelope {
                                 command_id: mission.command_id.clone(),
@@ -227,10 +230,11 @@ pub(super) fn apply_envelope(
                 == Some("rejected")
         });
         if rejected {
-            unit.reject("domain command rejected; see persisted response intent")
-                .map_err(storage)?;
+            unit.restore_domain(checkpoint).map_err(storage)?;
+            unit.diagnose_rejection("domain command rejected; see persisted response intent");
         }
         let team = command.args.get("_rem_team_uid").and_then(Value::as_str);
+        unit.prepare_recipients(None, team).map_err(storage)?;
         let mut destinations = team
             .map(|team| {
                 unit.core_mut()
@@ -254,6 +258,8 @@ pub(super) fn apply_envelope(
             if response.event_field().is_some() && !rejected {
                 if team.is_none() {
                     if let Some(mission) = mission_uid_from_response_fields(&response) {
+                        unit.prepare_recipients(Some(&mission), None)
+                            .map_err(storage)?;
                         let snapshot = unit.core_mut().snapshot();
                         let teams = snapshot
                             .mission_team_links
@@ -309,10 +315,12 @@ pub(super) fn apply_envelope(
     }
     match &envelope.payload {
         Payload::TopicMessage(message) => {
+            unit.prepare_routing(envelope.source.as_str(), envelope.topic.as_str())
+                .map_err(storage)?;
             let body = match sanitize_group_chat_text(&message.body) {
                 Ok(value) => value,
                 Err(reason) => {
-                    unit.reject(&reason).map_err(storage)?;
+                    unit.diagnose_rejection(&reason);
                     return Ok(());
                 }
             };
@@ -320,8 +328,7 @@ pub(super) fn apply_envelope(
             if message.attachments.iter().any(|attachment| {
                 attachment.data.len() > r3akt_rch_core::MAX_DURABLE_ATTACHMENT_BYTES
             }) {
-                unit.reject("attachment exceeds durable byte limit")
-                    .map_err(storage)?;
+                unit.diagnose_rejection("attachment exceeds durable byte limit");
                 return Ok(());
             }
             let mut attachments = Vec::new();

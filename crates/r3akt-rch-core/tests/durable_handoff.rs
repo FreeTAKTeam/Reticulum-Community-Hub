@@ -364,7 +364,7 @@ fn real_process_kill_preserves_custody_and_atomic_application() {
 }
 
 #[test]
-fn inbox_snapshot_keeps_primary_only_rem_member_announces_without_history_expansion() {
+fn inbox_recipient_read_set_keeps_primary_only_rem_member_announces_without_history_expansion() {
     use r3akt_profile_rch::{MissionCommandEnvelope, RchSource};
     let path = db();
     let mut store = RchSqliteStore::open(&path).unwrap();
@@ -410,6 +410,7 @@ fn inbox_snapshot_keeps_primary_only_rem_member_announces_without_history_expans
     store.store_inbox_batch(&batch()).unwrap();
     let event = store.next_inbox_event("rch").unwrap().unwrap();
     let mut unit = store.begin_inbox_application("rch", &event, false).unwrap();
+    unit.prepare_recipients(None, Some(team)).unwrap();
     assert!(
         unit.core_mut()
             .rem_team_routing_destinations(caller, team)

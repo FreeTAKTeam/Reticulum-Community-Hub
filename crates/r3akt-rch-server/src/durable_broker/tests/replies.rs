@@ -2,24 +2,64 @@ use super::*;
 use rns_rpc::rpc::zmq::{ZmqRpcEnvelope, encode_envelope};
 use zeromq::{PushSocket, SocketSend};
 
-pub(super) async fn deliver(request: ZmqRpcEnvelope, payload: Vec<u8>) -> std::io::Result<()> {
-    // Match the daemon's one-second response budget, including the handshake.
-    // The socket's default 30-second connect timeout otherwise blocks every later request.
-    tokio::time::timeout(Duration::from_secs(1), async {
-        let mut socket = PushSocket::new();
-        socket
-            .connect(request.response_endpoint.as_deref().unwrap())
-            .await
-            .map_err(std::io::Error::other)?;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let reply = ZmqRpcEnvelope::response(request.session_id, request.request_id, payload);
-        socket
-            .send(encode_envelope(&reply)?.into())
-            .await
-            .map_err(std::io::Error::other)
-    })
-    .await
-    .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))?
+type Route = (String, String, String);
+
+#[derive(Default)]
+pub(super) struct Writer {
+    connection: Option<(Route, PushSocket)>,
+}
+
+impl Writer {
+    pub(super) async fn deliver(
+        &mut self,
+        request: ZmqRpcEnvelope,
+        payload: Vec<u8>,
+    ) -> std::io::Result<()> {
+        let endpoint = request.response_endpoint.as_ref().unwrap().clone();
+        let route = request.response_connection_id.as_ref().map(|generation| {
+            (
+                endpoint.clone(),
+                request.session_id.clone(),
+                generation.clone(),
+            )
+        });
+        // Match the daemon's socket lifetime: retain one healthy connection for
+        // this fixture's SDK client, replacing it when the response socket changes.
+        // Legacy requests have no generation and remain request-scoped.
+        let mut socket = if let Some(route) = &route {
+            self.connection
+                .take()
+                .and_then(|(key, socket)| (key == *route).then_some(socket))
+        } else {
+            None
+        };
+        // Keep the daemon's one-second budget, including the handshake. A failed
+        // or cancelled delivery drops its socket rather than retaining it.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            if socket.is_none() {
+                socket = Some(PushSocket::new());
+                socket
+                    .as_mut()
+                    .unwrap()
+                    .connect(&endpoint)
+                    .await
+                    .map_err(std::io::Error::other)?;
+            }
+            let reply = ZmqRpcEnvelope::response(request.session_id, request.request_id, payload);
+            socket
+                .as_mut()
+                .unwrap()
+                .send(encode_envelope(&reply)?.into())
+                .await
+                .map_err(std::io::Error::other)
+        })
+        .await
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))??;
+        if let Some(route) = route {
+            self.connection = Some((route, socket.unwrap()));
+        }
+        Ok(())
+    }
 }
 
 #[test]

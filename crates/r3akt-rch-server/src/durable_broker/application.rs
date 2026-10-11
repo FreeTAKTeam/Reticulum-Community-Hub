@@ -1,9 +1,9 @@
 use super::envelope::apply_envelope;
 use super::{
     ApiError, AppState, ClientRecord, MarkerRecord, OutboundMessageRecord, SubscriberRecord,
-    TopicRecord, Value, ZoneRecord, bound_presentation, broadcast_message_event,
-    broadcast_system_event, broadcast_telemetry_event, ensure_kill_switch_persistence_unlocked,
-    json, normalize_identity_key, open, storage,
+    TopicRecord, Value, ZoneRecord, broadcast_message_event, broadcast_system_event,
+    broadcast_telemetry_event, ensure_kill_switch_persistence_unlocked, json,
+    normalize_identity_key, open, storage,
 };
 pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> {
     let _quiescence = state
@@ -183,42 +183,43 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
         metadata: json!({"position":event.position}),
     };
     unit.stage_system_event(&system_event).map_err(storage)?;
-    let after = unit.commit().map_err(storage)?;
-    if matches!(event.event_type.as_str(), "inbound" | "bootstrap_message") {
-        *markers = after
-            .markers
-            .into_iter()
-            .map(|r| (r.object_destination_hash.clone(), MarkerRecord::from(r)))
-            .collect();
-        *zones = after
-            .zones
-            .into_iter()
-            .map(|r| (r.zone_id.clone(), ZoneRecord::from(r)))
-            .collect();
-        *clients = after
-            .clients
-            .into_iter()
-            .map(|r| {
-                (
-                    normalize_identity_key(&r.identity).unwrap_or_else(|| r.identity.clone()),
-                    ClientRecord::from(r),
-                )
-            })
-            .collect();
-        *topics = after
-            .topics
-            .into_iter()
-            .map(|r| (r.topic_id.clone(), TopicRecord::from(r)))
-            .collect();
-        *subscribers = after
-            .subscribers
-            .into_iter()
-            .map(|r| {
-                let r = SubscriberRecord::from(r);
-                (r.subscriber_id.clone(), r)
-            })
-            .collect();
-    }
+    let delta = unit.commit_delta().map_err(storage)?;
+    super::super::message_residency::record_command(state, &delta);
+    publish_delta(
+        &mut markers,
+        &delta.before.markers,
+        delta.after.markers,
+        |r| r.object_destination_hash.clone(),
+        MarkerRecord::from,
+    );
+    publish_delta(
+        &mut zones,
+        &delta.before.zones,
+        delta.after.zones,
+        |r| r.zone_id.clone(),
+        ZoneRecord::from,
+    );
+    publish_delta(
+        &mut clients,
+        &delta.before.clients,
+        delta.after.clients,
+        |r| normalize_identity_key(&r.identity).unwrap_or_else(|| r.identity.clone()),
+        ClientRecord::from,
+    );
+    publish_delta(
+        &mut topics,
+        &delta.before.topics,
+        delta.after.topics,
+        |r| r.topic_id.clone(),
+        TopicRecord::from,
+    );
+    publish_delta(
+        &mut subscribers,
+        &delta.before.subscribers,
+        delta.after.subscribers,
+        |r| SubscriberRecord::from(r.clone()).subscriber_id,
+        SubscriberRecord::from,
+    );
     for record in &published {
         if let Some(existing) = messages
             .iter_mut()
@@ -229,7 +230,14 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
             messages.push(record.clone());
         }
     }
-    bound_presentation(&mut messages);
+    super::super::message_residency::bound(
+        state,
+        &mut messages,
+        &published
+            .iter()
+            .map(|record| record.message_id.as_str())
+            .collect::<Vec<_>>(),
+    )?;
     // Read only the bounded number of diagnostics staged by this input, rather
     // than decoding the presentation history on every ordinary upload/message.
     let committed_events = store
@@ -276,4 +284,26 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
         broadcast_message_event(state, &record);
     }
     Ok(true)
+}
+
+fn publish_delta<T: Clone + PartialEq, U>(
+    map: &mut std::collections::HashMap<String, U>,
+    before: &[T],
+    after: Vec<T>,
+    key: impl Fn(&T) -> String,
+    convert: impl Fn(T) -> U,
+) {
+    let mut prior = before
+        .iter()
+        .map(|record| (key(record), record))
+        .collect::<std::collections::HashMap<_, _>>();
+    for record in after {
+        let id = key(&record);
+        if prior.remove(&id) != Some(&record) {
+            map.insert(id, convert(record));
+        }
+    }
+    for id in prior.keys() {
+        map.remove(id);
+    }
 }
