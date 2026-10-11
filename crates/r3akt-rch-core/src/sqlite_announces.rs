@@ -192,15 +192,23 @@ pub(super) fn write_identity_announce(
     replace: bool,
 ) -> Result<(), RchCoreError> {
     let sql = if replace {
-        "INSERT OR REPLACE INTO rch_identity_announces (
+        "INSERT INTO rch_identity_announces (
             destination_hash, payload, last_seen_ts_ms,
-            normalized_destination_hash, normalized_announced_identity_hash
-         ) VALUES (?1, ?2, ?3, ?4, ?5)"
+            normalized_destination_hash, normalized_announced_identity_hash,
+            directory_owner, directory_name, directory_type, directory_priority
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(destination_hash) DO UPDATE SET payload=excluded.payload,
+            last_seen_ts_ms=excluded.last_seen_ts_ms,
+            normalized_destination_hash=excluded.normalized_destination_hash,
+            normalized_announced_identity_hash=excluded.normalized_announced_identity_hash,
+            directory_owner=excluded.directory_owner,directory_name=excluded.directory_name,
+            directory_type=excluded.directory_type,directory_priority=excluded.directory_priority"
     } else {
         "INSERT INTO rch_identity_announces (
             destination_hash, payload, last_seen_ts_ms,
-            normalized_destination_hash, normalized_announced_identity_hash
-         ) VALUES (?1, ?2, ?3, ?4, ?5)"
+            normalized_destination_hash, normalized_announced_identity_hash,
+            directory_owner, directory_name, directory_type, directory_priority
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
     };
     connection.execute(
         sql,
@@ -210,6 +218,14 @@ pub(super) fn write_identity_announce(
             record.last_seen_ts_ms,
             normalize_hash(Some(&record.destination_hash)),
             normalize_hash(record.announced_identity_hash.as_deref()),
+            normalize_hash(record.announced_identity_hash.as_deref())
+                .or_else(|| normalize_hash(Some(&record.destination_hash))),
+            super::sqlite_identity_directory::search_text(record.display_name.as_deref()),
+            super::sqlite_identity_directory::client_type(&record.client_type),
+            record
+                .source_interface
+                .as_deref()
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("destination")),
         ],
     )?;
     Ok(())

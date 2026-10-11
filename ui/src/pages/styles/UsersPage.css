@@ -9,6 +9,24 @@
 }
 
 
+/* Allow the directory panel to shrink inside the registry's second grid track. */
+.registry-grid {
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+}
+
+.registry-main {
+  min-width: 0;
+}
+
+.registry-main > .panel-header {
+  flex-wrap: wrap;
+}
+
+.registry-main > .panel-header > .panel-tabs {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
 .tree-list {
   margin-top: 10px;
   display: flex;

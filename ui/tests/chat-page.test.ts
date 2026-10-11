@@ -65,3 +65,25 @@ describe("independent chat initialization", () => {
     expect(store.messages.map((entry) => entry.content)).toEqual(["Test1234", "Live receipt"]);
   });
 });
+it("enriches visible canonical/destination labels without treating discovery as online and refreshes moderation", async () => {
+  const now = new Date().toISOString(); let banned = false;
+  getMock.mockImplementation((path: string) => {
+    if (path === "/api/v1/app/info") { return Promise.resolve({ identity_directory: { supported: true, page_size: 50, recent_hours: 24, lookup_max_entries: 500, lookup_concurrency: 4 } }); }
+    if (path.startsWith("/Client")) { return Promise.resolve([{ identity: "announce-peer", last_seen: now }, { identity: "chat-peer", last_seen: now, last_chat_ts_ms: Date.now() }]); }
+    if (path.startsWith("/Identities")) {
+      const identity = new URLSearchParams(path.split("?")[1]).get("identity");
+      return Promise.resolve({ items: [{ Identity: `canonical-${identity}`, DisplayName: `Label ${identity}`, Status: "active", RecentlyHeardAt: now, IsBanned: banned }], page: 1, per_page: 1, total: 1, total_pages: 1, has_next: false });
+    }
+    return Promise.resolve([]);
+  });
+  const pinia = createPinia(); setActivePinia(pinia); const root = document.createElement("div"); document.body.append(root);
+  const app = createApp(ChatPage).use(pinia); app.mount(root); await settle(); await settle();
+  const peers = [...root.querySelectorAll(".directory-item")];
+  const announce = peers.find((entry) => entry.textContent?.includes("Label announce-peer"));
+  const chat = peers.find((entry) => entry.textContent?.includes("Label chat-peer"));
+  expect(announce).toBeDefined(); expect(announce?.querySelector(".presence-dot.online")).toBeNull(); expect(chat?.querySelector(".presence-dot.online")).not.toBeNull();
+  expect(getMock.mock.calls.filter(([path]) => path.startsWith("/Identities")).every(([path]) => path.includes("identity=") && path.includes("per_page=1"))).toBe(true);
+  banned = true; [...root.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Refresh")?.click(); await settle(); await settle();
+  expect(root.querySelectorAll(".presence-dot.online")).toHaveLength(0);
+  app.unmount(); root.remove();
+});

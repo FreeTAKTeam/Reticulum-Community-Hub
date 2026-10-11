@@ -1,3 +1,4 @@
+import { useIdentityDirectoryStore } from "./identity-directory";
 import { defineStore } from "pinia";
 import { useBackendScope } from "../composables/useBackendScope";
 import { computed, ref } from "vue";
@@ -202,12 +203,13 @@ export const useDashboardStore = defineStore("dashboard", () => {
     buildEventCallsignLookup({
       teamMembers: teamMembers.value,
       clients: usersStore.clients,
-      identities: usersStore.identities,
+
       remPeers: usersStore.remPeers
     })
   );
 
   const refresh = async () => {
+    useIdentityDirectoryStore().refreshVisible();
     const assertCurrent = backendScope();
     loading.value = true;
     const connectionStore = useConnectionStore();

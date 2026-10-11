@@ -18,7 +18,12 @@ mod operation_rights;
 mod text;
 
 mod sqlite_announces;
+mod sqlite_identity_directory;
 pub use sqlite_announces::IdentityAnnounceSummary;
+pub use sqlite_identity_directory::{
+    IdentityDirectoryClientOverlay, IdentityDirectoryEntry, IdentityDirectoryPage,
+    IdentityDirectoryQuery,
+};
 mod sqlite_command_projections;
 mod sqlite_command_reads;
 mod sqlite_commands;
@@ -420,7 +425,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "6";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "7";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -2038,10 +2043,11 @@ impl RchSqliteStore {
         }
         let transaction = self.connection.transaction()?;
         for record in records {
-            transaction.execute(
-                "INSERT OR REPLACE INTO rch_identity_states (identity, payload)
-                 VALUES (?1, ?2)",
-                params![record.identity, encode_msgpack(record)?],
+            upsert_payload_row(
+                &transaction,
+                "rch_identity_states",
+                vec![("identity", sql_text(&record.identity))],
+                record,
             )?;
         }
         transaction.commit()?;
@@ -2052,11 +2058,7 @@ impl RchSqliteStore {
         &mut self,
         record: &IdentityStateRecord,
     ) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "INSERT OR REPLACE INTO rch_identity_states (identity, payload) VALUES (?1, ?2)",
-            params![record.identity, encode_msgpack(record)?],
-        )?;
-        Ok(())
+        self.upsert_identity_states(std::slice::from_ref(record))
     }
 
     pub fn upsert_topic(&mut self, record: &TopicRecord) -> Result<(), RchCoreError> {
@@ -2806,7 +2808,8 @@ impl RchSqliteStore {
             )?;
         if migration_4_applied {
             self.migrate_durable_inbox()?;
-            return self.migrate_command_indexes();
+            self.migrate_command_indexes()?;
+            return self.migrate_identity_directory();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2973,7 +2976,8 @@ impl RchSqliteStore {
         }
         self.integrity_check()?;
         self.migrate_durable_inbox()?;
-        self.migrate_command_indexes()
+        self.migrate_command_indexes()?;
+        self.migrate_identity_directory()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -10702,10 +10706,19 @@ where
         .map(|(_, value)| value)
         .collect::<Vec<_>>();
     values.push(SqlValue::Blob(encode_msgpack(payload)?));
-    transaction.execute(
-        &format!("INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})"),
-        params_from_iter(values),
-    )?;
+    let sql = if table == "rch_identity_announces" {
+        let updates = column_names
+            .split(", ")
+            .map(|column| format!("{column}=excluded.{column}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO {table} ({column_names}) VALUES ({placeholders}) ON CONFLICT(destination_hash) DO UPDATE SET {updates}"
+        )
+    } else {
+        format!("INSERT OR REPLACE INTO {table} ({column_names}) VALUES ({placeholders})")
+    };
+    transaction.execute(&sql, params_from_iter(values))?;
     sqlite_command_projections::maintain_companion_indexes(transaction, table, payload)?;
     Ok(())
 }
@@ -13188,7 +13201,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "6");
+        assert_eq!(store.schema_version().expect("schema version"), "7");
     }
 
     #[test]
@@ -16578,7 +16591,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "6");
+        assert_eq!(store.schema_version().expect("schema version"), "7");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16622,7 +16635,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 6);
+        assert_eq!(migration_count, 7);
 
         let index_exists: bool = store
             .connection
@@ -16682,7 +16695,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "6");
+        assert_eq!(store.schema_version().expect("schema version"), "7");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");

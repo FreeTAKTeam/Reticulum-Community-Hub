@@ -197,7 +197,8 @@ where
         reticulum_config_path.as_deref(),
         &hub_service_config,
     )?
-    .with_api_bind(api_bind);
+    .with_api_bind(api_bind)
+    .configure_identity_directory()?;
     state.start_managed_reticulumd()?;
     if let Err(error) = state.register_lxmf_zmq_service_identity() {
         cli_runtime::cleanup_after_startup_failure(&state, "identity registration");

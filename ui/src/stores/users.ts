@@ -8,12 +8,13 @@ import { loadDirectory } from "../api/directory";
 import { post } from "../api/client";
 import { put } from "../api/client";
 import type { ClientEntry } from "../api/types";
-import type { IdentityEntry } from "../api/types";
+import { useIdentityDirectoryStore } from "./identity-directory";
 import type { RemPeerEntry } from "../api/types";
 
 type ClientApiPayload = {
   identity?: string;
   last_seen?: string;
+  last_chat_ts_ms?: number | null;
   metadata?: Record<string, unknown>;
   display_name?: string;
   client_type?: string;
@@ -35,6 +36,8 @@ const fromApiClient = (payload: ClientApiPayload): ClientEntry => ({
   id: payload.identity,
   identity_id: payload.identity,
   last_seen_at: payload.last_seen,
+  last_chat_at: typeof payload.last_chat_ts_ms === "number" && Number.isSafeInteger(payload.last_chat_ts_ms) && Math.abs(payload.last_chat_ts_ms) <= 8640000000000000
+    ? new Date(payload.last_chat_ts_ms).toISOString() : undefined,
   display_name: payload.display_name ?? displayNameFromMetadata(payload.metadata),
   metadata: payload.metadata,
   client_type: payload.client_type,
@@ -43,78 +46,20 @@ const fromApiClient = (payload: ClientApiPayload): ClientEntry => ({
   is_rem_capable: payload.is_rem_capable
 });
 
-type IdentityApiPayload = {
-  Identity?: string;
-  DisplayName?: string | null;
-  Status?: string;
-  LastSeen?: string | null;
-  Metadata?: Record<string, unknown>;
-  IsBanned?: boolean;
-  IsBlackholed?: boolean;
-  ClientType?: string;
-  AnnounceCapabilities?: string[];
-  RemMode?: string | null;
-  IsRemCapable?: boolean;
-  IsAnnounced?: boolean;
-  AnnounceDestinationHash?: string | null;
-  AnnouncedIdentityHash?: string | null;
-  AnnounceSource?: string | null;
-  AnnounceFirstSeen?: string | null;
-  AnnounceLastSeen?: string | null;
-};
-
-const fromApiIdentity = (payload: IdentityApiPayload): IdentityEntry => ({
-  id: payload.Identity,
-  status: payload.Status,
-  last_seen: payload.AnnounceLastSeen ?? payload.LastSeen ?? undefined,
-  display_name: payload.DisplayName ?? displayNameFromMetadata(payload.Metadata),
-  metadata: payload.Metadata,
-  banned: payload.IsBanned,
-  blackholed: payload.IsBlackholed,
-  client_type: payload.ClientType,
-  announce_capabilities: payload.AnnounceCapabilities,
-  rem_mode: payload.RemMode ?? undefined,
-  is_rem_capable: payload.IsRemCapable,
-  is_announced: payload.IsAnnounced,
-  announce_destination_hash: payload.AnnounceDestinationHash ?? undefined,
-  announced_identity_hash: payload.AnnouncedIdentityHash ?? undefined,
-  announce_source: payload.AnnounceSource ?? undefined,
-  announce_first_seen: payload.AnnounceFirstSeen ?? undefined,
-  announce_last_seen: payload.AnnounceLastSeen ?? undefined
-});
-
 type RemPeersApiPayload = {
   effective_connected_mode?: boolean;
   items?: RemPeerEntry[];
 };
 
-const dedupeIdentities = (entries: IdentityEntry[]): IdentityEntry[] => {
-  const byId = new Map<string, IdentityEntry>();
-  const withoutId: IdentityEntry[] = [];
-  entries.forEach((entry) => {
-    if (!entry.id) {
-      withoutId.push(entry);
-      return;
-    }
-    byId.set(entry.id, entry);
-  });
-  return [...byId.values(), ...withoutId];
-};
-
 export const useUsersStore = defineStore("users", () => {
   const clients = ref<ClientEntry[]>([]);
-  const identities = ref<IdentityEntry[]>([]);
   const remPeers = ref<RemPeerEntry[]>([]);
   const remConnectedMode = ref(false);
   const loading = ref(false);
-  type Resource = "clients" | "identities" | "remPeers";
-  const errors = ref<Record<Resource, string | null>>({ clients: null, identities: null, remPeers: null });
-  const resourceLoading = ref<Record<Resource, boolean>>({ clients: false, identities: false, remPeers: false });
-  const identityTotal = ref<number | null>(null);
-  const identitiesComplete = ref(false);
-  const backendScope = useBackendScope([
-    clients, identities, remPeers, remConnectedMode, loading, errors, resourceLoading, identityTotal, identitiesComplete
-  ]);
+  type Resource = "clients" | "remPeers";
+  const errors = ref<Record<Resource, string | null>>({ clients: null, remPeers: null });
+  const resourceLoading = ref<Record<Resource, boolean>>({ clients: false, remPeers: false });
+  const backendScope = useBackendScope([clients, remPeers, remConnectedMode, loading, errors, resourceLoading]);
   const connection = useConnectionStore();
   const pending = new Map<Resource, { identity: string; promise: Promise<void> }>();
 
@@ -148,16 +93,6 @@ export const useUsersStore = defineStore("users", () => {
       clients.value = first ? entries : [...clients.value, ...entries];
     }
   ));
-  const fetchIdentities = () => loadResource("identities", async (assertCurrent) => {
-    identitiesComplete.value = false;
-    await loadDirectory(endpoints.identities, "Identity", assertCurrent, (items, total, first) => {
-      const entries = items.map(fromApiIdentity);
-      identities.value = dedupeIdentities(first ? entries : [...identities.value, ...entries]);
-      identityTotal.value = total;
-    });
-    assertCurrent();
-    identitiesComplete.value = true;
-  });
   const fetchRemPeers = () => loadResource("remPeers", async (assertCurrent) => {
     const response = await get<RemPeersApiPayload>(endpoints.remPeers);
     assertCurrent();
@@ -166,57 +101,34 @@ export const useUsersStore = defineStore("users", () => {
     remConnectedMode.value = Boolean(response.effective_connected_mode);
   });
   const fetchUsers = async () => {
-    await Promise.all([fetchClients(), fetchIdentities(), fetchRemPeers()]);
+    await Promise.all([fetchClients(), fetchRemPeers()]);
   };
 
   const actOnClient = async (clientId: string, action: "Ban" | "Unban" | "Blackhole") => {
-    const identityIndex = identities.value.findIndex((entry) => entry.id === clientId);
-    const previous = identityIndex >= 0 ? { ...identities.value[identityIndex] } : null;
-    if (identityIndex >= 0) {
-      if (action === "Ban") {
-        identities.value[identityIndex].banned = true;
-      }
-      if (action === "Unban") {
-        identities.value[identityIndex].banned = false;
-        identities.value[identityIndex].blackholed = false;
-      }
-      if (action === "Blackhole") {
-        identities.value[identityIndex].blackholed = true;
-      }
-    }
-    try {
-      const updated = await post<IdentityApiPayload>(`${endpoints.clients}/${clientId}/${action}`);
-      if (identityIndex >= 0) {
-        identities.value[identityIndex] = fromApiIdentity(updated);
-      }
-    } catch (error) {
-      if (identityIndex >= 0 && previous) {
-        identities.value[identityIndex] = previous;
-      }
-      throw error;
-    }
+    await post<unknown>(`${endpoints.clients}/${clientId}/${action}`);
+    useIdentityDirectoryStore().invalidate();
   };
 
   const joinIdentity = async (identity: string) => {
     await post<boolean>(`${endpoints.rth}?identity=${encodeURIComponent(identity)}`);
+    useIdentityDirectoryStore().invalidate();
   };
 
   const leaveIdentity = async (identity: string) => {
     await put<boolean>(`${endpoints.rth}?identity=${encodeURIComponent(identity)}`);
+    useIdentityDirectoryStore().invalidate();
   };
 
   return {
     clients,
-    identities,
     remPeers,
     remConnectedMode,
     loading,
     fetchUsers,
     fetchClients,
+    fetchRemPeers,
     errors,
     resourceLoading,
-    identityTotal,
-    identitiesComplete,
     actOnClient,
     joinIdentity,
     leaveIdentity

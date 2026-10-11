@@ -261,6 +261,22 @@ describe("topics page", () => {
     expect(text()).not.toContain("Alpha topic");
   });
 
+  it("enriches only visible subscriber destinations and refreshes changed labels", async () => {
+    const previous = getMock.getMockImplementation()!;
+    let name = "Canonical subscriber label";
+    getMock.mockImplementation((path: string) => {
+      if (path === "/Client?page=1&per_page=100") { return Promise.resolve([]); }
+      if (path === "/Subscriber") { return Promise.resolve([{ ...subscriberAlpha, Metadata: {}, metadata: {} }]); }
+      if (path === "/api/v1/app/info") { return Promise.resolve({ identity_directory: { supported: true, page_size: 50, recent_hours: 24, lookup_max_entries: 500, lookup_concurrency: 4 } }); }
+      if (path.startsWith("/Identities")) { return Promise.resolve({ items: [{ Identity: "canonical", DisplayName: name }], page: 1, per_page: 1, total: 1, total_pages: 1, has_next: false }); }
+      return previous(path);
+    });
+    page = await mountPage(); await clickButton("Subscribers");
+    expect(text()).toContain(name);
+    expect(getMock.mock.calls.filter(([path]) => path.startsWith("/Identities")).every(([path]) => path.includes("identity=dest-alpha") && path.includes("per_page=1"))).toBe(true);
+    name = "Updated subscriber label"; await clickButton("Refresh"); await waitForUi(); expect(text()).toContain(name);
+  });
+
   it("honors subscriber delete confirmation before removing a subscriber", async () => {
     confirmMock.mockReturnValueOnce(false).mockReturnValueOnce(true);
     page = await mountPage();

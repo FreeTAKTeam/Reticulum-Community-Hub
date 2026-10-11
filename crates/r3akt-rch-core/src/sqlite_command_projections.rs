@@ -35,6 +35,15 @@ pub(super) fn columns<T: Serialize>(
     table: &str,
     record: &T,
 ) -> Result<Vec<(&'static str, SqlValue)>, RchCoreError> {
+    let mut columns = base_columns(table, record)?;
+    columns.extend(super::sqlite_identity_directory::columns(table, record)?);
+    Ok(columns)
+}
+
+fn base_columns<T: Serialize>(
+    table: &str,
+    record: &T,
+) -> Result<Vec<(&'static str, SqlValue)>, RchCoreError> {
     if table == "rch_messages" {
         let value =
             serde_json::to_value(record).map_err(|e| RchCoreError::Encode(e.to_string()))?;
@@ -193,7 +202,7 @@ pub(super) fn rebuild(connection: &Connection) -> Result<(), RchCoreError> {
             let record: Value = decode_msgpack(&payload).map_err(|error| {
                 RchCoreError::Decode(format!("command index rebuild {table} row {id}: {error}"))
             })?;
-            let projected = columns(table, &record)?;
+            let projected = base_columns(table, &record)?;
             if !projected.is_empty() {
                 let assignments = projected
                     .iter()
@@ -219,6 +228,9 @@ pub(super) fn rebuild(connection: &Connection) -> Result<(), RchCoreError> {
             }
             maintain_companion_indexes(connection, table, &record)?;
         }
+    }
+    if super::sqlite_table_exists(connection, "rch_identity_directory")? {
+        super::sqlite_identity_directory::rebuild_compatibility(connection)?;
     }
     Ok(())
 }

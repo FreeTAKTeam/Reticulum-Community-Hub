@@ -98,7 +98,7 @@
             </div>
             <div class="conversation-state">
               <span class="scope-pill">{{ activeScope.toUpperCase() }}</span>
-              <BaseButton variant="secondary" icon-left="refresh" @click="chatStore.fetchMessages()">Refresh</BaseButton>
+              <BaseButton variant="secondary" icon-left="refresh" @click="refreshChat">Refresh</BaseButton>
             </div>
           </div>
 
@@ -203,6 +203,8 @@ import { useToastStore } from "../stores/toasts";
 import { useTopicsStore } from "../stores/topics";
 import { useUsersStore } from "../stores/users";
 import { useAppStore } from "../stores/app";
+import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
+import { useIdentityDirectoryStore } from "../stores/identity-directory";
 import { resolveIdentityLabel } from "../utils/identity";
 import { isPresenceOnline } from "../utils/presence";
 
@@ -233,35 +235,25 @@ const scopeOptions = [
   { value: "broadcast", label: "Broadcast" }
 ];
 
-const identityPresenceById = computed(() => {
-  const map = new Map<string, { status?: string; lastSeen?: string }>();
-  usersStore.identities.forEach((identity) => {
-    if (!identity.id) {
-      return;
-    }
-    const value = {
-      status: identity.status,
-      lastSeen: identity.last_seen
-    };
-    map.set(identity.id, value);
-    map.set(identity.id.toLowerCase(), value);
-  });
-  return map;
-});
+const identityDirectory = useIdentityDirectoryStore();
+
+const refreshChat = async () => {
+  identityDirectory.refreshVisible();
+  await chatStore.fetchMessages();
+};
 
 const peers = computed(() => {
   const entries = usersStore.clients
     .filter((client) => client.id)
     .map((client) => {
       const clientId = client.id as string;
-      const identityPresence =
-        identityPresenceById.value.get(clientId) ?? identityPresenceById.value.get(clientId.toLowerCase());
+      const identity = identityDirectory.lookup(clientId);
       return {
         id: clientId,
-        label: resolveIdentityLabel(client.display_name, clientId),
+        label: resolveIdentityLabel(client.display_name ?? identity?.display_name, clientId),
         online: isPresenceOnline({
-          status: identityPresence?.status,
-          lastSeenAt: client.last_seen_at ?? identityPresence?.lastSeen
+          status: identity?.banned ? "banned" : identity?.blackholed ? "blackholed" : undefined,
+          lastSeenAt: client.last_chat_at
         })
       };
     });
@@ -283,6 +275,8 @@ const filteredPeers = computed(() => {
   }
   return peers.value.filter((peer) => peer.label.toLowerCase().includes(query));
 });
+
+useIdentityEnrichment(computed(() => directoryTab.value === "peers" ? filteredPeers.value.map((peer) => peer.id) : []));
 
 const filteredTopics = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
