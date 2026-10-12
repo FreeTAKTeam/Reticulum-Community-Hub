@@ -17,7 +17,7 @@ it("clears old file IDs and chat preview paths before a new hub refresh can fail
   const chat = useChatStore();
   vi.mocked(get).mockResolvedValueOnce([{ FileID: 1, Name: "hub A file" }]).mockResolvedValueOnce([]);
   await files.fetchFiles();
-  chat.upsertMessage({ message_id: "A", attachments: [{ file_id: 1, category: "image" }] });
+  chat.upsertMessage({ message_id: "A", created_at: new Date().toISOString(), attachments: [{ file_id: 1, category: "image" }] });
   vi.mocked(getBlob).mockResolvedValue(new Blob(["image"], { type: "image/png" }));
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:A"), revokeObjectURL: vi.fn() });
   const host = document.createElement("div"); document.body.appendChild(host);

@@ -67,10 +67,6 @@ pub(super) fn write_message(
     record: &MessageRecord,
 ) -> Result<(), RchCoreError> {
     let queue = message_queue_projection(record);
-    connection.execute(
-        "DELETE FROM rch_messages WHERE message_id=?1",
-        [&record.message_id],
-    )?;
     let mut columns = vec![
         ("message_id", sql_text(&record.message_id)),
         ("delivery_state", sql_text(&queue.delivery_state)),
@@ -95,6 +91,12 @@ pub(super) fn write_message(
             *value = SqlValue::Integer(super::utc_now_ms());
         }
     }
+    let assignments = columns
+        .iter()
+        .map(|(name, _)| format!("{name}=excluded.{name}"))
+        .chain(["payload=excluded.payload".to_string()])
+        .collect::<Vec<_>>()
+        .join(",");
     let names = columns
         .iter()
         .map(|(name, _)| *name)
@@ -111,7 +113,7 @@ pub(super) fn write_message(
         .collect::<Vec<_>>()
         .join(",");
     connection.execute(
-        &format!("INSERT INTO rch_messages({names}) VALUES({placeholders})"),
+        &format!("INSERT INTO rch_messages({names}) VALUES({placeholders}) ON CONFLICT(message_id COLLATE NOCASE) DO UPDATE SET {assignments}"),
         params_from_iter(values),
     )?;
     Ok(())
@@ -131,7 +133,7 @@ impl RchSqliteStore {
         let payload: Option<Vec<u8>> = self
             .connection
             .query_row(
-                "SELECT payload FROM rch_messages WHERE message_id=?1",
+                "SELECT payload FROM rch_messages WHERE message_id=?1 COLLATE NOCASE",
                 [id],
                 |row| row.get(0),
             )

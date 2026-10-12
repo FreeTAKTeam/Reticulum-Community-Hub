@@ -98,55 +98,19 @@
             </div>
             <div class="conversation-state">
               <span class="scope-pill">{{ activeScope.toUpperCase() }}</span>
-              <BaseButton variant="secondary" icon-left="refresh" @click="chatStore.fetchMessages()">Refresh</BaseButton>
+              <BaseButton variant="secondary" icon-left="refresh" @click="refreshHistory">Refresh</BaseButton>
             </div>
           </div>
 
-          <div ref="messageScroller" class="message-scroller">
-            <div class="message-stack">
-              <div v-if="chatStore.loading" class="panel-empty">Loading messages...</div>
-              <div v-else-if="visibleMessages.length === 0" class="panel-empty">
-                No messages yet. Start a conversation.
-              </div>
-              <article
-                v-for="message in visibleMessages"
-                :key="message.message_id || `${message.content}-${message.created_at}`"
-                class="message-card"
-                :class="{ outbound: message.direction === 'outbound' }"
-              >
-                <div class="message-meta">
-                  <div class="message-source">{{ resolveMessageSource(message) }}</div>
-                  <div class="message-state">
-                    <span>{{ message.state || "sent" }}</span>
-                    <span>{{ formatTimestamp(message.created_at) }}</span>
-                  </div>
-                </div>
-                <div class="message-body">{{ message.content || "Attachment delivered." }}</div>
-                <div v-if="message.attachments && message.attachments.length" class="attachment-list">
-                  <div
-                    v-for="attachment in message.attachments"
-                    :key="`${attachment.file_id}-${attachment.name}`"
-                    class="attachment-card"
-                  >
-                    <div v-if="attachment.category === 'image' && attachment.file_id" class="attachment-image">
-                      <img v-if="attachmentPreviewUrls[attachmentPath(attachment)]" :src="attachmentPreviewUrls[attachmentPath(attachment)]" :alt="attachment.name ?? 'image attachment'" />
-                      <div class="attachment-meta">
-                        <span>{{ attachment.name }}</span>
-                        <span>{{ formatSize(attachment.size) }}</span>
-                      </div>
-                    </div>
-                    <div v-else class="attachment-file">
-                      <div>
-                        <div class="attachment-name">{{ attachment.name }}</div>
-                        <div class="attachment-type">{{ attachment.media_type || "File" }}</div>
-                      </div>
-                      <div class="attachment-size">{{ formatSize(attachment.size) }}</div>
-                    </div>
-                    <BaseButton variant="secondary" icon-left="download" @click="downloadAttachment(attachment)">Download</BaseButton>
-                  </div>
-                </div>
-              </article>
+          <div class="chat-history-window">
+            <div class="history-controls">
+              <BaseButton variant="secondary" :disabled="chatStore.loading || !chatStore.nextCursor" @click="loadOlder">Older messages</BaseButton>
+              <BaseButton v-if="chatStore.viewingHistory" variant="secondary" @click="refreshHistory">Latest messages</BaseButton>
+              <span v-if="!chatStore.paging" role="status">This backend does not support older history pages.</span>
+              <span v-if="chatStore.error" role="alert">{{ chatStore.error }}</span>
             </div>
+            <ChatMessageList ref="messageList" :messages="visibleMessages" :loading="chatStore.loading" :source-label="resolveMessageSource" @download="downloadAttachment" />
+            <output v-if="development" class="chat-diagnostics" aria-label="Chat cache diagnostics">{{ JSON.stringify(chatStore.diagnostics) }}</output>
           </div>
 
           <div class="composer-panel">
@@ -183,16 +147,16 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { nextTick } from "vue";
 import { onBeforeUnmount } from "vue";
 import { onMounted } from "vue";
 import { ref } from "vue";
 import { watch } from "vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseSelect from "../components/BaseSelect.vue";
+import ChatMessageList from "../components/chat/ChatMessageList.vue";
+import { decodeChatMessage } from "../api/chat";
 import { endpoints } from "../api/endpoints";
 import { getBlob } from "../api/client";
-import { useAttachmentPreviews } from "../composables/useAttachmentPreviews";
 import type { ChatAttachment } from "../api/types";
 import type { ChatMessage } from "../api/types";
 import type { WsMessage } from "../api/ws";
@@ -214,15 +178,17 @@ const toastStore = useToastStore();
 const appStore = useAppStore();
 
 const searchQuery = ref("");
-const activeScope = ref<"dm" | "topic" | "broadcast">("broadcast");
-const activePeer = ref<string>("");
-const activeTopic = ref<string>("");
-const composerScope = ref<"dm" | "topic" | "broadcast">("broadcast");
-const composerTarget = ref("");
+const activeScope = ref<"dm" | "topic" | "broadcast">(chatStore.conversation.scope);
+const activePeer = ref<string>(chatStore.conversation.scope === "dm" ? chatStore.conversation.target ?? "" : "");
+const activeTopic = ref<string>(chatStore.conversation.scope === "topic" ? chatStore.conversation.target ?? "" : "");
+const composerScope = ref<"dm" | "topic" | "broadcast">(chatStore.conversation.scope);
+const composerTarget = ref(chatStore.conversation.target ?? "");
 const composerText = ref("");
 const pendingAttachments = ref<File[]>([]);
 const sending = ref(false);
-const messageScroller = ref<HTMLDivElement | null>(null);
+let sendGeneration = 0;
+const messageList = ref<InstanceType<typeof ChatMessageList> | null>(null);
+const development = import.meta.env.DEV;
 const directoryTab = ref<"peers" | "topics">("peers");
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -304,44 +270,15 @@ const activeLabel = computed(() => {
   return topic?.label ?? "Topic Channel";
 });
 
-const resolveMessageScope = (message: ChatMessage): "dm" | "topic" | "broadcast" => {
-  const scope = message.scope?.trim().toLowerCase();
-  if (scope === "dm" || scope === "topic" || scope === "broadcast") {
-    return scope;
-  }
-  if (message.topic_id) {
-    return "topic";
-  }
-  if (message.destination) {
-    return "dm";
-  }
-  return "broadcast";
+const visibleMessages = computed(() => chatStore.visibleMessages);
+const scrollToLatest = () => messageList.value?.scrollToLatest();
+const refreshHistory = async () => {
+  try { await chatStore.fetchMessages(); await scrollToLatest(); }
+  catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) { toastStore.push(chatStore.error || "Unable to load history.", "error"); } }
 };
-
-const visibleMessages = computed(() => {
-  if (activeScope.value === "broadcast") {
-    return chatStore.messages.filter((message) => resolveMessageScope(message) === "broadcast");
-  }
-  if (activeScope.value === "dm") {
-    const peerId = activePeer.value;
-    return chatStore.messages.filter((message) => {
-      if (resolveMessageScope(message) !== "dm") {
-        return false;
-      }
-      const source = message.source ?? "";
-      const destination = message.destination ?? "";
-      return source === peerId || destination === peerId;
-    });
-  }
-  const topicId = activeTopic.value;
-  return chatStore.messages.filter((message) => resolveMessageScope(message) === "topic" && message.topic_id === topicId);
-});
-
-const scrollToLatest = async () => {
-  await nextTick();
-  if (messageScroller.value) {
-    messageScroller.value.scrollTop = messageScroller.value.scrollHeight;
-  }
+const loadOlder = async () => {
+  try { await chatStore.loadOlder(); await messageList.value?.scrollToStart(); }
+  catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) { toastStore.push(chatStore.error || "Unable to load older history.", "error"); } }
 };
 
 const composerTargetOptions = computed(() => {
@@ -354,10 +291,6 @@ const composerTargetOptions = computed(() => {
 const attachmentPath = (attachment: ChatAttachment) => attachment.file_id
   ? `${attachment.category === "image" ? endpoints.images : endpoints.files}/${attachment.file_id}/raw`
   : "";
-const previewPaths = computed(() => visibleMessages.value.flatMap((message) =>
-  (message.attachments ?? []).filter((attachment) => attachment.category === "image" && attachment.file_id).map(attachmentPath)));
-const { urls: attachmentPreviewUrls } = useAttachmentPreviews(previewPaths);
-
 const downloadAttachment = async (attachment: ChatAttachment) => {
   const path = attachmentPath(attachment);
   if (!path) { return; }
@@ -382,14 +315,6 @@ const resolveMessageSource = (message: ChatMessage) => {
   }
   const peer = peers.value.find((entry) => entry.id === message.source);
   return peer?.label ?? message.source ?? "Unknown";
-};
-
-const formatTimestamp = (value?: string) => {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  return date.toLocaleTimeString();
 };
 
 const formatSize = (size?: number) => {
@@ -467,18 +392,25 @@ const sendMessage = async () => {
       : trimmed
     : "";
   sending.value = true;
+  const sendIdentity = connectionStore.requestIdentity;
+  const capturedGeneration = sendGeneration;
+  const assertSendCurrent = () => {
+    if (disposed || sendGeneration !== capturedGeneration || connectionStore.requestIdentity !== sendIdentity) { throw new DOMException("Chat backend changed", "AbortError"); }
+  };
   try {
     const fileIds: number[] = [];
     const imageIds: number[] = [];
     for (const file of pendingAttachments.value) {
       const category = file.type.startsWith("image/") ? "image" : "file";
       const sha256 = await digestFile(file);
+      assertSendCurrent();
       const attachment = await chatStore.uploadAttachment({
         category,
         file,
         sha256,
         topic_id: scope === "topic" ? target : undefined
       });
+      assertSendCurrent();
       if (attachment.file_id !== undefined) {
         if (category === "image") {
           imageIds.push(attachment.file_id);
@@ -487,6 +419,7 @@ const sendMessage = async () => {
         }
       }
     }
+    assertSendCurrent();
     await chatStore.sendMessage({
       content: prefixedContent,
       scope,
@@ -495,58 +428,41 @@ const sendMessage = async () => {
       file_ids: fileIds,
       image_ids: imageIds
     });
+    assertSendCurrent();
     selectConversation(scope, scope === "broadcast" ? undefined : target);
     composerText.value = "";
     pendingAttachments.value = [];
     toastStore.push("Message queued.", "success");
   } catch (error) {
-    toastStore.push("Failed to send message.", "error");
+    toastStore.push(error instanceof Error ? error.message : "Failed to send message.", "error");
   } finally {
-    sending.value = false;
+    if (sendGeneration === capturedGeneration) { sending.value = false; }
   }
 };
 
 const handleWsMessage = (message: WsMessage) => {
-  if (message.type === "message.receive") {
-    const entry = (message.data as { entry?: unknown }).entry ?? message.data;
-    if (entry && typeof entry === "object") {
-      chatStore.upsertMessage(fromWsMessage(entry as Record<string, unknown>));
-    }
-  }
+  if (message.type !== "message.receive") { return; }
+  try {
+    const data = message.data;
+    const entry = data && typeof data === "object" && "entry" in data ? data.entry : data;
+    chatStore.upsertMessage(decodeChatMessage(entry));
+  } catch (error) { toastStore.push(error instanceof Error ? error.message : "Invalid chat event.", "error"); }
 };
-
-const normalizeAttachment = (payload: Record<string, unknown>): ChatAttachment => ({
-  file_id: (payload.FileID as number) ?? (payload.file_id as number),
-  category: (payload.Category as string) ?? (payload.category as string),
-  name: (payload.Name as string) ?? (payload.name as string),
-  size: (payload.Size as number) ?? (payload.size as number),
-  media_type: (payload.MediaType as string) ?? (payload.media_type as string)
-});
-
-const fromWsMessage = (payload: Record<string, unknown>): ChatMessage => ({
-  message_id: payload.MessageID as string,
-  direction: payload.Direction as string,
-  scope: payload.Scope as string,
-  state: payload.State as string,
-  content: payload.Content as string,
-  source: (payload.Source as string) ?? undefined,
-  destination: (payload.Destination as string) ?? undefined,
-  topic_id: (payload.TopicID as string) ?? undefined,
-  attachments: Array.isArray(payload.Attachments)
-    ? (payload.Attachments as Record<string, unknown>[]).map(normalizeAttachment)
-    : [],
-  created_at: payload.CreatedAt as string,
-  updated_at: payload.UpdatedAt as string
-});
 
 let wsClient: WsClient | null = null;
 let disposed = false;
 
-onMounted(() => {
+const openStream = () => {
+  wsClient?.close();
   wsClient = new WsClient("/messages/stream", handleWsMessage, () => {
     wsClient?.send({ type: "message.subscribe", ts: new Date().toISOString(), data: { follow: true } });
   });
   wsClient.connect();
+};
+
+onMounted(() => {
+  chatStore.start();
+  openStream();
   const load = async (work: () => Promise<unknown>, label: string) => {
     try { await work(); }
     catch (error) {
@@ -565,8 +481,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  sendGeneration++;
   disposed = true;
   wsClient?.close();
+  chatStore.stop();
 });
 
 watch(composerScope, (scope) => {
@@ -578,16 +496,22 @@ watch(composerScope, (scope) => {
   composerTarget.value = "";
 });
 
-watch(
-  () => visibleMessages.value.length,
-  () => {
-    scrollToLatest();
-  }
-);
-
-watch(activeScope, () => {
-  scrollToLatest();
+watch(() => [activeScope.value, activePeer.value, activeTopic.value], async () => {
+  const target = activeScope.value === "dm" ? activePeer.value : activeScope.value === "topic" ? activeTopic.value : undefined;
+  try { await chatStore.fetchConversation({ scope: activeScope.value, target }); await scrollToLatest(); }
+  catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) { toastStore.push(chatStore.error || "Unable to load conversation.", "error"); } }
 });
+watch(() => connectionStore.requestIdentity, () => {
+  sendGeneration++;
+  activeScope.value = "broadcast"; activePeer.value = ""; activeTopic.value = "";
+  wsClient?.close();
+  composerText.value = ""; pendingAttachments.value = []; sending.value = false;
+  if (connectionStore.isAuthenticated) { chatStore.start(); openStream(); void refreshHistory(); }
+}, { flush: "sync" });
+watch(() => connectionStore.isAuthenticated, (authenticated) => {
+  if (!authenticated) { sendGeneration++; wsClient?.close(); chatStore.stop(); composerText.value = ""; pendingAttachments.value = []; sending.value = false; }
+  else if (!disposed) { chatStore.start(); openStream(); void refreshHistory(); }
+}, { flush: "sync" });
 </script>
 
 <style scoped src="./styles/ChatPage.css"></style>

@@ -1,0 +1,10 @@
+{
+  "conversationMessages": 200,
+  "globalMessages": 2000,
+  "globalBytes": 16777216,
+  "idleMs": 1800000,
+  "tombstones": 4000,
+  "pageSize": 100,
+  "overscanRows": 4,
+  "maintenanceMs": 30000
+}

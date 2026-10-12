@@ -42,6 +42,7 @@ mod attachment_persistence;
 mod auth;
 mod auth_throttle;
 mod browser_security;
+mod chat_history_pages;
 mod command_persistence;
 mod first_run_setup;
 mod marker_idempotency;
@@ -2239,6 +2240,7 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route("/Image/{file_id}/raw", get(retrieve_image_raw))
         .route("/Chat/Messages", get(list_chat_messages))
+        .route("/Chat/History", get(chat_history_pages::list_chat_history))
         .route(
             "/Chat/Message",
             get(method_not_allowed).post(send_chat_message),
@@ -8175,6 +8177,13 @@ fn openapi_document() -> Value {
                     ],
                     "ChatMessage",
                     "Chat message list."
+                )
+            },
+            "/Chat/History": {
+                "get": openapi_operation(
+                    vec![openapi_query_parameter("scope"), openapi_query_parameter("peer"), openapi_query_parameter("topic_id"), openapi_query_parameter("cursor"), openapi_typed_query_parameter("limit", "integer")],
+                    None,
+                    openapi_validation_responses("Conversation-scoped durable history with an opaque keyset cursor.", json!({ "type": "object", "properties": { "Messages": { "type": "array", "items": openapi_schema_ref("ChatMessage") }, "NextCursor": { "type": ["string", "null"] } }, "required": ["Messages", "NextCursor"] }))
                 )
             },
             "/Chat/Message": {
@@ -43016,7 +43025,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "6");
+        assert_eq!(payload["persistence"]["schema_version"], "7");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

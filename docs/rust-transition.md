@@ -284,3 +284,43 @@ inserts to import records. Cache activity is preserved during projection rebuild
 
 See [validation evidence](goals/bounded-persistence/EVIDENCE.md) for measured bounds
 and the limits of the local fixture runs.
+
+
+## Conversation history and message identity indexes
+
+Issues #253 and #256 add SQLite schema 7. Message IDs use an ASCII `NOCASE`
+unique index; keyed `ON CONFLICT` updates preserve the existing integer row ID
+and payload format. Point reads and dispatch joins use the same collation.
+Scoped history uses partial indexes matching broadcast, topic and inbound/outbound
+direct queries. Missing owned indexes fail explicitly instead of scanning global
+history. The backend remains the owner of message lifecycle and conversation scope.
+History projections derive scope from delivery mode and incoming source from
+stored metadata/sender; they never infer lifecycle from presentation timestamps.
+
+`GET /Chat/History` requires `scope=broadcast`, `scope=topic&topic_id=...`, or
+`scope=dm&peer=...`. It returns `{ "Messages": [...], "NextCursor": null | "..." }`
+under the same authentication boundary as existing chat routes. Direct history
+selects inbound source and outbound destination for the chosen peer. Pages use
+`created_ts_ms DESC, id ASC` ordering and a timestamp/integer-ID cursor. Newer
+inserts and keyed delivery updates do not shift an older-page boundary. Missing
+SQLite state returns an explicit unavailable response. `/Chat/Messages` keeps
+its existing array and filter contract.
+
+Migration creates a `.pre-migration-v7.bak`, detects case-insensitive duplicates,
+streams projection backfill one payload at a time, and commits uniqueness,
+conversation indexes and version together. Payload decode failure rolls back.
+Duplicate reconciliation policy is awaiting the user's decision; the current
+implementation stops and leaves duplicate rows unchanged. No losing payload is
+discarded. Fresh and upgraded databases receive the same message indexes.
+
+Topic attachment detachment uses the existing topic index and bounded batches of
+256 matching rows, without decoding unrelated attachments. Record writers keep
+payloads and projections aligned in their existing transaction. There is no
+mission field in the attachment record to project. Older payload-only writers
+and downgrades are unsupported.
+
+The shared UI's retention, age, page, suppression and overscan settings live in
+[chat configuration](../ui/README.md#chat-retention-configuration). Completed
+history remains durable, while the browser owns a bounded presentation window
+and measured-height viewport. See [validation evidence](goals/chat-indexes/EVIDENCE.md)
+for local browser and database measurements and their scope.

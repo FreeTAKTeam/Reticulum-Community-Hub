@@ -76,3 +76,42 @@ Compatibility routes (preserved):
 - `/missions/assets` (redirect wrapper)
 - `/missions/logs` (redirect wrapper)
 - `/missions/legacy` (explicit legacy workspace route for staged migration)
+
+
+## Chat retention configuration
+
+`src/config/chat-retention.json` owns presentation policy. Defaults retain at most
+200 messages per conversation and 2,000 messages / 16 MiB across conversations,
+with 30 minutes of inactivity for completed messages. Pending outbound work and
+in-flight send reservations stay protected. If they exhaust the budget, the UI
+shows an error before sending. Completed history remains on the backend.
+
+Override the defaults through Vite build environment or `ui/.env.local`:
+
+```dotenv
+VITE_CHAT_CONVERSATION_MESSAGES=200
+VITE_CHAT_GLOBAL_MESSAGES=2000
+VITE_CHAT_GLOBAL_BYTES=16777216
+VITE_CHAT_IDLE_MS=1800000
+VITE_CHAT_TOMBSTONES=4000
+VITE_CHAT_PAGE_SIZE=100
+VITE_CHAT_OVERSCAN_ROWS=4
+VITE_CHAT_MAINTENANCE_MS=30000
+```
+
+These are build-time settings, so rebuild the shared UI after changing them.
+All values must be positive safe integers; page size must fit the conversation
+limit, that limit must fit the global count, and maintenance must not exceed
+the inactivity period. The byte budget uses conservative estimates including
+message, attachment, suppression and send reservation metadata; browser heap
+also includes the rest of the application. Development builds show cache counts
+and estimated bytes in Chat. The message viewport measures variable row heights
+and renders visible rows with the configured overscan.
+
+Rust durable backends expose `/Chat/History` keyset pages. Older/Latest controls
+replace the selected conversation window while preserving pending and newer live
+updates. Python backends without this endpoint use their bounded newest list;
+the UI explicitly reports unavailable older paging. Its direct-message fallback
+filters that newest global list locally, so sparse older direct messages may be
+absent until the backend supports scoped paging. Attachment wire aliases from
+both shared backends remain accepted.

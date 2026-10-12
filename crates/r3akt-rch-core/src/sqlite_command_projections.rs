@@ -17,6 +17,8 @@ const PROJECTIONS: &[(&str, &[&str])] = &[
             "chat_visible",
             "resident_bytes",
             "cache_activity_ts_ms",
+            "scope",
+            "chat_source",
         ],
     ),
     ("rch_clients", &["identity_normalized"]),
@@ -59,7 +61,10 @@ pub(super) fn columns<T: Serialize>(
                         | "rem_zone_command"
                 )
             });
+        let (scope, source) = super::sqlite_chat_pages::scope_projection(&message);
         return Ok(vec![
+            ("scope", super::sql_text(scope)),
+            ("chat_source", super::sql_text(source)),
             (
                 "topic_id",
                 super::sql_optional_text(message.topic_id.as_deref()),
@@ -242,10 +247,14 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RchCoreError> {
                     [],
                 )?;
             }
-            connection.execute(
-                &format!("CREATE INDEX IF NOT EXISTS idx_{table}_{field} ON {table}({field})"),
-                [],
-            )?;
+            // Schema 7 supplies compound history indexes for these projections.
+            // Avoid unused standalone indexes on freshly created databases.
+            if !matches!(*field, "scope" | "chat_source") {
+                connection.execute(
+                    &format!("CREATE INDEX IF NOT EXISTS idx_{table}_{field} ON {table}({field})"),
+                    [],
+                )?;
+            }
         }
     }
     connection.execute_batch("CREATE TABLE IF NOT EXISTS rch_member_payload_clients (team_member_uid TEXT NOT NULL,client_identity TEXT NOT NULL,PRIMARY KEY(team_member_uid,client_identity));
