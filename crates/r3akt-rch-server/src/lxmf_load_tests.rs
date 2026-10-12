@@ -448,7 +448,7 @@ fn poll_zmq_load_receiver(
     let mut cursor = None;
     let mut last_error = None;
     for _ in 0..poll_attempts {
-        match data_plane.poll_events(cursor.clone(), crate::RETICULUMD_EVENT_POLL_MAX) {
+        match data_plane.poll_events(cursor.clone(), 64) {
             Ok(batch) => {
                 cursor = batch.next_cursor.clone();
                 let received = remove_seen_load_messages(&mut expected, &batch);

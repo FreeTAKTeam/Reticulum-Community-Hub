@@ -266,7 +266,9 @@ pub(super) fn bound_presentation(messages: &mut Vec<OutboundMessageRecord>) {
 }
 
 mod application;
+mod chat_presentation;
 mod envelope;
+mod inbound_attachments;
 mod outbound;
 use application::apply;
 use outbound::dispatch;
@@ -276,6 +278,50 @@ fn retry_delay(failures: u32) -> Duration {
     Duration::from_millis(500u64.saturating_mul(1u64 << failures.saturating_sub(1).min(6)))
         .min(Duration::from_secs(30))
 }
+
+/// Test seam: commits daemon message records to the local durable inbox the way
+/// `intake` does, then runs the production ordered application until idle.
+#[cfg(test)]
+pub(crate) fn apply_inbound_messages_for_test(
+    state: &AppState,
+    messages: &[Value],
+) -> Result<usize, ApiError> {
+    let mut store = open(state)?;
+    let consumer = store.durable_consumer_id().map_err(storage)?;
+    let checkpoint = store.inbox_checkpoint(&consumer).map_err(storage)?;
+    let start = checkpoint.stored;
+    let end = start + messages.len() as u64;
+    let created_at = unix_now_ms() / 1000;
+    store
+        .store_inbox_batch(&InboxBatch {
+            journal_id: checkpoint
+                .journal_id
+                .unwrap_or_else(|| "test-journal".to_string()),
+            consumer_id: consumer.clone(),
+            start,
+            end,
+            receipt: format!("test-receipt-{end}"),
+            events: messages
+                .iter()
+                .zip(start + 1..)
+                .map(|(message, position)| InboxEvent {
+                    version: 1,
+                    position,
+                    created_at,
+                    event_type: "inbound".to_string(),
+                    payload: json!({ "message": message }),
+                })
+                .collect(),
+        })
+        .map_err(storage)?;
+    drop(store);
+    let mut applied = 0;
+    while apply(state, &consumer)? {
+        applied += 1;
+    }
+    Ok(applied)
+}
+
 #[cfg(test)]
 mod tests;
 

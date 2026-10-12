@@ -1,43 +1,5 @@
 use crate::*;
 
-#[tokio::test]
-async fn timed_out_delivery_tick_does_not_overlap_the_next_tick() {
-    let state = AppState::default();
-    let calls = Arc::new(AtomicU64::new(0));
-    let (entered, mut observed) = tokio::sync::mpsc::unbounded_channel();
-    let (release, wait) = std::sync::mpsc::channel();
-    let wait = Arc::new(Mutex::new(wait));
-    let count = Arc::clone(&calls);
-    let worker = runtime_delivery_workers::spawn_outbound_with_tick(
-        state,
-        Duration::from_millis(10),
-        Duration::from_millis(20),
-        move |_| {
-            count.fetch_add(1, Ordering::SeqCst);
-            entered.send(()).expect("tick started");
-            wait.lock()
-                .expect("wait lock")
-                .recv()
-                .expect("release tick");
-            Ok(OutboundRetryWorkerReport::default())
-        },
-    );
-    tokio::time::timeout(Duration::from_secs(2), observed.recv())
-        .await
-        .expect("first tick");
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    worker.abort();
-    let _ = worker.await;
-    let started = calls.load(Ordering::SeqCst);
-    for _ in 0..started {
-        release.send(()).expect("release all started ticks");
-    }
-    assert_eq!(
-        started, 1,
-        "timeout must retain the blocking task before starting another tick"
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn poisoned_control_does_not_skip_owned_daemon_cleanup() {
@@ -72,50 +34,6 @@ fn poisoned_control_does_not_skip_owned_daemon_cleanup() {
 }
 
 #[tokio::test]
-async fn exit_waits_for_active_delivery_and_starts_no_later_tick() {
-    let state = AppState::default();
-    let calls = Arc::new(AtomicU64::new(0));
-    let count = Arc::clone(&calls);
-    let (entered, observed) = tokio::sync::oneshot::channel();
-    let entered = Mutex::new(Some(entered));
-    let (release, wait) = std::sync::mpsc::channel();
-    let wait = Mutex::new(wait);
-    let mut worker = runtime_delivery_workers::spawn_outbound_with_tick(
-        state.clone(),
-        Duration::from_millis(10),
-        Duration::from_millis(20),
-        move |_| {
-            count.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = entered.lock().expect("entered lock").take() {
-                entered.send(()).expect("started");
-            }
-            wait.lock().expect("wait lock").recv().expect("release");
-            Ok(OutboundRetryWorkerReport::default())
-        },
-    );
-    observed.await.expect("tick started");
-    request_runtime_exit(&state);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(70), &mut worker)
-            .await
-            .is_err()
-    );
-    release.send(()).expect("release");
-    tokio::time::timeout(Duration::from_secs(2), worker)
-        .await
-        .expect("worker stops")
-        .expect("join");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(
-        !state
-            .outbound_retry_worker_stats
-            .read()
-            .expect("stats")
-            .running
-    );
-}
-
-#[tokio::test]
 async fn terminal_exit_wakes_long_periodic_waits_and_late_workers() {
     let state = AppState::default();
     let announce = spawn_rch_identity_announce_worker(state.clone(), Duration::from_secs(3600));
@@ -135,7 +53,7 @@ async fn terminal_exit_wakes_long_periodic_waits_and_late_workers() {
         .expect("sampler wakes")
         .expect("sampler joins");
     let late =
-        spawn_outbound_delivery_worker_with_interval(state.clone(), Duration::from_secs(3600));
+        spawn_reticulumd_inbound_worker_with_interval(state.clone(), Duration::from_secs(3600));
     tokio::time::timeout(Duration::from_secs(1), late)
         .await
         .expect("late worker exits")

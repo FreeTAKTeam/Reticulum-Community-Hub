@@ -402,3 +402,33 @@ impl RchCommandTransaction<'_> {
             .map_err(Into::into)
     }
 }
+
+impl RchCommandTransaction<'_> {
+    /// Most recent visible inbound chat on `topic` from other senders, oldest first,
+    /// read inside this unit of work for `/join` replay.
+    pub fn recent_inbound_topic_messages(
+        &self,
+        topic: &str,
+        exclude_sender: &str,
+        limit: usize,
+    ) -> Result<Vec<MessageRecord>, RchCoreError> {
+        let limit = i64::try_from(limit).map_err(|e| RchCoreError::Encode(e.to_string()))?;
+        let mut query = self.transaction.prepare(
+            "SELECT payload FROM rch_messages WHERE topic_id=?1 AND chat_visible=1 \
+             AND direction='inbound' AND sender<>?2 COLLATE NOCASE \
+             ORDER BY created_ts_ms DESC,id DESC LIMIT ?3",
+        )?;
+        let rows = query.query_map(params![topic, exclude_sender, limit], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })?;
+        let mut messages = Vec::new();
+        for row in rows {
+            let message: MessageRecord = decode_msgpack(&row?)?;
+            if !message.content.trim().is_empty() {
+                messages.push(message);
+            }
+        }
+        messages.reverse();
+        Ok(messages)
+    }
+}

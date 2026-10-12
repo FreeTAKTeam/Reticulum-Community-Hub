@@ -193,6 +193,14 @@ impl ReadSet<'_> {
             "identity",
             source.as_deref()
         );
+        // Every inbound sender refreshes its own roster row.
+        select!(
+            r,
+            clients,
+            "rch_clients",
+            "identity_normalized",
+            source.as_deref()
+        );
         Ok(())
     }
 
@@ -212,6 +220,14 @@ impl ReadSet<'_> {
             identity_states,
             "rch_identity_states",
             "identity",
+            source.as_deref()
+        );
+        // Relays label the sender with its announced display name.
+        select!(
+            r,
+            identity_announces,
+            "rch_identity_announces",
+            "normalized_destination_hash",
             source.as_deref()
         );
         select!(r, topics, "rch_topics", "topic_id", Some(topic));

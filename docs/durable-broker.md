@@ -52,3 +52,25 @@ Full daemon contract, limits and recovery details are maintained in LXMF-rs:
 [OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/e237f80c0c9e219e4090be04a4229d3328074f73/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
 Local socket, SQLite, crash and paired-worker tests do not establish hardware
 power-loss behavior or a production multi-hour memory/swap plateau.
+
+## Northbound and chat behavior
+
+The durable path keeps the Python 2.9.x northbound and chat contract:
+
+- A northbound send with no authorized recipients is accepted, stored as
+  `failed` with `drop_reason: no_recipients`, and logs `message_sent` then
+  `message_failed`. Every admitted send logs `message_sent`.
+- Chat roster commands (`/join` and its aliases, `/leave`, `/pause`,
+  `/resume`, `/nick`, `/users`, also sent as `FIELD_COMMANDS` entries) answer
+  with one plain-text line. `/join` replays up to ten recent inbound messages
+  on that topic from other senders.
+- Relays are labelled with the sender's nickname, else its announced display
+  name, else an 8-character identity prefix. Rejected chat (empty or over the
+  length limit) is answered with `message rejected: <reason>`.
+- Explicit direct-topic subscribers always receive relays; only the default
+  roster recipients are limited to recently active, unpaused clients.
+- Every inbound sender refreshes its roster entry, inbound chat logs
+  `message_received`, and `/diagnostics/runtime` counts applied inbound
+  messages under `reticulumd_inbound.received_total`.
+- Attachments without a media type are typed from image bytes or the file
+  extension.

@@ -98,7 +98,7 @@ fn rejected_message_admission_cannot_remain_eligible_for_dispatch() {
     let (state, directory) = fixture();
     deny_inserts(&state, "rch_messages");
     assert!(
-        record_outbound_message_deferred_with_metadata(
+        record_outbound_message_with_metadata(
             &state,
             "fixture",
             None,
@@ -111,39 +111,6 @@ fn rejected_message_admission_cannot_remain_eligible_for_dispatch() {
     );
     assert!(state.messages.read().expect("messages").is_empty());
     std::fs::remove_dir_all(directory).expect("cleanup");
-}
-
-#[test]
-fn failed_delivery_metadata_write_keeps_the_committed_projection() {
-    for start_attempt in [true, false] {
-        let (state, directory) = fixture();
-        let admitted = record_outbound_message_deferred_with_metadata(
-            &state,
-            "fixture",
-            None,
-            Some("00112233445566778899aabbccddeeff".to_string()),
-            Vec::new(),
-            false,
-            json!({}),
-        )
-        .expect("admitted");
-        deny_inserts(&state, "rch_messages");
-        let result = if start_attempt {
-            mark_outbound_attempt_started(&state, &admitted.message_id, unix_now_ms()).map(|_| ())
-        } else {
-            update_outbound_delivery_state(
-                &state,
-                &admitted.message_id,
-                "delivered",
-                json!({"acked": true}),
-            )
-        };
-        assert!(result.is_err());
-        let current = state.messages.read().expect("messages")[0].clone();
-        assert_eq!(current.delivery_state, admitted.delivery_state);
-        assert_eq!(current.delivery_metadata, admitted.delivery_metadata);
-        std::fs::remove_dir_all(directory).expect("cleanup");
-    }
 }
 
 fn domain_command(kind: &str, args: Value) -> MissionCommandEnvelope {
@@ -256,7 +223,7 @@ fn attachment_fixture(state: &AppState, directory: &std::path::Path) -> FileAtta
         created_ts_ms: 1,
         updated_ts_ms: 1,
     };
-    persist_file_attachment_row(state, &record).expect("persist");
+    with_core_store_write(state, |store| store.upsert_file_attachment(&record)).expect("persist");
     record
 }
 
@@ -291,9 +258,9 @@ async fn rejected_unban_keeps_policy_and_durable_ban() {
             .await
             .is_err()
     );
-    assert!(inbound_identity_blocked(&state, "peer").expect("current policy"));
+    assert!(outbound_identity_blocked(&state, "peer"));
     let reopened = AppState::from_sqlite_path(directory.join("state.db")).expect("reopen");
-    assert!(inbound_identity_blocked(&reopened, "peer").expect("durable policy"));
+    assert!(outbound_identity_blocked(&reopened, "peer"));
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
 
@@ -324,89 +291,6 @@ fn malformed_attachment_snapshot_is_an_observable_error() {
     );
     drop(store);
     drop(database);
-    std::fs::remove_dir_all(directory).expect("cleanup");
-}
-
-#[test]
-fn receipt_after_candidate_collection_prevents_redispatch_and_stale_retry() {
-    let (state, directory) = fixture();
-    let mut candidate = record_outbound_message_deferred_with_metadata(
-        &state,
-        "fixture",
-        None,
-        Some("00112233445566778899aabbccddeeff".to_string()),
-        Vec::new(),
-        false,
-        json!({}),
-    )
-    .expect("admit");
-    candidate.delivery_method = "direct".to_string();
-    {
-        let mut messages = state.messages.write().expect("messages");
-        messages[0] = candidate.clone();
-    }
-    update_outbound_delivery_state(
-        &state,
-        &candidate.message_id,
-        "delivered",
-        json!({"acked": true}),
-    )
-    .expect("receipt");
-    mark_outbound_attempt_started(&state, &candidate.message_id, unix_now_ms())
-        .expect("late attempt");
-    schedule_zmq_pre_admission_retry(&state, &candidate, &DispatchReport::default())
-        .expect("late retry");
-    assert_eq!(
-        state.messages.read().expect("messages")[0].delivery_state,
-        "delivered"
-    );
-    let reopened = AppState::from_sqlite_path(directory.join("state.db")).expect("reopen");
-    assert_eq!(
-        reopened.messages.read().expect("messages")[0].delivery_state,
-        "delivered"
-    );
-    std::fs::remove_dir_all(directory).expect("cleanup");
-}
-
-#[test]
-fn receipt_after_attempt_validation_wins_over_dispatch_completion() {
-    let (state, directory) = fixture();
-    let admitted = record_outbound_message_deferred_with_metadata(
-        &state,
-        "fixture",
-        None,
-        Some("00112233445566778899aabbccddeeff".to_string()),
-        Vec::new(),
-        false,
-        json!({}),
-    )
-    .expect("admit");
-    let now = unix_now_ms();
-    let attempted = claim_outbound_attempt(&state, &admitted.message_id, Some(&admitted), now)
-        .expect("claim")
-        .expect("eligible");
-    assert!(outbound_dispatch_attempt_still_current(&state, &attempted, now).expect("validated"));
-    update_outbound_delivery_state(
-        &state,
-        &attempted.message_id,
-        "delivered",
-        json!({"acked": true}),
-    )
-    .expect("receipt");
-    assert!(
-        update_dispatch_delivery_state(&state, &attempted, "sent", json!({"acked": false}))
-            .expect("late completion")
-            .is_none()
-    );
-    assert!(
-        schedule_zmq_pre_admission_retry(&state, &attempted, &DispatchReport::default())
-            .expect("late retry")
-            .is_none()
-    );
-    let failed = mark_outbound_dispatch_failed(&state, &attempted, "send_error".to_string())
-        .expect("late failure");
-    assert_eq!(failed.delivery_state, "delivered");
-    assert!(failed.delivery_metadata["acked"].as_bool().expect("ack"));
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
 
@@ -641,102 +525,6 @@ async fn marker_replay_after_committed_response_loss_and_restart_creates_one_rec
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
 
-async fn inline_receipt_during_dispatch(fail_dispatch: bool) {
-    let (state, directory) = fixture();
-    let listener = StdTcpListener::bind("127.0.0.1:0").expect("listener");
-    let endpoint = listener.local_addr().expect("address").to_string();
-    let (entered, observed) = std::sync::mpsc::channel();
-    let (release, wait) = std::sync::mpsc::channel();
-    let rpc = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("timeout");
-        let request = read_http_request(&mut stream);
-        let decoded: ReticulumdRpcRequest = decode_reticulumd_frame(&parse_http_body(&request));
-        entered.send(()).expect("dispatch started");
-        wait.recv_timeout(Duration::from_secs(2))
-            .expect("release dispatch");
-        let response = ReticulumdRpcResponse {
-            id: decoded.id,
-            result: (!fail_dispatch).then(|| json!({"message_id": "fixture"})),
-            error: fail_dispatch.then(|| ReticulumdRpcError {
-                code: "SEND_ERROR".to_string(),
-                message: "fixture send error".to_string(),
-                ..ReticulumdRpcError::default()
-            }),
-        };
-        let body = encode_reticulumd_frame(&response);
-        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/msgpack\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).expect("headers");
-        stream.write_all(&body).expect("response");
-    });
-    let state = state.with_reticulumd_rpc(endpoint, "fixture-source");
-    let destination = "00112233445566778899aabbccddeeff";
-    let sender = state.clone();
-    let send = std::thread::spawn(move || {
-        record_outbound_message_with_metadata_mode(
-            &sender,
-            "receipt barrier",
-            None,
-            Some(destination.to_string()),
-            Vec::new(),
-            false,
-            json!({"max_attempts": 0}),
-            OutboundDispatchMode::Inline,
-        )
-    });
-    observed
-        .recv_timeout(Duration::from_secs(2))
-        .expect("dispatch blocks");
-    let message_id = state.messages.read().expect("messages")[0]
-        .message_id
-        .clone();
-    mark_reticulumd_status_delivery_receipt(&state, &message_id, "delivered")
-        .expect("SDK receipt projection");
-    release.send(()).expect("release");
-    let completed = send.join().expect("send thread");
-    rpc.join().expect("RPC thread");
-    let current = state.messages.read().expect("messages")[0].clone();
-    assert_eq!(
-        current.delivery_state, "delivered",
-        "late inline result cannot downgrade a receipt"
-    );
-    assert_eq!(current.delivery_metadata["acked"], true);
-    assert_eq!(
-        completed.expect("already delivered send").delivery_state,
-        "delivered"
-    );
-    assert!(
-        !state
-            .system_events
-            .read()
-            .expect("events")
-            .iter()
-            .any(|event| matches!(
-                event.event_type.as_str(),
-                "message_delivery_failed" | "message_delivery_retrying"
-            ))
-    );
-    let reopened = AppState::from_sqlite_path(directory.join("state.db")).expect("restart");
-    assert_eq!(
-        reopened.messages.read().expect("durable messages")[0].delivery_state,
-        "delivered"
-    );
-    drop(reopened);
-    drop(state);
-    std::fs::remove_dir_all(directory).expect("cleanup");
-}
-
-#[tokio::test]
-async fn inline_success_cannot_overwrite_a_receipt_during_dispatch() {
-    inline_receipt_during_dispatch(false).await;
-}
-
-#[tokio::test]
-async fn inline_error_cannot_overwrite_a_receipt_during_dispatch() {
-    inline_receipt_during_dispatch(true).await;
-}
-
 #[tokio::test]
 async fn accepted_moderation_reports_success_when_optional_enrichment_is_malformed() {
     let (state, directory) = fixture();
@@ -752,7 +540,7 @@ async fn accepted_moderation_reports_success_when_optional_enrichment_is_malform
             .await
             .expect("accepted ban");
     assert_eq!(response["IsBanned"], true);
-    assert!(inbound_identity_blocked(&state, "peer").expect("policy"));
+    assert!(outbound_identity_blocked(&state, "peer"));
     let store = RchSqliteStore::open(directory.join("state.db")).expect("reopen");
     assert!(store.load_identity_states().expect("durable states")[0].is_banned);
     assert!(

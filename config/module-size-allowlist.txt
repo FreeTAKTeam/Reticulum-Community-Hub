@@ -3,7 +3,7 @@ crates/r3akt-profile-rch/src/lib.rs|990
 crates/r3akt-rch-bridge/src/lib.rs|782
 crates/r3akt-rch-core/src/lib.rs|16949
 crates/r3akt-rch-core/src/python_migration.rs|2490
-crates/r3akt-rch-server/src/lib.rs|50452
+crates/r3akt-rch-server/src/lib.rs|39569
 crates/r3akt-rch-server/src/main.rs|2208
 crates/r3akt-rch-server/src/sar_seed.rs|1544
 crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs|545
