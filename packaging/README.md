@@ -21,13 +21,10 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-windows-x64-v3.0.0-preview.11.zip`; the same version, Git ref,
+`rch-rust-full-windows-x64-v3.0.0-preview.23.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
-Manual workflow runs default to `v3.0.0-preview.15` and can override that label
-with the `release_version` input. While `main` remains the default branch,
-GitHub does not expose `workflow_dispatch` for workflows that only exist on
-`rust-next`, so the release workflow also runs on relevant `rust-next` pushes
-to validate packaging before the default-branch cutover.
+Manual workflow runs label artifacts with the `release_version` input, or with
+the branch name when that input is blank.
 
 For a Linux AMD64 server testing candidate, set `linux_amd64_only=true` on a
 manual run or include `<!-- rch-release: linux-amd64-only -->` in the published
@@ -35,21 +32,12 @@ release body. This builds the full Linux AMD64 archive and its checksum, with
 the pinned daemon, UI, and TAK service; desktop and other platform jobs are
 skipped. Published releases own asset builds; pushing a tag alone no longer
 starts a duplicate package build. Normal releases retain the full matrix.
-See [preview.15 testing notes](../docs/release-notes-v3.0.0-preview.15.md)
-for the #247 candidate scope, upgrade steps, and production acceptance limits.
 
-Latest staging evidence before the macOS and Raspberry Pi 64 matrix expansion:
-`Build Rust Release Packages` run `26696071364`
-passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. It uploaded
-`rch-rust-full-windows-x64-rust-next`, `rch-rust-full-linux-x64-rust-next`,
-`rch-desktop-windows-x64-nsis`, and `rch-desktop-linux-x64-appimage`; downloaded
-artifacts matched their SHA-256 sidecars.
-
-The issue #242 testing release is `v3.0.0-preview.13`; its
-[release notes](../docs/release-notes-v3.0.0-preview.13.md) explain upgrading
-both the server/UI and bundled daemon, including the schema-4 backup. Preview.12
-remains the historical issue #241 release. The existing release workflow owns all five server and two
-desktop packages; this testing release uses that same workflow.
+The release workflow owns all five server packages and both desktop packages.
+The most recent full-matrix release is
+[`v3.0.0-preview.23`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.23);
+its release notes list the packages, upgrade steps, and remaining acceptance
+limits. Notes for earlier previews are kept under [`docs/`](../docs/).
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
@@ -115,5 +103,5 @@ If no legacy store is found, it asks for the Python store directory or
 
 - Python maintenance: `v2.9.x` from `rch-python`.
 - Rust alpha previews: `v3.0.0-alpha.N` or `v3.0.0-preview.N` from
-  `rust-next`, with server package artifacts and optional desktop artifacts.
+  `main`, with server package artifacts and optional desktop artifacts.
 - Rust stable: `v3.0.0` after all Rust server and desktop gates pass.

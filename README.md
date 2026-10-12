@@ -57,14 +57,15 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The published preview is [v3.0.0-preview.11](docs/release-notes-v3.0.0-preview.11.md),
-using the immutable LXMF-rs 0.12.0 baseline. Current development uses LXMF-rs
-0.13.0 with the [inbound ZeroMQ recovery fix](docs/issue-238-inbound-zmq.md).
-The [preview.12 testing candidate](docs/release-notes-v3.0.0-preview.12.md)
-pairs this baseline with the [issue #241 sustained-runtime fixes](docs/issue-241-sustained-polling.md)
-and the standalone reticulumd rch241.2 candidate.
-Upgrading the RCH SDK alone does not fix an old daemon's response writer; use
-`reticulumd` from the same pinned revision when deploying this change.
+The latest published preview is
+[v3.0.0-preview.23](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.23),
+a full-platform testing release paired with LXMF-rs 0.13.0 at the immutable
+revision `a424760137c7eaee5d5de7fb9ef2347871b85da1`. Release notes for every
+preview are attached to its
+[GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
+older notes are kept under [`docs/`](docs/).
+Upgrading the RCH SDK alone does not fix an old daemon's response writer; install
+`reticulumd` from the same package or pinned revision as the server.
 
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 

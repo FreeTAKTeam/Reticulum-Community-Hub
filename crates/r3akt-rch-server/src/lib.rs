@@ -14094,29 +14094,15 @@ fn client_should_appear_in_client_list(record: &ClientRecord) -> bool {
     client_has_network_announce(record)
 }
 
-fn broadcast_client_records_for_state_with_refresh(
-    state: &AppState,
-    _refresh_announces: bool,
-) -> Result<Vec<ClientRecord>, ApiError> {
+fn broadcast_client_records_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
     let mut records = client_records_for_state(state)?;
     records.sort_by(|left, right| left.identity.cmp(&right.identity));
     Ok(records)
 }
 
-fn broadcast_outbound_client_records_for_message(
-    state: &AppState,
-    _message: &OutboundMessageRecord,
-) -> Result<Vec<ClientRecord>, ApiError> {
-    broadcast_outbound_client_records_for_state_with_refresh(state, false)
-}
-
-fn broadcast_outbound_client_records_for_state_with_refresh(
-    state: &AppState,
-    refresh_announces: bool,
-) -> Result<Vec<ClientRecord>, ApiError> {
+fn broadcast_outbound_client_records(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
     let now = unix_now_ms();
-    let _ = refresh_announces;
-    let records = broadcast_client_records_for_state_with_refresh(state, false)?;
+    let records = broadcast_client_records_for_state(state)?;
     Ok(records
         .into_iter()
         .filter(|client| {
@@ -14218,7 +14204,7 @@ fn outbound_destinations(
             }
         }
     } else {
-        for client in broadcast_outbound_client_records_for_message(state, message)? {
+        for client in broadcast_outbound_client_records(state)? {
             let delivery_destination = outbound_destination_for_message(&client.identity);
             if !destination_excluded(&excluded, &client.identity, &delivery_destination)
                 && outbound_roster_recipient_allowed(state, message, &client, &delivery_destination)
@@ -16314,7 +16300,6 @@ fn rem_task_messages(
                 rem_checklist_task_command_message(
                     command_type,
                     rem_args_with_mission_uid(args, mission_uid),
-                    task,
                     source_identity,
                     mission_change_uid,
                 )
@@ -16326,14 +16311,12 @@ fn rem_task_messages(
 fn rem_checklist_task_command_message(
     command_type: &str,
     args: Value,
-    task: &serde_json::Map<String, Value>,
     source_identity: &str,
     mission_change_uid: &str,
 ) -> RemChecklistFanoutMessage {
     rem_checklist_task_command_message_at(
         command_type,
         args,
-        task,
         source_identity,
         mission_change_uid,
         unix_now_ms(),
@@ -16343,12 +16326,10 @@ fn rem_checklist_task_command_message(
 fn rem_checklist_task_command_message_at(
     command_type: &str,
     args: Value,
-    task: &serde_json::Map<String, Value>,
     source_identity: &str,
     mission_change_uid: &str,
     timestamp_ms: i64,
 ) -> RemChecklistFanoutMessage {
-    let _ = task;
     rem_checklist_command_message_with_body_at(
         command_type,
         args,
@@ -16425,7 +16406,6 @@ fn initial_rem_checklist_command_messages(
                         checklist_uid.as_ref(),
                         effective_mission_uid,
                     ),
-                    task,
                     source_identity,
                     mission_change_uid,
                     take_timestamp_ms(),
@@ -16444,7 +16424,6 @@ fn initial_rem_checklist_command_messages(
                             checklist_uid.as_ref(),
                             effective_mission_uid,
                         ),
-                        task,
                         source_identity,
                         mission_change_uid,
                         take_timestamp_ms(),
@@ -38329,7 +38308,6 @@ mod tests {
                 crate::row_add_args(task.as_object().expect("task")).expect("row args"),
                 "mission-optimized",
             ),
-            task.as_object().expect("task"),
             "source-destination",
             "change-optimized",
             1_778_000_000_000,
@@ -38362,7 +38340,6 @@ mod tests {
             let message = crate::rem_checklist_task_command_message_at(
                 command_type,
                 crate::rem_args_with_mission_uid(args, "mission-optimized"),
-                task.as_object().expect("task"),
                 "source-destination",
                 "change-optimized",
                 1_778_000_000_000,

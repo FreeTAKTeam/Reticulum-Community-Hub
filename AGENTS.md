@@ -17,16 +17,22 @@ Do not restore the legacy Python server or Electron packaging as UI cleanup.
 - Minimum Rust version: 1.85
 - License: EPL-2.0
 
-This workspace currently depends on the LXMF Rust workspace as a sibling
-checkout named `LXMF-rs`.
-
-Expected local layout:
+Cargo resolves the LXMF-rs crates (`lxmf-wire`, `lxmf-sdk`,
+`reticulum-rs-core`, `reticulum-rs-rpc`) from one pinned Git revision, so
+building the workspace does not need a local LXMF-rs checkout. A sibling
+checkout is still used to build the matching `reticulumd` daemon for local
+runtime work, desktop builds, and the live gates:
 
 ```text
 src/
 ├── Reticulum-Community-Hub/   # this repository
-└── LXMF-rs/                   # dependency for lxmf-wire
+└── LXMF-rs/                   # reticulumd at the same pinned revision
 ```
+
+The revision is pinned once, in the root `Cargo.toml`
+`[workspace.dependencies]`; crates use `.workspace = true`. Keep the
+`LXMF_REF` workflow values identical to it, and keep the version in
+`config/lxmf-runtime-baseline.json` matching it.
 
 ## Frontend Engineering
 
@@ -44,7 +50,7 @@ This supplements the existing architecture, safety, toolchain, and workflow rule
 - `apps/rch-desktop/` is the Tauri desktop shell for the Rust product line.
 - `packaging/` contains server package templates and install helpers.
 - Keep Electron only on `rch-python`; do not reintroduce Electron packaging on
-  `rust-next`.
+  `main` (the Rust product line). `rust-next` is a retired staging branch.
 - Rust server packages are the deployment primitive. Tauri is a desktop shell
   for local operator workstations.
 
