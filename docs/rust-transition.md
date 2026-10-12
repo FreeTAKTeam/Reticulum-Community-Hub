@@ -218,8 +218,8 @@ Release blockers cleared in the latest parity pass:
   admitted delivery states and transport fallback. Local receipt deadlines,
   name-based recipient merging, phone-specific destination overrides and the
   six `/internal/delivery-*` mutation callbacks have been removed without
-  compatibility shims. See the [issue 247 plan](goals/issue-247-sdk-routing/PLAN.md)
-  for the authority boundary and validation requirements.
+  compatibility shims. See the
+  [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
 - Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
   CI and release packages pin commit
   `fb5c2a1f938a7aab2f68e67976ef4e074218f258` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics). The matching
