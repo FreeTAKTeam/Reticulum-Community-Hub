@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Version label to embed in manually built artifacts"
+        description: "Version label to embed in manually built artifacts (blank uses the branch name)"
         required: false
-        default: "v3.0.0-preview.15"
+        default: ""
       linux_amd64_only:
         description: "Build only the Linux AMD64 server package"
         type: boolean
@@ -14,17 +14,6 @@ on:
         default: false
   release:
     types: [published]
-  push:
-    branches: ["rust-next"]
-    paths:
-      - ".github/workflows/rust-release.yml"
-      - "scripts/build-rust-release-package.ps1"
-      - "packaging/**"
-      - "apps/rch-desktop/**"
-      - "ui/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
 
 permissions:
   contents: write

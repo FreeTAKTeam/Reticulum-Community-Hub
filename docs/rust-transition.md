@@ -1,18 +1,19 @@
 # RCH Rust Transition
 
-`rust-next` is the staged Rust edition of Reticulum Community Hub. The Python
+`main` is the Rust edition of Reticulum Community Hub. The Python
 implementation at release `2.9.6` is preserved on `rch-python` for long-term
 maintenance.
 
 ## Branches
 
-- `rch-python`: Python RCH maintenance branch created from `main` at
-  `a520574ecbc243841a1a215b616b6792452de2a1`.
-- `rust-next`: Rust R3AKT/RCH workspace imported as the repository root.
+- `main`: GitHub default branch and the Rust R3AKT/RCH workspace. Rust
+  releases are cut from `main`.
+- `rch-python`: Python RCH maintenance branch created from the pre-Rust `main`
+  at `a520574ecbc243841a1a215b616b6792452de2a1`.
 - `ui-shared`: canonical Vue web UI source shared by Python maintenance and
   Rust product work.
-- `main`: remains the GitHub default branch until Rust release gates pass and
-  the default branch is switched deliberately.
+- `rust-next`: historical Rust staging branch used before the default-branch
+  cutover. It is no longer updated; do not target it with new work.
 
 ## Rust Public Surface
 
@@ -90,7 +91,7 @@ capabilities.
   `127.0.0.1:8000`; CI currently emits Windows x64 NSIS and Linux x64 AppImage
   artifacts.
 - Python `2.9.x` keeps its existing Electron package on `rch-python`; Electron
-  is not part of `rust-next`.
+  is not part of the Rust product line.
 
 ## Current Validation Snapshot
 
