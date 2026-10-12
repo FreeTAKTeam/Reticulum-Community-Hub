@@ -37,15 +37,22 @@ jobs:
           $baseline = Get-Content -LiteralPath config/lxmf-runtime-baseline.json -Raw | ConvertFrom-Json
           $releasedVersion = 'version = "=?' + [regex]::Escape($baseline.sdk_version) + '"'
           $releasedSource = 'git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "[a-f0-9]{40}"'
-          $transportManifest = Get-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Raw
-          $transportManifest = $transportManifest -replace $releasedVersion, 'version = "*"'
-          $transportManifest = $transportManifest -replace ('(?m)^(lxmf = .*?)' + $releasedSource), '$1path = "../../../LXMF-rs/crates/libs/lxmf-core"'
-          $transportManifest = $transportManifest -replace ('(?m)^(lxmf-sdk = .*?)' + $releasedSource), '$1path = "../../../LXMF-rs/crates/libs/lxmf-sdk"'
-          $transportManifest = $transportManifest -replace ('(?m)^(rns-rpc = .*?)' + $releasedSource), '$1path = "../../../LXMF-rs/crates/libs/rns-rpc"'
-          Set-Content -LiteralPath crates/r3akt-transport-rns/Cargo.toml -Value $transportManifest -Encoding utf8
+          # All LXMF-rs crates are pinned once in the workspace manifest.
+          $siblingPaths = [ordered]@{
+            'rns-core' = 'rns-core'
+            'rns-rpc'  = 'rns-rpc'
+            'lxmf'     = 'lxmf-core'
+            'lxmf-sdk' = 'lxmf-sdk'
+          }
           $workspaceManifest = Get-Content -LiteralPath Cargo.toml -Raw
           $workspaceManifest = $workspaceManifest -replace $releasedVersion, 'version = "*"'
-          $workspaceManifest = $workspaceManifest -replace ('(?m)^(rns-core = .*?)' + $releasedSource), '$1path = "../LXMF-rs/crates/libs/rns-core"'
+          foreach ($dependency in $siblingPaths.Keys) {
+            $pattern = '(?m)^(' + [regex]::Escape($dependency) + ' = .*?)' + $releasedSource
+            if ($workspaceManifest -notmatch $pattern) {
+              throw "Workspace manifest has no pinned LXMF-rs source for $dependency"
+            }
+            $workspaceManifest = $workspaceManifest -replace $pattern, ('$1path = "../LXMF-rs/crates/libs/' + $siblingPaths[$dependency] + '"')
+          }
           Set-Content -LiteralPath Cargo.toml -Value $workspaceManifest -Encoding utf8
           cargo update -p lxmf-wire -p lxmf-sdk -p reticulum-rs-rpc -p reticulum-rs-core
           if ($LASTEXITCODE -ne 0) {
@@ -64,4 +71,4 @@ jobs:
 
       - name: Check current LXMF main without changing production lockfile
         working-directory: rch
-        run: cargo check -p r3akt-transport-rns
+        run: cargo check -p r3akt-transport-rns -p r3akt-rch-server --all-targets

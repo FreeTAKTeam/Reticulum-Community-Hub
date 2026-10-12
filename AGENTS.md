@@ -29,8 +29,9 @@ src/
 └── LXMF-rs/                   # reticulumd at the same pinned revision
 ```
 
-Keep the revision in the root and crate `Cargo.toml` files and the `LXMF_REF`
-workflow values identical, and keep the version in
+The revision is pinned once, in the root `Cargo.toml`
+`[workspace.dependencies]`; crates use `.workspace = true`. Keep the
+`LXMF_REF` workflow values identical to it, and keep the version in
 `config/lxmf-runtime-baseline.json` matching it.
 
 ## Frontend Engineering
