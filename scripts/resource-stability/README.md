@@ -6,7 +6,8 @@ synthetic control-API announce ingress and dashboard/chat HTTP traffic; it does
 not combine independent real peer delivery or browser heap measurement with its
 large-history workload. Separate short preflights qualify those instruments.
 It explicitly records `passed_final_acceptance: false` even when the baseline
-finishes. Follow `docs/goals/resource-stability/PLAN.md` for the remaining gates.
+finishes. See `docs/goals/resource-stability/PROGRESS.md` for task status and the
+remaining gates.
 
 Requirements: Linux `/proc` and cgroup v2, delegated systemd user services,
 Python 3.11 or newer with MessagePack, and installed locked Rust dependencies for the
