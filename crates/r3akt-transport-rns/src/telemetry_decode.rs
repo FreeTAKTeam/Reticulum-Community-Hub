@@ -1,17 +1,12 @@
 //! Checked application telemetry at the daemon JSON and durable wire boundaries.
-use super::{
-    JsonValue, TelemetrySample, attachment_data_bytes, decode_lxmf_location_sensor,
-    humanize_lxmf_telemetry_payload, lxmf_telemetry_timestamp, optional_field_value,
-    optional_message_i64, parse_lxmf_telemetry_payload,
-};
+use super::{JsonValue, TelemetrySample, optional_field_value, optional_message_i64};
 use crate::{DecodedLxmfMessage, TransportError, reticulumd_message_to_payloads};
 use lxmf::inbound_decode::{InboundPayloadMode, decode_inbound_message};
+use r3akt_map_core::telemetry::{self, MAX_SENSOR_BYTES};
 
-// Match durable journal frame and collector sensor bounds. These are decode
-// ceilings, not a new history/cache retention policy.
+// Match the durable journal frame bound. This is a decode ceiling, not a
+// history/cache retention policy; the sensor bound is shared.
 const MAX_FRAME_BYTES: usize = 12 * 1024 * 1024;
-const MAX_SENSOR_BYTES: usize = 1024 * 1024;
-const MAX_TIMESTAMP: f64 = 253_402_300_800.0;
 
 pub(super) fn direct_lxmf_telemetry(
     fields: Option<&serde_json::Map<String, JsonValue>>,
@@ -22,123 +17,14 @@ pub(super) fn direct_lxmf_telemetry(
     else {
         return Ok(None);
     };
-    if payload
-        .as_str()
-        .is_some_and(|s| s.len() > MAX_SENSOR_BYTES * 2)
-        || payload
-            .as_array()
-            .is_some_and(|a| a.len() > MAX_SENSOR_BYTES)
-    {
-        return Err("malformed LXMF FIELD_TELEMETRY (0x02): sensor byte limit exceeded");
-    }
-    let packed = attachment_data_bytes(payload);
-    if packed.len() > MAX_SENSOR_BYTES {
-        return Err("malformed LXMF FIELD_TELEMETRY (0x02): sensor byte limit exceeded");
-    }
-    let mut telemetry = parse_lxmf_telemetry_payload(payload).ok_or(
-        "malformed LXMF FIELD_TELEMETRY (0x02): invalid, truncated or excessive MessagePack",
-    )?;
-    validate_and_normalize(&mut telemetry)?;
-    let telemetry = humanize_lxmf_telemetry_payload(telemetry);
-    let timestamp_s = lxmf_telemetry_timestamp(&telemetry)
-        .or_else(|| optional_message_i64(message, &["timestamp", "timestamp_s", "time"]));
+    let checked = telemetry::decode_field(payload)?;
     Ok(Some(TelemetrySample {
-        packed_telemeter: (!packed.is_empty()).then_some(packed),
-        telemetry,
-        timestamp_s,
+        packed_telemeter: checked.packed_telemeter,
+        telemetry: checked.telemetry,
+        timestamp_s: checked
+            .timestamp_s
+            .or_else(|| optional_message_i64(message, &["timestamp", "timestamp_s", "time"])),
     }))
-}
-
-fn timestamp(value: &JsonValue) -> Result<f64, &'static str> {
-    value.as_f64().filter(|v| v.is_finite() && *v >= 0.0 && *v < MAX_TIMESTAMP)
-        .ok_or("malformed LXMF FIELD_TELEMETRY (0x02): time must be finite epoch seconds before year 10000")
-}
-fn coordinates(location: &JsonValue) -> Result<(), &'static str> {
-    for (key, limit) in [("latitude", 90.0), ("longitude", 180.0)] {
-        if !location
-            .get(key)
-            .and_then(JsonValue::as_f64)
-            .is_some_and(|v| v.is_finite() && v.abs() <= limit)
-        {
-            return Err(
-                "malformed LXMF FIELD_TELEMETRY (0x02): location coordinates have invalid type or range",
-            );
-        }
-    }
-    for key in ["altitude", "speed", "bearing", "accuracy"] {
-        if location
-            .get(key)
-            .is_some_and(|v| !v.is_null() && !v.as_f64().is_some_and(f64::is_finite))
-        {
-            return Err(
-                "malformed LXMF FIELD_TELEMETRY (0x02): location readings must be finite numbers",
-            );
-        }
-    }
-    if let Some(t) = location.get("last_update_timestamp") {
-        timestamp(t)?;
-    }
-    Ok(())
-}
-fn validate_and_normalize(telemetry: &mut JsonValue) -> Result<(), &'static str> {
-    let object = telemetry.as_object_mut().ok_or(
-        "unsupported LXMF FIELD_TELEMETRY (0x02): expected a sensor map or known location projection",
-    )?;
-    if object.contains_key("schema_version") || object.contains_key("version") {
-        return Err(
-            "unsupported LXMF FIELD_TELEMETRY (0x02): explicit schema envelope; no schema version negotiated",
-        );
-    }
-    // Pinned reticulumd rmpv_to_json projects packed location into these names.
-    // Bootstrap lacks original sensor bytes; normalization does not invent them.
-    if object.contains_key("lat") || object.contains_key("lon") {
-        let mut location = serde_json::Map::new();
-        for (from, to) in [
-            ("lat", "latitude"),
-            ("lon", "longitude"),
-            ("alt", "altitude"),
-            ("speed", "speed"),
-            ("bearing", "bearing"),
-            ("accuracy", "accuracy"),
-            ("updated", "last_update_timestamp"),
-        ] {
-            if let Some(v) = object.get(from) {
-                location.insert(to.into(), v.clone());
-            }
-        }
-        let location = JsonValue::Object(location);
-        coordinates(&location)?;
-        let time = object.get("updated").map(timestamp).transpose()?;
-        *telemetry = serde_json::json!({"location": location});
-        if let Some(t) = time {
-            telemetry["time"] = serde_json::json!({"timestamp":t});
-        }
-        return Ok(());
-    }
-    if object.contains_key("location") || object.contains_key("time") {
-        if let Some(location) = object.get("location").filter(|v| !v.is_null()) {
-            coordinates(location)?;
-        }
-        if let Some(time) = object.get("time") {
-            timestamp(time.get("timestamp").unwrap_or(&JsonValue::Null))?;
-        }
-        return Ok(());
-    }
-    if object.keys().any(|key| key.parse::<u8>().is_err()) {
-        return Err(
-            "unsupported LXMF FIELD_TELEMETRY (0x02): unknown payload shape; no schema version negotiated",
-        );
-    }
-    if let Some(time) = object.get("1") {
-        timestamp(time)?;
-    }
-    if let Some(sensor) = object.get("2").filter(|v| !v.is_null()) {
-        let location = decode_lxmf_location_sensor(sensor).ok_or(
-            "malformed LXMF FIELD_TELEMETRY (0x02): location requires seven correctly typed packed readings",
-        )?;
-        coordinates(&location)?;
-    }
-    Ok(())
 }
 
 fn hex_bytes(text: &str, limit: usize) -> Result<Vec<u8>, &'static str> {
@@ -288,44 +174,4 @@ pub fn reticulumd_event_payload_to_payloads(
         }
     }
     reticulumd_message_to_payloads(&corrected, local_source)
-}
-
-pub(super) fn preserve_unconverted_sensors(
-    object: &serde_json::Map<String, JsonValue>,
-    humanized: &mut serde_json::Map<String, JsonValue>,
-) {
-    for (sid, value) in object {
-        let name = match sid.as_str() {
-            "1" => "time",
-            "2" => "location",
-            "3" => "pressure",
-            "4" => "battery",
-            "5" => "physical_link",
-            "6" => "acceleration",
-            "7" => "temperature",
-            "8" => "humidity",
-            "9" => "magnetic_field",
-            "10" => "ambient_light",
-            "11" => "gravity",
-            "12" => "angular_velocity",
-            "14" => "proximity",
-            "15" => "information",
-            "16" => "received",
-            "17" => "power_consumption",
-            "18" => "power_production",
-            "19" => "processor",
-            "20" => "ram",
-            "21" => "nvm",
-            "22" => "tank",
-            "23" => "fuel",
-            "24" => "lxmf_propagation",
-            "25" => "rns_transport",
-            "26" => "connection_map",
-            "255" => "custom",
-            _ => "",
-        };
-        if !humanized.contains_key(name) {
-            humanized.insert(sid.clone(), value.clone());
-        }
-    }
 }

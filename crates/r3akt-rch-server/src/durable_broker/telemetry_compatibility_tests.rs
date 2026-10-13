@@ -10,7 +10,7 @@ use tower::ServiceExt as _;
 fn fixture() -> Value {
     serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../r3akt-transport-rns/tests/fixtures/columba_2_2_6.json"
+        "/../r3akt-map-core/tests/fixtures/columba_2_2_6.json"
     )))
     .unwrap()
 }

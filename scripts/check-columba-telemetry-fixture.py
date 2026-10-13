@@ -48,7 +48,7 @@ def main():
     if codec.read_bytes() != source:
         raise SystemExit("Columba codec has local changes; refusing an unpinned result")
     fixture = json.loads((Path(__file__).resolve().parents[1] /
-        "crates/r3akt-transport-rns/tests/fixtures/columba_2_2_6.json").read_text())
+        "crates/r3akt-map-core/tests/fixtures/columba_2_2_6.json").read_text())
     with tempfile.TemporaryDirectory(prefix="rch-columba-codec-") as directory:
         output = Path(directory)
         model = output / "LocationTelemetry.kt"

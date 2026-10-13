@@ -76,27 +76,11 @@ impl RchSqliteStore {
         id: &str,
         update: impl FnOnce(&mut MarkerRecord),
     ) -> Result<Option<MarkerRecord>, RchCoreError> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let payload: Option<Vec<u8>> = transaction
-            .query_row(
-                "SELECT payload FROM rch_markers WHERE object_destination_hash = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(payload) = payload else {
-            return Ok(None);
-        };
-        let mut record: MarkerRecord = decode_msgpack(&payload)?;
-        update(&mut record);
-        transaction.execute(
-            "UPDATE rch_markers SET payload = ?1, local_id=?3 WHERE object_destination_hash = ?2",
-            params![encode_msgpack(&record)?, id, record.local_id],
-        )?;
-        transaction.commit()?;
-        Ok(Some(record))
+        Ok(r3akt_map_core::sqlite::update(
+            &mut self.connection,
+            id,
+            update,
+        )?)
     }
 
     pub fn update_zone(

@@ -4,7 +4,10 @@ use r3akt_transport_rns::reticulumd_message_to_payloads;
 use serde_json::{Value, json};
 
 fn fixture() -> Value {
-    serde_json::from_str(include_str!("fixtures/columba_2_2_6.json")).unwrap()
+    serde_json::from_str(include_str!(
+        "../../r3akt-map-core/tests/fixtures/columba_2_2_6.json"
+    ))
+    .unwrap()
 }
 fn message(fields: Value) -> Value {
     let f = fixture();

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/r3akt-identity",
+    "crates/r3akt-map-core",
     "crates/r3akt-protocol",
     "crates/r3akt-profile-rch",
     "crates/r3akt-rch-core",
@@ -23,6 +24,7 @@ repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 
 [workspace.dependencies]
 r3akt-identity = { path = "crates/r3akt-identity" }
+r3akt-map-core = { path = "crates/r3akt-map-core" }
 r3akt-protocol = { path = "crates/r3akt-protocol" }
 r3akt-shared-mesh-delivery = { package = "r3akt-mesh-delivery", git = "https://github.com/FreeTAKTeam/R3AKTClient.git", rev = "e705533f8549f8556b1939da4731f233ea2e1b89" }
 r3akt-profile-rch = { path = "crates/r3akt-profile-rch" }

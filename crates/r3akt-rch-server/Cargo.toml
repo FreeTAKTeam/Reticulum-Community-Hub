@@ -12,6 +12,7 @@ axum.workspace = true
 base64.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
+r3akt-map-core.workspace = true
 r3akt-protocol.workspace = true
 r3akt-profile-rch.workspace = true
 r3akt-rch-bridge.workspace = true
