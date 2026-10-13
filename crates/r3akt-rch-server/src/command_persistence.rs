@@ -1,5 +1,5 @@
 use super::{
-    ApiError, AppState, HashMap, Instant, MarkerRecord, RchCore, RchSqliteStore, ZoneRecord,
+    ApiError, AppState, HashMap, Instant, RchCore, RchSqliteStore, ZoneRecord,
     ensure_kill_switch_persistence_unlocked, record_sqlite_latency,
 };
 
@@ -79,10 +79,7 @@ fn mutate_inner<T>(
                     .as_ref()
                     != Some(&record)
                 {
-                    markers.insert(
-                        record.object_destination_hash.clone(),
-                        MarkerRecord::from(record),
-                    );
+                    markers.insert(record.object_destination_hash.clone(), record);
                 }
             }
             for key in prior_markers.keys() {

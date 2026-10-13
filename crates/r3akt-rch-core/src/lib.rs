@@ -519,6 +519,23 @@ pub enum RchCoreError {
     Sqlite(#[from] rusqlite::Error),
 }
 
+impl From<r3akt_map_core::sqlite::StoreError> for RchCoreError {
+    fn from(error: r3akt_map_core::sqlite::StoreError) -> Self {
+        use r3akt_map_core::sqlite::StoreError;
+        match error {
+            StoreError::Sqlite(error) => Self::Sqlite(error),
+            StoreError::Encode(message) => Self::Encode(message),
+            StoreError::Decode(message) => Self::Decode(message),
+        }
+    }
+}
+
+impl From<r3akt_map_core::MarkerError> for RchCoreError {
+    fn from(error: r3akt_map_core::MarkerError) -> Self {
+        Self::InvalidPayload(error.to_string())
+    }
+}
+
 impl RchCoreError {
     #[must_use]
     pub fn reason_code(&self) -> &'static str {
@@ -761,21 +778,8 @@ pub struct TelemetryRecord {
     pub packed_telemeter: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarkerRecord {
-    pub local_id: String,
-    pub object_destination_hash: String,
-    pub origin_rch: String,
-    pub marker_type: String,
-    pub symbol: String,
-    pub name: String,
-    pub category: String,
-    pub lat: f64,
-    pub lon: f64,
-    pub notes: Option<String>,
-    pub created_ts_ms: i64,
-    pub updated_ts_ms: i64,
-}
+/// Point markers are owned by the shared map library.
+pub use r3akt_map_core::MarkerRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZonePointRecord {
@@ -2106,24 +2110,14 @@ impl RchSqliteStore {
     }
 
     pub fn upsert_marker(&mut self, record: &MarkerRecord) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "INSERT OR REPLACE INTO rch_markers (object_destination_hash, payload, local_id)
-             VALUES (?1, ?2, ?3)",
-            params![
-                record.object_destination_hash,
-                encode_msgpack(record)?,
-                record.local_id
-            ],
-        )?;
-        Ok(())
+        Ok(r3akt_map_core::sqlite::upsert(&self.connection, record)?)
     }
 
     pub fn delete_marker(&mut self, object_destination_hash: &str) -> Result<(), RchCoreError> {
-        self.connection.execute(
-            "DELETE FROM rch_markers WHERE object_destination_hash = ?1",
-            params![object_destination_hash],
-        )?;
-        Ok(())
+        Ok(r3akt_map_core::sqlite::delete(
+            &self.connection,
+            object_destination_hash,
+        )?)
     }
 
     pub fn upsert_zone(&mut self, record: &ZoneRecord) -> Result<(), RchCoreError> {
@@ -2258,9 +2252,7 @@ impl RchSqliteStore {
         let identity_rem_modes = self.load_payload_rows::<IdentityRemModeRecord>(
             "SELECT payload FROM rch_identity_rem_modes ORDER BY identity",
         )?;
-        let markers = self.load_payload_rows::<MarkerRecord>(
-            "SELECT payload FROM rch_markers ORDER BY object_destination_hash",
-        )?;
+        let markers = r3akt_map_core::sqlite::load_all(&self.connection)?;
         let zones =
             self.load_payload_rows::<ZoneRecord>("SELECT payload FROM rch_zones ORDER BY zone_id")?;
         let missions = self
@@ -2412,9 +2404,7 @@ impl RchSqliteStore {
             "SELECT payload FROM rch_system_events ORDER BY id",
         )?;
         let telemetry_records = self.load_latest_telemetry_records()?;
-        let markers = self.load_payload_rows::<MarkerRecord>(
-            "SELECT payload FROM rch_markers ORDER BY object_destination_hash",
-        )?;
+        let markers = r3akt_map_core::sqlite::load_all(&self.connection)?;
         let zones =
             self.load_payload_rows::<ZoneRecord>("SELECT payload FROM rch_zones ORDER BY zone_id")?;
         let missions = self
@@ -6440,51 +6430,36 @@ impl RchCore {
         command: &MissionCommandEnvelope,
         args: &Value,
     ) -> Result<MarkerRecord, RchCoreError> {
-        let lat = required_f64(args, "lat")?;
-        let lon = required_f64(args, "lon")?;
-        let local_id = Uuid::new_v4().simple().to_string();
-        let object_destination_hash = Uuid::new_v4().simple().to_string();
-        let now = utc_now_ms();
-        let marker_type = normalize_marker_symbol(
-            &optional_text(args, &["marker_type", "type"]).unwrap_or_else(|| "marker".to_string()),
-        )
-        .unwrap_or_else(|| "marker".to_string());
-        if !is_supported_marker_symbol(&marker_type) {
-            return Err(RchCoreError::InvalidPayload(
-                "Unsupported marker type".to_string(),
-            ));
-        }
-        let symbol = normalize_marker_symbol(
-            &optional_text(args, &["symbol"]).unwrap_or_else(|| "marker".to_string()),
-        )
-        .unwrap_or_else(|| "marker".to_string());
-        if !is_supported_marker_symbol(&symbol) {
-            return Err(RchCoreError::InvalidPayload(
-                "Unsupported marker symbol".to_string(),
-            ));
-        }
-        let mut category = normalize_marker_symbol(
+        use r3akt_map_core::{marker, symbols};
+        let position =
+            r3akt_map_core::Position::new(required_f64(args, "lat")?, required_f64(args, "lon")?)?;
+        // Mission commands default absent or unusable type/symbol to `marker`
+        // and normalize the category, unlike the HTTP route.
+        let normalized_or_marker = |keys: &[&str]| {
+            symbols::normalize(&optional_text(args, keys).unwrap_or_else(|| "marker".to_string()))
+                .unwrap_or_else(|| "marker".to_string())
+        };
+        let marker_type = marker::supported_type(normalized_or_marker(&["marker_type", "type"]))?;
+        let symbol = marker::supported_symbol(normalized_or_marker(&["symbol"]))?;
+        let category = symbols::normalize(
             &optional_text(args, &["category"]).unwrap_or_else(|| "marker".to_string()),
         )
-        .unwrap_or_default();
-        if category.is_empty() {
-            category.clone_from(&symbol);
-        }
-        let marker = MarkerRecord {
-            local_id,
-            object_destination_hash: object_destination_hash.clone(),
-            origin_rch: normalize_hash(Some(&command.source.rns_identity)).unwrap_or_default(),
-            marker_type,
-            symbol,
-            name: optional_text(args, &["name"]).unwrap_or_else(|| "Marker".to_string()),
-            category,
-            lat,
-            lon,
-            notes: optional_text(args, &["notes"]),
-            created_ts_ms: now,
-            updated_ts_ms: now,
-        };
-        self.markers.insert(object_destination_hash, marker.clone());
+        .unwrap_or_else(|| symbol.clone());
+        let marker = MarkerRecord::create(
+            r3akt_map_core::MarkerDraft {
+                marker_type,
+                symbol,
+                name: optional_text(args, &["name"]).unwrap_or_else(|| "Marker".to_string()),
+                category,
+                position,
+                notes: optional_text(args, &["notes"]),
+                origin_rch: normalize_hash(Some(&command.source.rns_identity)).unwrap_or_default(),
+            },
+            Uuid::new_v4().simple().to_string(),
+            utc_now_ms(),
+        );
+        self.markers
+            .insert(marker.object_destination_hash.clone(), marker.clone());
         Ok(marker)
     }
 
@@ -6496,15 +6471,13 @@ impl RchCore {
         let marker_hash = normalize_hash(Some(&marker_hash)).ok_or_else(|| {
             RchCoreError::InvalidPayload("object_destination_hash is required".to_string())
         })?;
-        let lat = required_f64(args, "lat")?;
-        let lon = required_f64(args, "lon")?;
+        let position =
+            r3akt_map_core::Position::new(required_f64(args, "lat")?, required_f64(args, "lon")?)?;
         let marker = self
             .markers
             .get_mut(&marker_hash)
             .ok_or(RchCoreError::TopicNotFound)?;
-        marker.lat = lat;
-        marker.lon = lon;
-        marker.updated_ts_ms = utc_now_ms();
+        marker.move_to(position, utc_now_ms());
         Ok(marker.clone())
     }
 
@@ -6513,19 +6486,22 @@ impl RchCore {
         let marker_hash = normalize_hash(Some(&marker_hash)).ok_or_else(|| {
             RchCoreError::InvalidPayload("object_destination_hash is required".to_string())
         })?;
+        let name =
+            match optional_text(args, &["name"]) {
+                Some(name) => Some(r3akt_map_core::marker::normalize_name(&name).ok_or_else(
+                    || RchCoreError::InvalidPayload("Marker name is required".to_string()),
+                )?),
+                None => None,
+            };
         let marker = self
             .markers
             .get_mut(&marker_hash)
             .ok_or(RchCoreError::TopicNotFound)?;
-        if let Some(name) = optional_text(args, &["name"]) {
-            if name.trim().is_empty() {
-                return Err(RchCoreError::InvalidPayload(
-                    "Marker name is required".to_string(),
-                ));
-            }
-            marker.name = name.trim().to_string();
+        let now = utc_now_ms();
+        match name {
+            Some(name) => marker.rename(name, now),
+            None => marker.updated_ts_ms = now,
         }
-        marker.updated_ts_ms = utc_now_ms();
         Ok(marker.clone())
     }
 
@@ -9243,21 +9219,7 @@ impl RchCore {
     }
 
     fn marker_value(marker: &MarkerRecord) -> Value {
-        let timestamp = millis_to_rfc3339(marker.updated_ts_ms);
-        json!({
-            "object_destination_hash": marker.object_destination_hash,
-            "origin_rch": marker.origin_rch,
-            "type": marker.marker_type,
-            "name": marker.name,
-            "category": marker.category,
-            "symbol": marker.symbol,
-            "notes": marker.notes,
-            "position": { "lat": marker.lat, "lon": marker.lon },
-            "time": timestamp,
-            "stale_at": timestamp,
-            "created_at": millis_to_rfc3339(marker.created_ts_ms),
-            "updated_at": timestamp,
-        })
+        marker.api_value()
     }
 
     fn zone_values(&self) -> Vec<Value> {
@@ -11387,10 +11349,7 @@ fn save_registry_snapshot_tables(
     snapshot: &RchCoreSnapshot,
 ) -> Result<(), RchCoreError> {
     for marker in &snapshot.markers {
-        transaction.execute(
-            "INSERT INTO rch_markers (object_destination_hash, payload, local_id) VALUES (?1, ?2, ?3)",
-            params![marker.object_destination_hash, encode_msgpack(marker)?, marker.local_id],
-        )?;
+        r3akt_map_core::sqlite::insert(transaction, marker)?;
     }
     for zone in &snapshot.zones {
         transaction.execute(
@@ -11826,87 +11785,6 @@ fn optional_text_or_empty(args: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| object.get(*key).and_then(value_as_str))
         .map(|value| value.trim().to_string())
-}
-
-fn normalize_marker_symbol(symbol: &str) -> Option<String> {
-    let raw = symbol.trim().to_lowercase();
-    if raw.is_empty() {
-        return None;
-    }
-    let normalized = raw
-        .split('.')
-        .filter_map(|part| {
-            let segment = normalize_marker_symbol_segment(part);
-            (!segment.is_empty()).then_some(segment)
-        })
-        .collect::<Vec<_>>()
-        .join(".");
-    if normalized.is_empty() {
-        return None;
-    }
-    Some(
-        match normalized.as_str() {
-            "pin" | "location" => "marker",
-            "car" | "truck" | "auto" | "automobile" => "vehicle",
-            "uav" | "uas" => "drone",
-            "wildlife" | "pet" => "animal",
-            "radar" | "telemetry" | "vehicle-sensor" => "sensor",
-            "cctv" => "camera",
-            "flame" | "wildfire" => "fire",
-            "water" => "flood",
-            "human" | "operator" => "person",
-            "community" | "group-community" | "team" => "group",
-            "building" | "facility" => "infrastructure",
-            "medical" | "hospital" => "medic",
-            "alarm" | "warning" => "alert",
-            "mission" | "assignment" => "task",
-            _ => normalized.as_str(),
-        }
-        .to_string(),
-    )
-}
-
-fn is_supported_marker_symbol(symbol: &str) -> bool {
-    matches!(
-        symbol,
-        "marker"
-            | "friendly"
-            | "hostile"
-            | "neutral"
-            | "unknown"
-            | "vehicle"
-            | "drone"
-            | "animal"
-            | "sensor"
-            | "radio"
-            | "antenna"
-            | "camera"
-            | "fire"
-            | "flood"
-            | "person"
-            | "group"
-            | "infrastructure"
-            | "medic"
-            | "alert"
-            | "task"
-    )
-}
-
-fn normalize_marker_symbol_segment(value: &str) -> String {
-    let mut normalized = String::new();
-    let mut pending_separator = false;
-    for character in value.trim().chars().flat_map(char::to_lowercase) {
-        if character.is_ascii_lowercase() || character.is_ascii_digit() {
-            if pending_separator && !normalized.is_empty() {
-                normalized.push('-');
-            }
-            normalized.push(character);
-            pending_separator = false;
-        } else {
-            pending_separator = true;
-        }
-    }
-    normalized
 }
 
 fn optional_value_text(args: &Value, key: &str) -> Option<String> {

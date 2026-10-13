@@ -2689,573 +2689,11 @@ pub fn reticulumd_event_to_envelope(
     }
 }
 
-fn parse_lxmf_telemetry_payload(value: &JsonValue) -> Option<JsonValue> {
-    if value.as_object().is_some() {
-        return Some(value.clone());
-    }
-    let bytes = attachment_data_bytes(value);
-    if bytes.is_empty() {
-        return None;
-    }
-    parse_lxmf_msgpack_json(&bytes)
-}
-
-#[derive(Debug)]
-enum LxmfMsgpackValue {
-    Nil,
-    Bool(bool),
-    I64(i64),
-    U64(u64),
-    F64(f64),
-    String(String),
-    Bytes(Vec<u8>),
-    Array(Vec<LxmfMsgpackValue>),
-    Map(Vec<(LxmfMsgpackValue, LxmfMsgpackValue)>),
-}
-
-fn parse_lxmf_msgpack_json(bytes: &[u8]) -> Option<JsonValue> {
-    let (value, offset) = parse_lxmf_msgpack_value(bytes, 0, 0)?;
-    (offset == bytes.len()).then(|| lxmf_msgpack_value_to_json(value))
-}
-
 fn bounded_lxmf_wire_payload(bytes: &[u8]) -> bool {
-    parse_lxmf_msgpack_value(bytes, 0, 0).is_some_and(|(value, consumed)| {
+    r3akt_map_core::msgpack::parse_value(bytes).is_some_and(|(value, consumed)| {
         consumed == bytes.len()
-            && matches!(value, LxmfMsgpackValue::Array(items) if (4..=5).contains(&items.len()))
+            && matches!(value, r3akt_map_core::msgpack::Value::Array(items) if (4..=5).contains(&items.len()))
     })
-}
-
-fn parse_lxmf_msgpack_value(
-    bytes: &[u8],
-    offset: usize,
-    depth: usize,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    if depth > 32 {
-        return None;
-    }
-    let marker = *bytes.get(offset)?;
-    let next = offset + 1;
-    match marker {
-        0x00..=0x7f => Some((LxmfMsgpackValue::U64(u64::from(marker)), next)),
-        0x80..=0x8f => parse_lxmf_msgpack_map(bytes, next, usize::from(marker & 0x0f), depth),
-        0x90..=0x9f => parse_lxmf_msgpack_array(bytes, next, usize::from(marker & 0x0f), depth),
-        0xa0..=0xbf => parse_lxmf_msgpack_string(bytes, next, usize::from(marker & 0x1f)),
-        0xc0 => Some((LxmfMsgpackValue::Nil, next)),
-        0xc2 => Some((LxmfMsgpackValue::Bool(false), next)),
-        0xc3 => Some((LxmfMsgpackValue::Bool(true), next)),
-        0xc4 => {
-            let len = usize::from(*bytes.get(next)?);
-            parse_lxmf_msgpack_bytes(bytes, next + 1, len)
-        }
-        0xc5 => {
-            let len = usize::from(read_be_u16_at(bytes, next)?);
-            parse_lxmf_msgpack_bytes(bytes, next + 2, len)
-        }
-        0xc6 => {
-            let len = usize::try_from(read_be_u32_at(bytes, next)?).ok()?;
-            parse_lxmf_msgpack_bytes(bytes, next + 4, len)
-        }
-        0xca..=0xd3 => parse_lxmf_msgpack_number(bytes, next, marker),
-        0xd9 => {
-            let len = usize::from(*bytes.get(next)?);
-            parse_lxmf_msgpack_string(bytes, next + 1, len)
-        }
-        0xda => {
-            let len = usize::from(read_be_u16_at(bytes, next)?);
-            parse_lxmf_msgpack_string(bytes, next + 2, len)
-        }
-        0xdb => {
-            let len = usize::try_from(read_be_u32_at(bytes, next)?).ok()?;
-            parse_lxmf_msgpack_string(bytes, next + 4, len)
-        }
-        0xdc => parse_lxmf_msgpack_array(
-            bytes,
-            next + 2,
-            usize::from(read_be_u16_at(bytes, next)?),
-            depth,
-        ),
-        0xdd => parse_lxmf_msgpack_array(
-            bytes,
-            next + 4,
-            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
-            depth,
-        ),
-        0xde => parse_lxmf_msgpack_map(
-            bytes,
-            next + 2,
-            usize::from(read_be_u16_at(bytes, next)?),
-            depth,
-        ),
-        0xdf => parse_lxmf_msgpack_map(
-            bytes,
-            next + 4,
-            usize::try_from(read_be_u32_at(bytes, next)?).ok()?,
-            depth,
-        ),
-        0xe0..=0xff => Some((
-            LxmfMsgpackValue::I64(i64::from(i8::from_be_bytes([marker]))),
-            next,
-        )),
-        _ => None,
-    }
-}
-
-fn parse_lxmf_msgpack_number(
-    bytes: &[u8],
-    next: usize,
-    marker: u8,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    match marker {
-        0xca => {
-            let value = f64::from(f32::from_bits(read_be_u32_at(bytes, next)?));
-            value
-                .is_finite()
-                .then_some((LxmfMsgpackValue::F64(value), next + 4))
-        }
-        0xcb => {
-            let value = f64::from_bits(read_be_u64_at(bytes, next)?);
-            value
-                .is_finite()
-                .then_some((LxmfMsgpackValue::F64(value), next + 8))
-        }
-        0xcc => Some((
-            LxmfMsgpackValue::U64(u64::from(*bytes.get(next)?)),
-            next + 1,
-        )),
-        0xcd => Some((
-            LxmfMsgpackValue::U64(u64::from(read_be_u16_at(bytes, next)?)),
-            next + 2,
-        )),
-        0xce => Some((
-            LxmfMsgpackValue::U64(u64::from(read_be_u32_at(bytes, next)?)),
-            next + 4,
-        )),
-        0xcf => Some((
-            LxmfMsgpackValue::U64(read_be_u64_at(bytes, next)?),
-            next + 8,
-        )),
-        0xd0 => Some((
-            LxmfMsgpackValue::I64(i64::from(i8::from_be_bytes([*bytes.get(next)?]))),
-            next + 1,
-        )),
-        0xd1 => Some((
-            LxmfMsgpackValue::I64(i64::from(i16::from_be_bytes(
-                bytes.get(next..next + 2)?.try_into().ok()?,
-            ))),
-            next + 2,
-        )),
-        0xd2 => Some((
-            LxmfMsgpackValue::I64(i64::from(i32::from_be_bytes(
-                bytes.get(next..next + 4)?.try_into().ok()?,
-            ))),
-            next + 4,
-        )),
-        0xd3 => Some((
-            LxmfMsgpackValue::I64(i64::from_be_bytes(
-                bytes.get(next..next + 8)?.try_into().ok()?,
-            )),
-            next + 8,
-        )),
-        _ => None,
-    }
-}
-
-fn parse_lxmf_msgpack_array(
-    bytes: &[u8],
-    mut offset: usize,
-    len: usize,
-    depth: usize,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    if len > bytes.len().saturating_sub(offset) {
-        return None;
-    }
-    let mut items = Vec::with_capacity(len);
-    for _ in 0..len {
-        let (value, next) = parse_lxmf_msgpack_value(bytes, offset, depth + 1)?;
-        items.push(value);
-        offset = next;
-    }
-    Some((LxmfMsgpackValue::Array(items), offset))
-}
-
-fn parse_lxmf_msgpack_map(
-    bytes: &[u8],
-    mut offset: usize,
-    len: usize,
-    depth: usize,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    if len > bytes.len().saturating_sub(offset) / 2 {
-        return None;
-    }
-    let mut keys = std::collections::HashSet::new();
-    let mut items = Vec::with_capacity(len);
-    for _ in 0..len {
-        let (key, next) = parse_lxmf_msgpack_value(bytes, offset, depth + 1)?;
-        let key_name = match &key {
-            LxmfMsgpackValue::I64(v) => v.to_string(),
-            LxmfMsgpackValue::U64(v) => v.to_string(),
-            LxmfMsgpackValue::String(v) => v.clone(),
-            LxmfMsgpackValue::Bytes(v) => format!(
-                "base64:{}",
-                base64::engine::general_purpose::STANDARD.encode(v)
-            ),
-            _ => return None,
-        };
-        if !keys.insert(key_name) {
-            return None;
-        }
-        let (value, next) = parse_lxmf_msgpack_value(bytes, next, depth + 1)?;
-        items.push((key, value));
-        offset = next;
-    }
-    Some((LxmfMsgpackValue::Map(items), offset))
-}
-
-fn parse_lxmf_msgpack_bytes(
-    bytes: &[u8],
-    offset: usize,
-    len: usize,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    let end = offset.checked_add(len)?;
-    Some((
-        LxmfMsgpackValue::Bytes(bytes.get(offset..end)?.to_vec()),
-        end,
-    ))
-}
-
-fn parse_lxmf_msgpack_string(
-    bytes: &[u8],
-    offset: usize,
-    len: usize,
-) -> Option<(LxmfMsgpackValue, usize)> {
-    let end = offset.checked_add(len)?;
-    let value = std::str::from_utf8(bytes.get(offset..end)?)
-        .ok()?
-        .to_string();
-    Some((LxmfMsgpackValue::String(value), end))
-}
-
-fn lxmf_msgpack_value_to_json(value: LxmfMsgpackValue) -> JsonValue {
-    match value {
-        LxmfMsgpackValue::Nil => JsonValue::Null,
-        LxmfMsgpackValue::Bool(value) => JsonValue::Bool(value),
-        LxmfMsgpackValue::I64(value) => JsonValue::from(value),
-        LxmfMsgpackValue::U64(value) => JsonValue::from(value),
-        LxmfMsgpackValue::F64(value) => JsonValue::from(value),
-        LxmfMsgpackValue::String(value) => JsonValue::String(value),
-        LxmfMsgpackValue::Bytes(bytes) => {
-            JsonValue::Array(bytes.into_iter().map(JsonValue::from).collect())
-        }
-        LxmfMsgpackValue::Array(items) => {
-            JsonValue::Array(items.into_iter().map(lxmf_msgpack_value_to_json).collect())
-        }
-        LxmfMsgpackValue::Map(items) => JsonValue::Object(
-            items
-                .into_iter()
-                .filter_map(|(key, value)| {
-                    lxmf_msgpack_key_to_string(key)
-                        .map(|key| (key, lxmf_msgpack_value_to_json(value)))
-                })
-                .collect(),
-        ),
-    }
-}
-
-fn lxmf_msgpack_key_to_string(value: LxmfMsgpackValue) -> Option<String> {
-    match value {
-        LxmfMsgpackValue::I64(value) => Some(value.to_string()),
-        LxmfMsgpackValue::U64(value) => Some(value.to_string()),
-        LxmfMsgpackValue::String(value) => Some(value),
-        LxmfMsgpackValue::Bytes(value) => Some(format!(
-            "base64:{}",
-            base64::engine::general_purpose::STANDARD.encode(value)
-        )),
-        _ => None,
-    }
-}
-
-fn read_be_u16_at(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_be_bytes(
-        bytes.get(offset..offset + 2)?.try_into().ok()?,
-    ))
-}
-
-fn read_be_u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(
-        bytes.get(offset..offset + 4)?.try_into().ok()?,
-    ))
-}
-
-fn read_be_u64_at(bytes: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_be_bytes(
-        bytes.get(offset..offset + 8)?.try_into().ok()?,
-    ))
-}
-
-fn humanize_lxmf_telemetry_payload(payload: JsonValue) -> JsonValue {
-    let Some(object) = payload.as_object() else {
-        return payload;
-    };
-    if object.contains_key("location") || object.contains_key("time") {
-        return payload;
-    }
-    let mut humanized = serde_json::Map::new();
-    if let Some(timestamp) = object.get("1").and_then(json_number_to_f64) {
-        humanized.insert(
-            "time".to_string(),
-            serde_json::json!({
-                "timestamp": json_number_from_f64(timestamp),
-                "iso": unix_timestamp_iso(timestamp),
-            }),
-        );
-    }
-    if let Some(location) = object.get("2").and_then(decode_lxmf_location_sensor) {
-        humanized.insert("location".to_string(), location);
-    }
-    for (sid, name, field) in [
-        ("3", "pressure", "mbar"),
-        ("7", "temperature", "c"),
-        ("8", "humidity", "percent_relative"),
-        ("10", "ambient_light", "lux"),
-        ("14", "proximity", "triggered"),
-    ] {
-        if let Some(sensor) = object
-            .get(sid)
-            .and_then(|value| decode_lxmf_scalar_sensor(value, field))
-        {
-            humanized.insert(name.to_string(), sensor);
-        }
-    }
-    for (sid, name, fields) in [
-        ("5", "physical_link", ["rssi", "snr", "q"]),
-        ("6", "acceleration", ["x", "y", "z"]),
-        ("9", "magnetic_field", ["x", "y", "z"]),
-        ("11", "gravity", ["x", "y", "z"]),
-        ("12", "angular_velocity", ["x", "y", "z"]),
-    ] {
-        if let Some(sensor) = object
-            .get(sid)
-            .and_then(|value| decode_lxmf_triplet_sensor(value, fields))
-        {
-            humanized.insert(name.to_string(), sensor);
-        }
-    }
-    for (sid, name) in [
-        ("24", "lxmf_propagation"),
-        ("25", "rns_transport"),
-        ("26", "connection_map"),
-    ] {
-        if let Some(sensor) = object.get(sid).filter(|value| value.as_object().is_some()) {
-            humanized.insert(name.to_string(), sensor.clone());
-        }
-    }
-    if let Some(received) = object.get("16").and_then(decode_lxmf_received_sensor) {
-        humanized.insert("received".to_string(), received);
-    }
-    for (sid, name) in [
-        ("17", "power_consumption"),
-        ("18", "power_production"),
-        ("19", "processor"),
-        ("20", "ram"),
-        ("21", "nvm"),
-        ("22", "tank"),
-        ("23", "fuel"),
-        ("255", "custom"),
-    ] {
-        if let Some(sensor) = object.get(sid).and_then(decode_lxmf_collection_sensor) {
-            humanized.insert(name.to_string(), sensor);
-        }
-    }
-    if let Some(battery) = object.get("4").and_then(decode_lxmf_battery_sensor) {
-        humanized.insert("battery".to_string(), battery);
-    }
-    if let Some(information) = object.get("15").and_then(decode_lxmf_information_sensor) {
-        humanized.insert("information".to_string(), information);
-    }
-    telemetry_decode::preserve_unconverted_sensors(object, &mut humanized);
-    if humanized.is_empty() {
-        payload
-    } else {
-        JsonValue::Object(humanized)
-    }
-}
-
-fn lxmf_telemetry_timestamp(telemetry: &JsonValue) -> Option<i64> {
-    telemetry
-        .get("time")
-        .and_then(|time| time.get("timestamp"))
-        .and_then(json_number_to_i64)
-}
-
-fn decode_lxmf_location_sensor(value: &JsonValue) -> Option<JsonValue> {
-    let items = value.as_array()?;
-    if items.len() < 7 {
-        return None;
-    }
-    let latitude = f64::from(read_i32_be(&attachment_data_bytes(&items[0]))?) / 1_000_000.0;
-    let longitude = f64::from(read_i32_be(&attachment_data_bytes(&items[1]))?) / 1_000_000.0;
-    let altitude = f64::from(read_i32_be(&attachment_data_bytes(&items[2]))?) / 100.0;
-    let speed = f64::from(read_u32_be(&attachment_data_bytes(&items[3]))?) / 100.0;
-    let bearing = f64::from(read_i32_be(&attachment_data_bytes(&items[4]))?) / 100.0;
-    let accuracy = f64::from(read_u16_be(&attachment_data_bytes(&items[5]))?) / 100.0;
-    let last_update = json_number_to_f64(&items[6])?;
-    Some(serde_json::json!({
-        "latitude": latitude,
-        "longitude": longitude,
-        "altitude": altitude,
-        "speed": speed,
-        "bearing": bearing,
-        "accuracy": accuracy,
-        "last_update_timestamp": last_update,
-        "last_update_iso": unix_timestamp_iso(last_update),
-    }))
-}
-
-fn decode_lxmf_scalar_sensor(value: &JsonValue, field: &str) -> Option<JsonValue> {
-    if value.is_null() {
-        return None;
-    }
-    let mut object = serde_json::Map::new();
-    object.insert(field.to_string(), value.clone());
-    Some(JsonValue::Object(object))
-}
-
-fn decode_lxmf_triplet_sensor(value: &JsonValue, fields: [&str; 3]) -> Option<JsonValue> {
-    let items = value.as_array()?;
-    let mut object = serde_json::Map::new();
-    object.insert(fields[0].to_string(), items.first()?.clone());
-    object.insert(fields[1].to_string(), items.get(1)?.clone());
-    object.insert(fields[2].to_string(), items.get(2)?.clone());
-    Some(JsonValue::Object(object))
-}
-
-fn decode_lxmf_received_sensor(value: &JsonValue) -> Option<JsonValue> {
-    let items = value.as_array()?;
-    Some(serde_json::json!({
-        "by": items.first()?.clone(),
-        "via": items.get(1)?.clone(),
-        "distance": {
-            "geodesic": items.get(2)?.clone(),
-            "euclidian": items.get(3)?.clone(),
-        },
-    }))
-}
-
-fn decode_lxmf_collection_sensor(value: &JsonValue) -> Option<JsonValue> {
-    let records = value.as_array()?;
-    let mut object = serde_json::Map::new();
-    for record in records {
-        let Some(items) = record.as_array() else {
-            continue;
-        };
-        if items.len() < 2 {
-            continue;
-        }
-        let Some(label) = lxmf_collection_label(&items[0]) else {
-            continue;
-        };
-        object.insert(label, items[1].clone());
-    }
-    (!object.is_empty()).then_some(JsonValue::Object(object))
-}
-
-fn lxmf_collection_label(value: &JsonValue) -> Option<String> {
-    if value.is_null() {
-        return Some("0".to_string());
-    }
-    if let Some(label) = value
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(label.to_string());
-    }
-    if let Some(label) = json_number_to_i64(value) {
-        return Some(label.to_string());
-    }
-    let bytes = attachment_data_bytes(value);
-    if bytes.is_empty() {
-        return None;
-    }
-    std::str::from_utf8(&bytes)
-        .ok()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn decode_lxmf_battery_sensor(value: &JsonValue) -> Option<JsonValue> {
-    let items = value.as_array()?;
-    let charge_percent = items.first().map(|value| {
-        if value.is_null() {
-            JsonValue::Null
-        } else {
-            json_number_to_f64(value)
-                .map_or(JsonValue::Null, |value| JsonValue::from(round_1(value)))
-        }
-    })?;
-    let charging = items.get(1).cloned().unwrap_or(JsonValue::Null);
-    let temperature = items.get(2).cloned().unwrap_or(JsonValue::Null);
-    Some(serde_json::json!({
-        "charge_percent": charge_percent,
-        "charging": charging,
-        "temperature": temperature,
-    }))
-}
-
-fn decode_lxmf_information_sensor(value: &JsonValue) -> Option<JsonValue> {
-    let contents = value.as_str().map(ToString::to_string)?;
-    Some(serde_json::json!({
-        "contents": contents,
-    }))
-}
-
-fn read_i32_be(bytes: &[u8]) -> Option<i32> {
-    Some(i32::from_be_bytes(bytes.try_into().ok()?))
-}
-
-fn read_u32_be(bytes: &[u8]) -> Option<u32> {
-    Some(u32::from_be_bytes(bytes.try_into().ok()?))
-}
-
-fn read_u16_be(bytes: &[u8]) -> Option<u16> {
-    Some(u16::from_be_bytes(bytes.try_into().ok()?))
-}
-
-fn json_number_to_f64(value: &JsonValue) -> Option<f64> {
-    value.as_f64()
-}
-
-fn json_number_to_i64(value: &JsonValue) -> Option<i64> {
-    value
-        .as_i64()
-        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
-        .or_else(|| {
-            value.as_f64().and_then(|value| {
-                if value.is_finite() && value.fract() == 0.0 {
-                    format!("{value:.0}").parse().ok()
-                } else {
-                    None
-                }
-            })
-        })
-}
-
-fn json_number_from_f64(value: f64) -> JsonValue {
-    if value.is_finite() && value.fract() == 0.0 {
-        if let Ok(integer) = format!("{value:.0}").parse::<i64>() {
-            return JsonValue::from(integer);
-        }
-    }
-    JsonValue::from(value)
-}
-
-fn round_1(value: f64) -> f64 {
-    (value * 10.0).round() / 10.0
-}
-
-fn unix_timestamp_iso(value: f64) -> String {
-    format!("{value}")
 }
 
 fn direct_lxmf_attachments(
@@ -3330,7 +2768,7 @@ fn parse_attachment_entry(entry: &JsonValue, category: &str) -> Option<TopicAtta
         (default_attachment_name(category), Some(entry), None)
     };
     let data = data?;
-    let bytes = attachment_data_bytes(data);
+    let bytes = r3akt_map_core::bytes::json_bytes(data);
     if bytes.is_empty() {
         return None;
     }
@@ -3355,7 +2793,7 @@ fn parse_attachment_array_entry(
     if items.iter().all(JsonValue::is_number) {
         return Some(ParsedAttachmentArray {
             name: default_attachment_name(category),
-            data: attachment_data_bytes(&JsonValue::Array(items.to_vec())),
+            data: r3akt_map_core::bytes::json_bytes(&JsonValue::Array(items.to_vec())),
             media_type: None,
         });
     }
@@ -3387,70 +2825,9 @@ fn parse_attachment_array_entry(
         );
     Some(ParsedAttachmentArray {
         name,
-        data: attachment_data_bytes(data),
+        data: r3akt_map_core::bytes::json_bytes(data),
         media_type,
     })
-}
-
-fn attachment_data_bytes(value: &JsonValue) -> Vec<u8> {
-    if let Some(text) = value.as_str() {
-        return decode_attachment_text(text);
-    }
-    if let Some(items) = value.as_array() {
-        let mut bytes = Vec::with_capacity(items.len());
-        for item in items {
-            let Some(value) = item.as_u64() else {
-                return Vec::new();
-            };
-            let Ok(byte) = u8::try_from(value) else {
-                return Vec::new();
-            };
-            bytes.push(byte);
-        }
-        return bytes;
-    }
-    Vec::new()
-}
-
-fn decode_attachment_text(text: &str) -> Vec<u8> {
-    let trimmed = text.trim();
-    let encoded = trimmed
-        .strip_prefix("base64:")
-        .or_else(|| trimmed.split_once("base64,").map(|(_, encoded)| encoded));
-    if let Some(encoded) = encoded {
-        if let Ok(bytes) = decode_base64_attachment(encoded) {
-            return bytes;
-        }
-    }
-    if should_decode_base64_attachment(trimmed) {
-        if let Ok(bytes) = decode_base64_attachment(trimmed) {
-            return bytes;
-        }
-    }
-    trimmed.as_bytes().to_vec()
-}
-
-fn decode_base64_attachment(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    let compact = text.split_whitespace().collect::<String>();
-    base64::engine::general_purpose::STANDARD.decode(compact)
-}
-
-fn should_decode_base64_attachment(text: &str) -> bool {
-    let compact = text.split_whitespace().collect::<String>();
-    if compact.starts_with("data:") && compact.contains("base64,") {
-        return true;
-    }
-    if compact
-        .chars()
-        .any(|value| matches!(value, '=' | '+' | '/'))
-    {
-        return true;
-    }
-    compact.len() >= 12 && compact.len() % 4 == 0 && compact.chars().all(is_base64_attachment_char)
-}
-
-fn is_base64_attachment_char(value: char) -> bool {
-    value.is_ascii_alphanumeric() || matches!(value, '+' | '/' | '=')
 }
 
 fn optional_message_string<'a>(message: &'a JsonValue, keys: &[&str]) -> Option<&'a str> {
@@ -5253,8 +4630,8 @@ mod tests {
             "ggHOZVPxAAKXxAQCn2MAxAT8PrJAxAQAAAPoxAQAAAAAxAQAAAAAxAIB9MtB2VT8QAAAAA=="
         );
 
-        let payload = parse_lxmf_telemetry_payload(&raw).expect("payload");
-        let telemetry = humanize_lxmf_telemetry_payload(payload);
+        let payload = r3akt_map_core::telemetry::parse_payload(&raw).expect("payload");
+        let telemetry = r3akt_map_core::telemetry::humanize(payload);
 
         assert_eq!(telemetry["time"]["timestamp"], 1_700_000_000);
         assert_eq!(telemetry["location"]["latitude"], 44.0);
@@ -5266,8 +4643,8 @@ mod tests {
         let raw =
             serde_json::json!("gwHOZVPxAASTy0BV6PXCj1wpw8tAP4AAAAAAAA+wUlRIIGJhdHRlcnkgbm9kZQ==");
 
-        let payload = parse_lxmf_telemetry_payload(&raw).expect("payload");
-        let telemetry = humanize_lxmf_telemetry_payload(payload);
+        let payload = r3akt_map_core::telemetry::parse_payload(&raw).expect("payload");
+        let telemetry = r3akt_map_core::telemetry::humanize(payload);
 
         assert_eq!(telemetry["time"]["timestamp"], 1_700_000_000);
         assert_eq!(telemetry["battery"]["charge_percent"], 87.6);
@@ -5282,8 +4659,8 @@ mod tests {
             "iwHOZVPxAQPLQI+pmZmZmZoFk8vAUaAAAAAAAMtAIIAAAAAAAMtAVwAAAAAAAAaTyz+5mZmZmZmayz/JmZmZmZmayz/TMzMzMzMzB8tANoAAAAAAAAjLQEuAAAAAAAAJk8s/8AAAAAAAAMtAAAAAAAAAAMtACAAAAAAAAArLQHLIAAAAAAALk8sAAAAAAAAAAMsAAAAAAAAAAMtAI5mZmZmZmgyTyz+EeuFHrhR7yz+UeuFHrhR7yz+euFHrhR64DsM="
         );
 
-        let payload = parse_lxmf_telemetry_payload(&raw).expect("payload");
-        let telemetry = humanize_lxmf_telemetry_payload(payload);
+        let payload = r3akt_map_core::telemetry::parse_payload(&raw).expect("payload");
+        let telemetry = r3akt_map_core::telemetry::humanize(payload);
 
         assert_eq!(telemetry["time"]["timestamp"], 1_700_000_001);
         assert_eq!(telemetry["pressure"]["mbar"], 1013.2);
@@ -5314,8 +4691,8 @@ mod tests {
             "hQKXxAQCn2MAxAT8PrJAxAQAAAPoxAQAAAAAxAQAAAAAxAIB9MtB2VT8QIAAABneABCtY3VzdG9tX21ldHJpY8tAWPmZmZmZmrF0cmFuc3BvcnRfZW5hYmxlZMOydHJhbnNwb3J0X2lkZW50aXR5xBABAQEBAQEBAQEBAQEBAQEBsHRyYW5zcG9ydF91cHRpbWXNEJKrdHJhZmZpY19yeGLNJxCrdHJhZmZpY190eGLNTiCoc3BlZWRfcnjLQGAQAAAAAACoc3BlZWRfdHjLQHAMAAAAAACtc3BlZWRfcnhfaW5zdMtAYEAAAAAAAK1zcGVlZF90eF9pbnN0y0BwQAAAAAAAq21lbW9yeV91c2VkzgC8YU6vaW50ZXJmYWNlX2NvdW50AqpsaW5rX2NvdW50B6ppbnRlcmZhY2VzkoKkbmFtZaNpZjClc3RhdGWidXCCpG5hbWWjaWYxpXN0YXRlpGRvd26qcGF0aF90YWJsZZGEqWludGVyZmFjZaNpZjCjdmlhxAiqqqqqqqqqqqRoYXNoxBC7u7u7u7u7u7u7u7u7u7u7pGhvcHMBp2lmc3RhdHOFo3J4Ys0nEKN0eGLNTiCjcnhzy0B/QAAAAAAAo3R4c8tAgsAAAAAAAKppbnRlcmZhY2VzkoKkbmFtZaNpZjClcGF0aHMCgqRuYW1lo2lmMaVwYXRocwAY3gAYsGRlc3RpbmF0aW9uX2hhc2jEEBAQEBAQEBAQEBAQEBAQEBCtaWRlbnRpdHlfaGFzaMQQICAgICAgICAgICAgICAgIKZ1cHRpbWXNMDmuZGVsaXZlcnlfbGltaXTLQEVAAAAAAACxcHJvcGFnYXRpb25fbGltaXTLQHAAAAAAAACxYXV0b3BlZXJfbWF4ZGVwdGgDsGZyb21fc3RhdGljX29ubHnDvXVucGVlcmVkX3Byb3BhZ2F0aW9uX2luY29taW5nAr11bnBlZXJlZF9wcm9wYWdhdGlvbl9yeF9ieXRlc80EAKxzdGF0aWNfcGVlcnMBq3RvdGFsX3BlZXJzAqxhY3RpdmVfcGVlcnMBsXVucmVhY2hhYmxlX3BlZXJzAaltYXhfcGVlcnMKu3BlZXJlZF9wcm9wYWdhdGlvbl9yeF9ieXRlc80KALtwZWVyZWRfcHJvcGFnYXRpb25fdHhfYnl0ZXPNEQC6cGVlcmVkX3Byb3BhZ2F0aW9uX29mZmVyZWQEu3BlZXJlZF9wcm9wYWdhdGlvbl9vdXRnb2luZwK7cGVlcmVkX3Byb3BhZ2F0aW9uX2luY29taW5nAbxwZWVyZWRfcHJvcGFnYXRpb25fdW5oYW5kbGVkAdkgcGVlcmVkX3Byb3BhZ2F0aW9uX21heF91bmhhbmRsZWQBpXBlZXJzgsQQqqqqqqqqqqqqqqqqqqqqqo+kdHlwZapwcm9wYWdhdG9ypXN0YXRlpmFjdGl2ZaVhbGl2ZcOqbGFzdF9oZWFyZMtAk0oAAAAAALFuZXh0X3N5bmNfYXR0ZW1wdMtAolMzMzMzM7FsYXN0X3N5bmNfYXR0ZW1wdMtAkVwAAAAAAKxzeW5jX2JhY2tvZmbLQCQAAAAAAACwcGVlcmluZ190aW1lYmFzZctARQAAAAAAAKNsZXLLP+gAAAAAAACjc3Ryyz/gAAAAAAAArnRyYW5zZmVyX2xpbWl0zQIAsG5ldHdvcmtfZGlzdGFuY2UCqHJ4X2J5dGVzzQgAqHR4X2J5dGVzzRAAqG1lc3NhZ2VzhKdvZmZlcmVkA6hvdXRnb2luZwKoaW5jb21pbmcBqXVuaGFuZGxlZADEELu7u7u7u7u7u7u7u7u7u7uPpHR5cGWqcHJvcGFnYXRvcqVzdGF0ZaRkb3dupWFsaXZlwqpsYXN0X2hlYXJky0CpFDMzMzMzsW5leHRfc3luY19hdHRlbXB0wLFsYXN0X3N5bmNfYXR0ZW1wdMtAoVwAAAAAAKxzeW5jX2JhY2tvZmbLQDQAAAAAAACwcGVlcmluZ190aW1lYmFzZctAVQAAAAAAAKNsZXLLP+GZmZmZmZqjc3Ryyz/QAAAAAAAArnRyYW5zZmVyX2xpbWl0zQEAsG5ldHdvcmtfZGlzdGFuY2UEqHJ4X2J5dGVzzQIAqHR4X2J5dGVzzQEAqG1lc3NhZ2VzhKdvZmZlcmVkAahvdXRnb2luZwCoaW5jb21pbmcAqXVuaGFuZGxlZAGsbWVzc2FnZXN0b3Jlg6Vjb3VudAWlYnl0ZXPNEAClbGltaXTNIACnY2xpZW50c4LZJGNsaWVudF9wcm9wYWdhdGlvbl9tZXNzYWdlc19yZWNlaXZlZAfZImNsaWVudF9wcm9wYWdhdGlvbl9tZXNzYWdlc19zZXJ2ZWQJGoGkbWFwc4KkbWFpboKmcG9pbnRzgahkZWFkYmVlZoejbGF0y0BGAAAAAAAAo2xvbsvAT4AAAAAAAKNhbHTLQCQAAAAAAACkdHlwZaRwZWVypG5hbWWnR2F0ZXdhea9zaWduYWxfc3RyZW5ndGjQ2KNzbnLLQCkAAAAAAAClbGFiZWyoTWFpbiBNYXCmYmFja3VwgqZwb2ludHOBqGZlZWRmYWNlh6NsYXTLQEaAAAAAAACjbG9uy8BPAAAAAAAAo2FsdMtAKAAAAAAAAKR0eXBlpHBlZXKkbmFtZahSZXBlYXRlcq9zaWduYWxfc3RyZW5ndGjQyaNzbnLLQCQAAAAAAAClbGFiZWyqQmFja3VwIE1hcAHOZVPxAg=="
         );
 
-        let payload = parse_lxmf_telemetry_payload(&raw).expect("payload");
-        let telemetry = humanize_lxmf_telemetry_payload(payload);
+        let payload = r3akt_map_core::telemetry::parse_payload(&raw).expect("payload");
+        let telemetry = r3akt_map_core::telemetry::humanize(payload);
 
         assert_eq!(telemetry["time"]["timestamp"], 1_700_000_002);
         assert_eq!(telemetry["rns_transport"]["transport_enabled"], true);
@@ -5345,8 +4722,8 @@ mod tests {
             "igHOZVPxAxCUxBCqqqqqqqqqqqqqqqqqqqqqxBC7u7u7u7u7u7u7u7u7u7u7y0CTSgAAAAAAy0CFNzMzMzMzEZKSAJLLQCkAAAAAAACkbG9hZJKlcmFkaW+Sy0AMAAAAAAAAwBKRkgCSy0AgAAAAAAAApXNvbGFyE5GSAJPLP+gAAAAAAACTyz+5mZmZmZmayz/JmZmZmZmayz/TMzMzMzMzy0CZAAAAAAAAFJGSAJLLQLAAAAAAAADLQKAAAAAAAAAVkZKjc3NkkstAYAAAAAAAAMtAUAAAAAAAABaRkgCUy0BZAAAAAAAAy0BAgAAAAAAAoUypdGFua19pY29uF5GSAJTLQEkAAAAAAADLQDkAAAAAAAChTMDM/5GSpm1hcmtlcpKBpnN5bWJvbKhmcmllbmRseaRpY29u"
         );
 
-        let payload = parse_lxmf_telemetry_payload(&raw).expect("payload");
-        let telemetry = humanize_lxmf_telemetry_payload(payload);
+        let payload = r3akt_map_core::telemetry::parse_payload(&raw).expect("payload");
+        let telemetry = r3akt_map_core::telemetry::humanize(payload);
 
         assert_eq!(telemetry["time"]["timestamp"], 1_700_000_003);
         assert_eq!(telemetry["received"]["by"][0], 170);

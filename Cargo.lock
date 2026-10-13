@@ -1471,6 +1471,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "r3akt-map-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "r3akt-profile-rch",
+ "rmp-serde",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "r3akt-mesh-delivery"
 version = "0.1.0"
 source = "git+https://github.com/FreeTAKTeam/R3AKTClient.git?rev=e705533f8549f8556b1939da4731f233ea2e1b89#e705533f8549f8556b1939da4731f233ea2e1b89"
@@ -1528,6 +1544,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "csv",
+ "r3akt-map-core",
  "r3akt-mesh-delivery",
  "r3akt-profile-rch",
  "r3akt-protocol",
@@ -1550,6 +1567,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "http-body-util",
+ "r3akt-map-core",
  "r3akt-profile-rch",
  "r3akt-protocol",
  "r3akt-rch-bridge",
@@ -1596,6 +1614,7 @@ dependencies = [
  "base64 0.22.1",
  "lxmf-sdk",
  "lxmf-wire",
+ "r3akt-map-core",
  "r3akt-protocol",
  "reticulum-rs-rpc",
  "rmp-serde",

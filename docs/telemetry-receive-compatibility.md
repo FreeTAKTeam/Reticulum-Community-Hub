@@ -87,7 +87,8 @@ Explicit `version`/`schema_version` envelopes are classified unsupported,
 including when accompanied by otherwise valid locations. Unknown numeric
 sensor IDs are extension data, not version selectors.
 
-The existing direct decoder now routes through the checked telemetry boundary.
+The existing direct decoder now routes through the checked telemetry boundary,
+which lives in the shared `r3akt-map-core` crate (RCH #259).
 New durable journal events include `lxmf_bytes_hex`. RCH preflights both full-wire
 and destination-stripped payloads, then decodes the raw frame with the pinned
 LXMF library. Source, destination and message ID must all match verified daemon
@@ -119,7 +120,7 @@ projection remain the owners of their respective behavior.
 
 ## Reproduction and stage B handoff
 
-Synthetic fixture: [columba_2_2_6.json](../crates/r3akt-transport-rns/tests/fixtures/columba_2_2_6.json).
+Synthetic fixture: [columba_2_2_6.json](../crates/r3akt-map-core/tests/fixtures/columba_2_2_6.json).
 Its codec bytes come from executing the unmodified pinned Columba source. Optional
 sensors and wire envelopes are explicitly synthetic extensions generated with
 Python MessagePack. Zero coordinates, invented hashes and zero signature bytes

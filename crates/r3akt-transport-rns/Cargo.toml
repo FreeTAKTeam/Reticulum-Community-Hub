@@ -10,6 +10,7 @@ repository.workspace = true
 base64.workspace = true
 lxmf.workspace = true
 lxmf-sdk.workspace = true
+r3akt-map-core.workspace = true
 r3akt-protocol.workspace = true
 rns-rpc.workspace = true
 rmp-serde.workspace = true

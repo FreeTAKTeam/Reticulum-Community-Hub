@@ -101,14 +101,13 @@ use r3akt_protocol::{Destination, HealthTelemetry, Payload, ProtocolEnvelope};
 use r3akt_rch_bridge::{ReticulumdRpc, ReticulumdRpcClient};
 use r3akt_rch_core::{
     ChatAttachmentRecord, ClientRecord as CoreClientRecord, DeliveryMode, FileAttachmentRecord,
-    IdentityStateRecord as CoreIdentityStateRecord, MarkerRecord as CoreMarkerRecord,
-    MessageRecord as CoreMessageRecord, MissionAuditEvent, MissionChangeRecord, RchCore,
-    RchDatabaseWipeReport, RchSqliteStore, RetentionPolicy, SubjectOperationRight,
-    SubscriberRecord as CoreSubscriberRecord, SystemEventRecord, TelemetryRecord,
-    TopicRecord as CoreTopicRecord, Visibility, ZonePointRecord as CoreZonePointRecord,
-    ZoneRecord as CoreZoneRecord, classify_delivery_mode, is_supported_checklist_command,
-    normalize_topic_id, rch_mission_role_bundle_definitions, rch_operation_definitions,
-    rch_role_bundle_definitions,
+    IdentityStateRecord as CoreIdentityStateRecord, MessageRecord as CoreMessageRecord,
+    MissionAuditEvent, MissionChangeRecord, RchCore, RchDatabaseWipeReport, RchSqliteStore,
+    RetentionPolicy, SubjectOperationRight, SubscriberRecord as CoreSubscriberRecord,
+    SystemEventRecord, TelemetryRecord, TopicRecord as CoreTopicRecord, Visibility,
+    ZonePointRecord as CoreZonePointRecord, ZoneRecord as CoreZoneRecord, classify_delivery_mode,
+    is_supported_checklist_command, normalize_topic_id, rch_mission_role_bundle_definitions,
+    rch_operation_definitions, rch_role_bundle_definitions,
 };
 use r3akt_transport_rns::{RchServiceIdentityConfig, ReticulumdAnnounceRecord, ZmqDataPlane};
 #[cfg(test)]
@@ -1023,10 +1022,7 @@ impl AppState {
                 snapshot
                     .markers
                     .into_iter()
-                    .map(|marker| {
-                        let record = MarkerRecord::from(marker);
-                        (record.object_destination_hash.clone(), record)
-                    })
+                    .map(|marker| (marker.object_destination_hash.clone(), marker))
                     .collect(),
             ));
             state.zones = Arc::new(RwLock::new(
@@ -1579,59 +1575,8 @@ impl From<IdentityStatusRecord> for CoreIdentityStateRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarkerRecord {
-    pub local_id: String,
-    pub object_destination_hash: String,
-    pub origin_rch: String,
-    pub marker_type: String,
-    pub symbol: String,
-    pub name: String,
-    pub category: String,
-    pub lat: f64,
-    pub lon: f64,
-    pub notes: Option<String>,
-    pub created_ts_ms: i64,
-    pub updated_ts_ms: i64,
-}
-
-impl From<CoreMarkerRecord> for MarkerRecord {
-    fn from(marker: CoreMarkerRecord) -> Self {
-        Self {
-            local_id: marker.local_id,
-            object_destination_hash: marker.object_destination_hash,
-            origin_rch: marker.origin_rch,
-            marker_type: marker.marker_type,
-            symbol: marker.symbol,
-            name: marker.name,
-            category: marker.category,
-            lat: marker.lat,
-            lon: marker.lon,
-            notes: marker.notes,
-            created_ts_ms: marker.created_ts_ms,
-            updated_ts_ms: marker.updated_ts_ms,
-        }
-    }
-}
-
-impl From<MarkerRecord> for CoreMarkerRecord {
-    fn from(marker: MarkerRecord) -> Self {
-        Self {
-            local_id: marker.local_id,
-            object_destination_hash: marker.object_destination_hash,
-            origin_rch: marker.origin_rch,
-            marker_type: marker.marker_type,
-            symbol: marker.symbol,
-            name: marker.name,
-            category: marker.category,
-            lat: marker.lat,
-            lon: marker.lon,
-            notes: marker.notes,
-            created_ts_ms: marker.created_ts_ms,
-            updated_ts_ms: marker.updated_ts_ms,
-        }
-    }
-}
+/// Point markers are owned by the shared map library.
+pub use r3akt_map_core::MarkerRecord;
 
 #[derive(Debug, Deserialize)]
 pub struct MarkerCreatePayload {
@@ -11562,8 +11507,7 @@ fn delete_subscriber_row(state: &AppState, subscriber: &SubscriberRecord) -> Res
 }
 
 fn persist_marker_row(state: &AppState, marker: &MarkerRecord) -> Result<(), ApiError> {
-    let record = CoreMarkerRecord::from(marker.clone());
-    with_core_store_write(state, |store| store.upsert_marker(&record))
+    with_core_store_write(state, |store| store.upsert_marker(marker))
 }
 
 fn delete_marker_row(state: &AppState, object_destination_hash: &str) -> Result<(), ApiError> {
@@ -14918,13 +14862,13 @@ async fn list_markers(State(state): State<AppState>) -> Result<Json<Value>, ApiE
     Ok(Json(json!(
         markers
             .iter()
-            .map(marker_to_python_value)
+            .map(MarkerRecord::api_value)
             .collect::<Vec<_>>()
     )))
 }
 
 async fn list_marker_symbols_route() -> Json<Value> {
-    Json(default_marker_symbols())
+    Json(r3akt_map_core::symbols::catalog_json())
 }
 
 async fn create_marker_route(
@@ -14950,41 +14894,28 @@ async fn create_marker_with_key(
     key: Option<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let payload = parse_marker_create_payload(input)?;
-    validate_lat_lon(payload.lat, payload.lon)?;
-    let marker_type = normalize_marker_symbol_for_http(&payload.marker_type)
-        .filter(|symbol| !symbol.is_empty())
-        .ok_or_else(|| ApiError::Unprocessable("marker_type is required".to_string()))?;
-    if !is_supported_marker_symbol_for_http(&marker_type) {
-        return Err(ApiError::Unprocessable(
-            "Unsupported marker type".to_string(),
-        ));
-    }
-    let symbol = normalize_marker_symbol_for_http(&payload.symbol)
-        .filter(|symbol| !symbol.is_empty())
-        .ok_or_else(|| ApiError::Unprocessable("symbol is required".to_string()))?;
-    if !is_supported_marker_symbol_for_http(&symbol) {
-        return Err(ApiError::Unprocessable(
-            "Unsupported marker symbol".to_string(),
-        ));
-    }
+    let unprocessable =
+        |error: r3akt_map_core::MarkerError| ApiError::Unprocessable(error.to_string());
+    let position =
+        r3akt_map_core::Position::new(payload.lat, payload.lon).map_err(unprocessable)?;
+    let marker_type =
+        r3akt_map_core::marker::marker_type(&payload.marker_type).map_err(unprocessable)?;
+    let symbol = r3akt_map_core::marker::marker_symbol(&payload.symbol).map_err(unprocessable)?;
+    // The HTTP contract keeps the category text as given, defaulting to the symbol.
     let category = normalize_optional_text(payload.category).unwrap_or_else(|| symbol.clone());
-    let now_ms = unix_now_ms();
-    let local_id = Uuid::new_v4().to_string();
-    let object_destination_hash = Uuid::new_v4().simple().to_string();
-    let marker = MarkerRecord {
-        local_id,
-        object_destination_hash: object_destination_hash.clone(),
-        origin_rch: String::new(),
-        marker_type,
-        symbol,
-        name: normalize_optional_text(payload.name).unwrap_or_else(|| "Marker".to_string()),
-        category,
-        lat: payload.lat,
-        lon: payload.lon,
-        notes: normalize_optional_text(payload.notes),
-        created_ts_ms: now_ms,
-        updated_ts_ms: now_ms,
-    };
+    let marker = MarkerRecord::create(
+        r3akt_map_core::MarkerDraft {
+            marker_type,
+            symbol,
+            name: normalize_optional_text(payload.name).unwrap_or_else(|| "Marker".to_string()),
+            category,
+            position,
+            notes: normalize_optional_text(payload.notes),
+            origin_rch: String::new(),
+        },
+        Uuid::new_v4().to_string(),
+        unix_now_ms(),
+    );
     let (marker, created) = marker_idempotency::persist(&state, marker, key.as_deref())?;
     if created {
         record_marker_activity_after_commit(&state, "marker.created", &marker);
@@ -15044,7 +14975,8 @@ async fn patch_marker_position(
     State(state): State<AppState>,
     Json(payload): Json<MarkerPositionPayload>,
 ) -> Result<Json<Value>, ApiError> {
-    validate_lat_lon(payload.lat, payload.lon)?;
+    let position = r3akt_map_core::Position::new(payload.lat, payload.lon)
+        .map_err(|error| ApiError::Unprocessable(error.to_string()))?;
     let updated_at = unix_now_ms();
     let marker = {
         let mut markers = state
@@ -15054,21 +14986,16 @@ async fn patch_marker_position(
         let marker = if state.sqlite_path.is_some() {
             with_required_core_store_write(&state, |store| {
                 store.update_marker(&object_destination_hash, |marker| {
-                    marker.lat = payload.lat;
-                    marker.lon = payload.lon;
-                    marker.updated_ts_ms = updated_at;
+                    marker.move_to(position, updated_at);
                 })
             })?
-            .map(MarkerRecord::from)
             .ok_or_else(|| marker_not_found(&object_destination_hash))?
         } else {
             let mut marker = markers
                 .get(&object_destination_hash)
                 .cloned()
                 .ok_or_else(|| marker_not_found(&object_destination_hash))?;
-            marker.lat = payload.lat;
-            marker.lon = payload.lon;
-            marker.updated_ts_ms = updated_at;
+            marker.move_to(position, updated_at);
             marker
         };
         markers.insert(object_destination_hash.clone(), marker.clone());
@@ -15096,19 +15023,16 @@ async fn patch_marker(
         let marker = if state.sqlite_path.is_some() {
             with_required_core_store_write(&state, |store| {
                 store.update_marker(&object_destination_hash, |marker| {
-                    marker.name = name;
-                    marker.updated_ts_ms = updated_at;
+                    marker.rename(name, updated_at);
                 })
             })?
-            .map(MarkerRecord::from)
             .ok_or_else(|| marker_not_found(&object_destination_hash))?
         } else {
             let mut marker = markers
                 .get(&object_destination_hash)
                 .cloned()
                 .ok_or_else(|| marker_not_found(&object_destination_hash))?;
-            marker.name = name;
-            marker.updated_ts_ms = updated_at;
+            marker.rename(name, updated_at);
             marker
         };
         markers.insert(object_destination_hash.clone(), marker.clone());
@@ -15264,39 +15188,10 @@ fn marker_telemetry_payload(event_type: &str, marker: &MarkerRecord) -> Value {
     })
 }
 
-fn marker_to_python_value(marker: &MarkerRecord) -> Value {
-    let updated_at = iso8601_from_unix_ms(marker.updated_ts_ms);
-    json!({
-        "object_destination_hash": marker.object_destination_hash,
-        "origin_rch": marker.origin_rch,
-        "type": marker.marker_type,
-        "name": marker.name,
-        "category": marker.category,
-        "symbol": marker.symbol,
-        "notes": marker.notes,
-        "position": {
-            "lat": marker.lat,
-            "lon": marker.lon
-        },
-        "time": updated_at,
-        "stale_at": updated_at,
-        "created_at": iso8601_from_unix_ms(marker.created_ts_ms),
-        "updated_at": updated_at
-    })
-}
-
 fn validate_lat_lon(lat: f64, lon: f64) -> Result<(), ApiError> {
-    if !(-90.0..=90.0).contains(&lat) {
-        return Err(ApiError::Unprocessable(
-            "lat must be between -90 and 90".to_string(),
-        ));
-    }
-    if !(-180.0..=180.0).contains(&lon) {
-        return Err(ApiError::Unprocessable(
-            "lon must be between -180 and 180".to_string(),
-        ));
-    }
-    Ok(())
+    r3akt_map_core::Position::new(lat, lon)
+        .map(|_| ())
+        .map_err(|error| ApiError::Unprocessable(error.to_string()))
 }
 
 fn validate_python_name_field(value: String, field: &str) -> Result<String, ApiError> {
@@ -15310,112 +15205,6 @@ fn validate_python_name_field(value: String, field: &str) -> Result<String, ApiE
         )));
     }
     Ok(value)
-}
-
-fn default_marker_symbols() -> Value {
-    json!([
-        {"id": "marker", "set": "mdi", "mdi": "map-marker", "description": "Marker", "tak": null, "category": "general"},
-        {"id": "friendly", "set": "mdi", "mdi": "rectangle", "description": "Friendly", "tak": null, "category": "nato"},
-        {"id": "hostile", "set": "mdi", "mdi": "rhombus", "description": "Hostile", "tak": null, "category": "nato"},
-        {"id": "neutral", "set": "mdi", "mdi": "square", "description": "Neutral", "tak": null, "category": "nato"},
-        {"id": "unknown", "set": "mdi", "mdi": "clover", "description": "Unknown", "tak": null, "category": "nato"},
-        {"id": "vehicle", "set": "mdi", "mdi": "car", "description": "Vehicle", "tak": null, "category": "mobility"},
-        {"id": "drone", "set": "mdi", "mdi": "drone", "description": "Drone", "tak": null, "category": "mobility"},
-        {"id": "animal", "set": "mdi", "mdi": "paw", "description": "Animal", "tak": null, "category": "wildlife"},
-        {"id": "sensor", "set": "mdi", "mdi": "radar", "description": "Sensor", "tak": null, "category": "equipment"},
-        {"id": "radio", "set": "mdi", "mdi": "radio", "description": "Radio", "tak": null, "category": "equipment"},
-        {"id": "antenna", "set": "mdi", "mdi": "antenna", "description": "Antenna", "tak": null, "category": "equipment"},
-        {"id": "camera", "set": "mdi", "mdi": "camera", "description": "Camera", "tak": null, "category": "equipment"},
-        {"id": "fire", "set": "mdi", "mdi": "fire", "description": "Fire", "tak": null, "category": "incident"},
-        {"id": "flood", "set": "mdi", "mdi": "home-flood", "description": "Flood", "tak": null, "category": "incident"},
-        {"id": "person", "set": "mdi", "mdi": "account", "description": "Person", "tak": null, "category": "people"},
-        {"id": "group", "set": "mdi", "mdi": "account-group", "description": "Group / Community", "tak": null, "category": "people"},
-        {"id": "infrastructure", "set": "mdi", "mdi": "office-building", "description": "Infrastructure", "tak": null, "category": "infrastructure"},
-        {"id": "medic", "set": "mdi", "mdi": "hospital", "description": "Medic", "tak": null, "category": "medical"},
-        {"id": "alert", "set": "mdi", "mdi": "alert", "description": "Alert", "tak": null, "category": "incident"},
-        {"id": "task", "set": "mdi", "mdi": "clipboard-check", "description": "Task", "tak": null, "category": "task"}
-    ])
-}
-
-fn normalize_marker_symbol_for_http(symbol: &str) -> Option<String> {
-    let raw = symbol.trim().to_ascii_lowercase();
-    if raw.is_empty() {
-        return None;
-    }
-    let mut parts = Vec::new();
-    for part in raw.split('.') {
-        let segment = normalize_marker_symbol_segment_for_http(part);
-        if !segment.is_empty() {
-            parts.push(segment);
-        }
-    }
-    if parts.is_empty() {
-        return None;
-    }
-    let normalized = parts.join(".");
-    Some(
-        match normalized.as_str() {
-            "pin" | "location" => "marker",
-            "car" | "truck" | "auto" | "automobile" => "vehicle",
-            "uav" | "uas" => "drone",
-            "wildlife" | "pet" => "animal",
-            "radar" | "telemetry" | "vehicle-sensor" => "sensor",
-            "cctv" => "camera",
-            "flame" | "wildfire" => "fire",
-            "water" => "flood",
-            "human" | "operator" => "person",
-            "community" | "group-community" | "team" => "group",
-            "building" | "facility" => "infrastructure",
-            "medical" | "hospital" => "medic",
-            "alarm" | "warning" => "alert",
-            "mission" | "assignment" => "task",
-            value => value,
-        }
-        .to_string(),
-    )
-}
-
-fn normalize_marker_symbol_segment_for_http(value: &str) -> String {
-    let mut normalized = String::new();
-    let mut pending_separator = false;
-    for character in value.trim().chars().flat_map(char::to_lowercase) {
-        if character.is_ascii_alphanumeric() {
-            if pending_separator && !normalized.is_empty() {
-                normalized.push('-');
-            }
-            normalized.push(character);
-            pending_separator = false;
-        } else {
-            pending_separator = true;
-        }
-    }
-    normalized.trim_matches('-').to_string()
-}
-
-fn is_supported_marker_symbol_for_http(symbol: &str) -> bool {
-    matches!(
-        symbol,
-        "marker"
-            | "friendly"
-            | "hostile"
-            | "neutral"
-            | "unknown"
-            | "vehicle"
-            | "drone"
-            | "animal"
-            | "sensor"
-            | "radio"
-            | "antenna"
-            | "camera"
-            | "fire"
-            | "flood"
-            | "person"
-            | "group"
-            | "infrastructure"
-            | "medic"
-            | "alert"
-            | "task"
-    )
 }
 
 async fn list_zones(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {

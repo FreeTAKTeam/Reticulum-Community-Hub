@@ -1,0 +1,37 @@
+[package]
+name = "r3akt-map-core"
+version = "0.1.0"
+description = "Shared R3AKT map objects (markers, symbols) and Telemeter telemetry for RCH and REM"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# SQLite persistence for markers and idempotent creation, compatible with the
+# RCH database layout. Pure domain users (e.g. REM's native core) can omit it.
+sqlite = ["dep:rusqlite", "dep:rmp-serde", "dep:r3akt-profile-rch"]
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+r3akt-profile-rch = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rmp-serde.workspace = true
+rusqlite.workspace = true
+
+[[test]]
+name = "sqlite_markers"
+required-features = ["sqlite"]

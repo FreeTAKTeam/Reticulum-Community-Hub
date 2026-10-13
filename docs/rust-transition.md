@@ -21,6 +21,8 @@ maintenance.
 - `r3akt-rch-core`: RCH domain model, persistence, mission/checklist/topic
   behavior, and Python-compatible response shaping.
 - `r3akt-transport-rns`: LXMF-rs and `reticulumd` adapter boundary.
+- `r3akt-map-core`: shared marker and Telemeter telemetry library consumed by
+  RCH and REM; see [its README](../crates/r3akt-map-core/README.md).
 - `r3akt-tak-connector`: separately deployable TAK connector service boundary.
   `r3akt-tak-service` uses RCH northbound HTTP routes for RCH-to-TAK and
   TAK-to-RCH CoT exchange; TAK socket lifecycle is not part of
