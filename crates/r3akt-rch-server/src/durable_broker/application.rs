@@ -3,7 +3,7 @@ use super::{
     ApiError, AppState, ClientRecord, MarkerRecord, OutboundMessageRecord, SubscriberRecord,
     TopicRecord, Value, ZoneRecord, broadcast_message_event, broadcast_system_event,
     broadcast_telemetry_event, ensure_kill_switch_persistence_unlocked, json,
-    normalize_identity_key, open, storage,
+    normalize_identity_key, open, storage, unix_now_ms,
 };
 pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> {
     let _quiescence = state
@@ -68,6 +68,7 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
     let mut published = Vec::new();
     let mut telemetry = Vec::new();
     let mut system_event_count = 1_usize;
+    let mut received_message_id = None;
     match event.event_type.as_str() {
         "outbound" => {
             if let (Some(operation), Some(id)) = (
@@ -147,9 +148,17 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
                             .claim_logical_input(first.source.as_str(), &logical, &immutable)
                             .map_err(storage)?
                         {
+                            if event.event_type != "bootstrap_message" {
+                                received_message_id =
+                                    Some(logical.trim_start_matches("lxmf:").to_string());
+                            }
                             for envelope in &decoded.envelopes {
                                 if event.event_type != "bootstrap_message"
-                                    && matches!(&envelope.payload, super::Payload::Command(command) if command.name == "telemetry.collect")
+                                    && (matches!(&envelope.payload, super::Payload::Command(command) if command.name == "telemetry.collect")
+                                        || matches!(
+                                            &envelope.payload,
+                                            super::Payload::TopicMessage(_)
+                                        ))
                                 {
                                     system_event_count += 1;
                                 }
@@ -282,6 +291,17 @@ pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> 
     }
     for record in published {
         broadcast_message_event(state, &record);
+    }
+    if let Some(message_id) = received_message_id {
+        // Keep `/diagnostics/runtime` inbound receipt counters live.
+        match state.reticulumd_inbound_worker_stats.write() {
+            Ok(mut stats) => {
+                stats.received_total = stats.received_total.saturating_add(1);
+                stats.last_received_ts_ms = Some(unix_now_ms());
+                stats.last_message_id = Some(message_id);
+            }
+            Err(error) => eprintln!("inbound diagnostics lock poisoned: {error}"),
+        }
     }
     Ok(true)
 }

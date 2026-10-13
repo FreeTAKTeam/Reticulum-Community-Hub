@@ -3,8 +3,8 @@ use super::{
     RchCommandTransaction, Value, broadcast_message_event, broker,
     ensure_kill_switch_persistence_unlocked, json, merge_delivery_metadata, open,
     outbound_destination_text_only, outbound_destinations, outbound_identity_allowed,
-    outbound_lxmf_content, outbound_lxmf_fields, outbound_lxmf_title, plane, sha256_lower_hex,
-    storage,
+    outbound_lxmf_content, outbound_lxmf_fields, outbound_lxmf_title, plane,
+    record_system_event_best_effort, sha256_lower_hex, storage,
 };
 pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
     let _quiescence = state
@@ -80,6 +80,46 @@ pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
     Ok(true)
 }
 
+/// Python RCH accepts a northbound send that has no authorized recipients and
+/// records it as failed with `drop_reason: no_recipients`; keep that contract.
+fn record_without_recipients(
+    state: &AppState,
+    mut message: OutboundMessageRecord,
+) -> Result<OutboundMessageRecord, ApiError> {
+    message.delivery_method = "durable_broker".into();
+    message.delivery_state = "failed".into();
+    merge_delivery_metadata(
+        &mut message.delivery_metadata,
+        json!({"dispatch_status":"failed","drop_reason":"no_recipients","acked":false,"fanout_count":0,"targeted_recipient_count":0,"receipt_pending":false,"retry_scheduled":false}),
+    );
+    let mut messages = state
+        .messages
+        .write()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut store = open(state)?;
+    let unit = store.begin_outbound_application().map_err(storage)?;
+    unit.stage_message(&CoreMessageRecord::from(message.clone()))
+        .map_err(storage)?;
+    unit.commit().map_err(storage)?;
+    messages.push(message.clone());
+    super::super::message_residency::bound(state, &mut messages, &[&message.message_id])?;
+    drop(messages);
+    broadcast_message_event(state, &message);
+    record_message_sent(state, &message);
+    record_system_event_best_effort(
+        state,
+        "message_failed",
+        "Message failed",
+        json!({
+            "message_id": message.message_id,
+            "topic_id": message.topic_id,
+            "destination": message.destination,
+            "drop_reason": "no_recipients",
+        }),
+    );
+    Ok(message)
+}
+
 /// Northbound and inbound-generated replies share the same persisted operation admission owner.
 pub(crate) fn queue_northbound(
     state: &AppState,
@@ -92,9 +132,7 @@ pub(crate) fn queue_northbound(
     ensure_kill_switch_persistence_unlocked(state)?;
     let destinations = outbound_destinations(state, &message)?;
     if destinations.is_empty() {
-        return Err(ApiError::BadRequest(
-            "no authorized delivery recipients".into(),
-        ));
+        return record_without_recipients(state, message);
     }
     let destinations = destinations
         .into_iter()
@@ -115,7 +153,24 @@ pub(crate) fn queue_northbound(
     super::super::message_residency::bound(state, &mut messages, &[&message.message_id])?;
     drop(messages);
     broadcast_message_event(state, &message);
+    record_message_sent(state, &message);
     Ok(message)
+}
+
+/// Python RCH logs `message_sent` for every recorded outbound message.
+fn record_message_sent(state: &AppState, message: &OutboundMessageRecord) {
+    record_system_event_best_effort(
+        state,
+        "message_sent",
+        "Message sent from hub",
+        json!({
+            "message_id": message.message_id,
+            "topic_id": message.topic_id,
+            "destination": message.destination,
+            "delivery_method": message.delivery_method,
+            "delivery_state": message.delivery_state,
+        }),
+    );
 }
 
 pub(super) fn stage_business_message(

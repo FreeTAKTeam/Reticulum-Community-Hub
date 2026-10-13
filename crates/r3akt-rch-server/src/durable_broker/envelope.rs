@@ -106,6 +106,7 @@ pub(super) fn apply_envelope(
         if bootstrap {
             return Ok(());
         }
+        super::chat_presentation::touch_client(unit, event, envelope, false, false)?;
         if command.name == "telemetry.collect" {
             return super::telemetry_collector::reply(
                 unit, event, envelope, &command, published, allowlist,
@@ -233,6 +234,15 @@ pub(super) fn apply_envelope(
             unit.restore_domain(checkpoint).map_err(storage)?;
             unit.diagnose_rejection("domain command rejected; see persisted response intent");
         }
+        if super::chat_presentation::is_roster_command(&command.name) {
+            if allowed(unit.core_mut(), envelope.source.as_str(), allowlist) {
+                let name = command.name.as_str();
+                super::chat_presentation::publish(
+                    unit, event, envelope, name, &responses, published,
+                )?;
+            }
+            return Ok(());
+        }
         let team = command.args.get("_rem_team_uid").and_then(Value::as_str);
         unit.prepare_recipients(None, team).map_err(storage)?;
         let mut destinations = team
@@ -298,13 +308,18 @@ pub(super) fn apply_envelope(
                         destinations.retain(|d| allowed(unit.core_mut(), d, allowlist));
                     }
                 }
+                // Team members may use plain chat clients: describe the event.
+                let event_type = response
+                    .event_field()
+                    .and_then(|e| e["event_type"].as_str());
+                let content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,
                         event,
                         published.len(),
                         destination,
-                        &response.content,
+                        &content,
                         fields.clone(),
                         envelope.timestamp.timestamp_millis(),
                     )?);
@@ -321,6 +336,10 @@ pub(super) fn apply_envelope(
                 Ok(value) => value,
                 Err(reason) => {
                     unit.diagnose_rejection(&reason);
+                    if !bootstrap && allowed(unit.core_mut(), envelope.source.as_str(), allowlist) {
+                        let reply = format!("message rejected: {reason}");
+                        super::chat_presentation::reply(unit, event, envelope, &reply, published)?;
+                    }
                     return Ok(());
                 }
             };
@@ -331,28 +350,8 @@ pub(super) fn apply_envelope(
                 unit.diagnose_rejection("attachment exceeds durable byte limit");
                 return Ok(());
             }
-            let mut attachments = Vec::new();
-            for attachment in &message.attachments {
-                let category = normalized_inbound_attachment_category(&attachment.category);
-                let name = sanitize_attachment_filename(&attachment.name);
-                let record = unit
-                    .stage_attachment(
-                        FileAttachmentRecord {
-                            file_id: 0,
-                            name,
-                            path: String::new(),
-                            category: category.into(),
-                            size: attachment.data.len() as u64,
-                            media_type: attachment.media_type.clone(),
-                            topic_id: Some(envelope.topic.to_string()),
-                            created_ts_ms: envelope.timestamp.timestamp_millis(),
-                            updated_ts_ms: envelope.timestamp.timestamp_millis(),
-                        },
-                        &attachment.data,
-                    )
-                    .map_err(storage)?;
-                attachments.push(chat_attachment_from_file_record(&record));
-            }
+            let attachments =
+                super::inbound_attachments::stage(unit, envelope, &message.attachments)?;
             let inbound = OutboundMessageRecord {
                 message_id: envelope.id.to_string(),
                 topic_id: Some(envelope.topic.to_string()),
@@ -372,28 +371,12 @@ pub(super) fn apply_envelope(
             };
             unit.stage_message(&CoreMessageRecord::from(inbound.clone()))
                 .map_err(storage)?;
-            published.push(inbound);
-            let prior = unit
-                .core_mut()
-                .clients()
-                .into_iter()
-                .find(|c| c.identity.eq_ignore_ascii_case(envelope.source.as_str()));
-            let mut client = prior.unwrap_or(r3akt_rch_core::ClientRecord {
-                identity: envelope.source.to_string(),
-                first_seen_ts_ms: event.created_at.saturating_mul(1000),
-                last_seen_ts_ms: event.created_at.saturating_mul(1000),
-                nickname: None,
-                role: "member".into(),
-                paused: false,
-                text_only: false,
-                last_chat_ts_ms: None,
-            });
             if !bootstrap {
-                let observed = event.created_at.saturating_mul(1000);
-                client.last_seen_ts_ms = client.last_seen_ts_ms.max(observed);
-                client.last_chat_ts_ms = Some(client.last_chat_ts_ms.unwrap_or(0).max(observed));
-                unit.stage_client(&client).map_err(storage)?;
+                super::chat_presentation::stage_received_event(unit, event, envelope, &inbound)?;
             }
+            published.push(inbound);
+            let client =
+                super::chat_presentation::touch_client(unit, event, envelope, bootstrap, true)?;
             if !bootstrap {
                 let mut destinations = unit
                     .core_mut()
@@ -403,32 +386,31 @@ pub(super) fn apply_envelope(
                     .filter(|d| normalize_identity_key(d) != source)
                     .collect::<Vec<_>>();
                 if destinations.is_empty() && envelope.topic.as_str() == "direct" {
+                    // Default direct recipients are active, unpaused roster clients;
+                    // explicit subscribers are never dropped for staleness.
+                    let now = event.created_at.saturating_mul(1000);
                     destinations = unit
                         .core_mut()
                         .clients()
                         .into_iter()
-                        .filter(|c| !c.paused && normalize_identity_key(&c.identity) != source)
+                        .filter(|c| {
+                            !c.paused
+                                && normalize_identity_key(&c.identity) != source
+                                && now.saturating_sub(c.last_seen_ts_ms)
+                                    <= REM_PEER_ACTIVE_WINDOW_MS
+                        })
                         .map(|c| c.identity)
                         .collect();
                 }
                 destinations.retain(|d| allowed(unit.core_mut(), d, allowlist));
-                let now = event.created_at.saturating_mul(1000);
                 let roster = unit.core_mut().clients();
-                if envelope.topic.as_str() == "direct" {
-                    destinations.retain(|d| {
-                        roster.iter().any(|c| {
-                            c.identity.eq_ignore_ascii_case(d)
-                                && now.saturating_sub(c.last_seen_ts_ms)
-                                    <= REM_PEER_ACTIVE_WINDOW_MS
-                        })
-                    });
-                }
                 destinations.sort();
                 destinations.dedup();
-                let sender = client
-                    .nickname
-                    .as_deref()
-                    .unwrap_or(envelope.source.as_str());
+                let sender = super::chat_presentation::relay_sender_label(
+                    unit.core_mut(),
+                    client.nickname.as_deref(),
+                    envelope.source.as_str(),
+                );
                 let fields = if message.attachments.is_empty() {
                     json!({})
                 } else {
