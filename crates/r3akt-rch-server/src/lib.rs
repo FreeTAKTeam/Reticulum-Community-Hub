@@ -51,6 +51,7 @@ pub use identity_directory_config::IdentityDirectoryConfig;
 mod marker_idempotency;
 mod message_residency;
 pub use message_residency::spawn_message_cache_maintenance;
+mod marker_fanout;
 mod operation_right_persistence;
 mod rem_team_routing;
 mod runtime_exit;
@@ -13178,86 +13179,6 @@ fn fanout_eam_status_update(
     }))
 }
 
-fn fanout_marker_activity_to_recipients(
-    state: &AppState,
-    event_type: &str,
-    marker: &MarkerRecord,
-) -> Result<Value, ApiError> {
-    if !matches!(event_type, "marker.created" | "marker.updated") {
-        return Ok(json!({
-            "attempted": false,
-            "reason": "marker_event_not_deliverable",
-            "recipient_count": 0,
-            "sent": 0,
-            "failed": 0,
-        }));
-    }
-
-    let recipients = command_fanout_recipients_for_state(state)?;
-
-    if recipients.is_empty() {
-        return Ok(json!({
-            "attempted": false,
-            "reason": "no_rem_or_generic_recipients",
-            "recipient_count": 0,
-            "sent": 0,
-            "failed": 0,
-        }));
-    }
-
-    let source_identity = state
-        .reticulumd_source
-        .as_ref()
-        .map_or("r3akt-rch-server", |value| value.as_str());
-    let mut sent = 0usize;
-    let mut failed = 0usize;
-    let mut errors = Vec::new();
-
-    for recipient in recipients {
-        if !recipient.is_rem_capable {
-            continue;
-        }
-        let destination = recipient.identity;
-        let (body, fields, channel) = (
-            "cmd".to_string(),
-            rem_marker_telemetry_command_fields(event_type, marker, source_identity),
-            "rem_marker_command",
-        );
-        let metadata = json!({
-            "fanout_kind": "marker_activity",
-            "fanout_channel": channel,
-            "source_event_type": event_type,
-            "object_destination_hash": marker.object_destination_hash,
-            "delivery_receipt_required": false,
-            "max_attempts": 1,
-            "lxmf_fields": fields,
-        });
-        match record_outbound_message_with_metadata(
-            state,
-            &body,
-            None,
-            Some(destination),
-            Vec::new(),
-            false,
-            metadata,
-        ) {
-            Ok(_) => sent += 1,
-            Err(error) => {
-                failed += 1;
-                errors.push(error.to_string());
-            }
-        }
-    }
-
-    Ok(json!({
-        "attempted": true,
-        "recipient_count": sent + failed,
-        "sent": sent,
-        "failed": failed,
-        "errors": errors,
-    }))
-}
-
 fn fanout_mission_zone_link_to_recipients(
     state: &AppState,
     event_type: &str,
@@ -13347,123 +13268,6 @@ fn fanout_mission_zone_link_to_recipients(
         "skipped": skipped,
         "errors": errors,
     }))
-}
-
-fn fanout_mission_marker_link_to_recipients(
-    state: &AppState,
-    event_type: &str,
-    mission_uid: &str,
-    marker_id: &str,
-    _mission: &Value,
-) -> Result<Value, ApiError> {
-    let command_type = match event_type {
-        "mission.registry.mission.marker.linked" => "mission.registry.mission.marker.link",
-        "mission.registry.mission.marker.unlinked" => "mission.registry.mission.marker.unlink",
-        _ => {
-            return Ok(json!({
-                "attempted": false,
-                "reason": "mission_marker_event_not_deliverable",
-                "recipient_count": 0,
-                "sent": 0,
-                "failed": 0,
-            }));
-        }
-    };
-    let recipients = command_fanout_recipients_for_state(state)?;
-    if recipients.is_empty() {
-        return Ok(json!({
-            "attempted": false,
-            "reason": "no_rem_or_generic_recipients",
-            "recipient_count": 0,
-            "sent": 0,
-            "failed": 0,
-        }));
-    }
-
-    let source_identity = state
-        .reticulumd_source
-        .as_ref()
-        .map_or("r3akt-rch-server", |value| value.as_str());
-    let mut sent = 0usize;
-    let mut failed = 0usize;
-    let mut skipped = 0usize;
-    let mut errors = Vec::new();
-
-    for recipient in recipients {
-        if !recipient.is_rem_capable {
-            skipped += 1;
-            continue;
-        }
-        let destination = recipient.identity;
-        let body = REM_COMMAND_PLACEHOLDER_BODY.to_string();
-        let fields = rem_mission_marker_link_command_fields(
-            command_type,
-            mission_uid,
-            marker_id,
-            source_identity,
-        );
-        let channel = "rem_marker_link_command";
-        let metadata = json!({
-            "fanout_kind": "mission_marker_link",
-            "fanout_channel": channel,
-            "source_event_type": event_type,
-            "mission_uid": mission_uid,
-            "marker_id": marker_id,
-            "delivery_receipt_required": true,
-            "max_attempts": OUTBOUND_RETRY_MAX_ATTEMPTS,
-            "lxmf_fields": fields,
-        });
-        match record_outbound_message_with_metadata(
-            state,
-            &body,
-            None,
-            Some(destination),
-            Vec::new(),
-            false,
-            metadata,
-        ) {
-            Ok(_) => sent += 1,
-            Err(error) => {
-                failed += 1;
-                errors.push(error.to_string());
-            }
-        }
-    }
-
-    Ok(json!({
-        "attempted": true,
-        "recipient_count": sent + failed,
-        "sent": sent,
-        "failed": failed,
-        "skipped": skipped,
-        "errors": errors,
-    }))
-}
-
-fn rem_mission_marker_link_command_fields(
-    command_type: &str,
-    mission_uid: &str,
-    marker_id: &str,
-    source_identity: &str,
-) -> Value {
-    let command_token = format!("{mission_uid}-{marker_id}");
-    let args = json!({
-        "mission_uid": compact_rem_identifier_string(mission_uid),
-        "marker_id": compact_rem_identifier_string(marker_id),
-    });
-    let envelope = json!({
-        "command_id": compact_rem_command_id(command_type, &command_token),
-        "correlation_id": command_token,
-        "command_type": command_type,
-        "source": {
-            "rns_identity": compact_rem_identifier_string(source_identity),
-            "display_name": "RCH",
-        },
-        "timestamp": iso8601_from_unix_ms(unix_now_ms()),
-        "topics": [],
-        "args": args,
-    });
-    rem_command_transport_fields(envelope)
 }
 
 fn rem_mission_zone_link_command_fields(
@@ -15108,7 +14912,8 @@ fn record_marker_activity(
         marker.updated_ts_ms / 1000,
         Some(marker.name.clone()),
     )?;
-    let fanout_summary = fanout_marker_activity_to_recipients(state, event_type, marker)?;
+    let fanout_summary =
+        marker_fanout::fanout_marker_activity_to_recipients(state, event_type, marker)?;
     record_system_event(
         state,
         "marker_telemetry_recorded",
@@ -16643,7 +16448,7 @@ async fn link_r3akt_mission_marker(
         "mission.registry.mission.marker.link",
         json!({ "mission_uid": mission_uid, "marker_id": marker_id }),
     )?;
-    let fanout = fanout_mission_marker_link_to_recipients(
+    let fanout = marker_fanout::fanout_mission_marker_link_to_recipients(
         &state,
         "mission.registry.mission.marker.linked",
         &mission_uid,
@@ -16675,7 +16480,7 @@ async fn unlink_r3akt_mission_marker(
         "mission.registry.mission.marker.unlink",
         json!({ "mission_uid": mission_uid, "marker_id": marker_id }),
     )?;
-    let fanout = fanout_mission_marker_link_to_recipients(
+    let fanout = marker_fanout::fanout_mission_marker_link_to_recipients(
         &state,
         "mission.registry.mission.marker.unlinked",
         &mission_uid,
@@ -31159,7 +30964,7 @@ mod tests {
             ),
             (
                 "mission.registry.mission.marker.link",
-                crate::rem_mission_marker_link_command_fields(
+                crate::marker_fanout::rem_mission_marker_link_command_fields(
                     "mission.registry.mission.marker.link",
                     "mission-optimized",
                     "marker-optimized",
@@ -31168,7 +30973,7 @@ mod tests {
             ),
             (
                 "mission.registry.mission.marker.unlink",
-                crate::rem_mission_marker_link_command_fields(
+                crate::marker_fanout::rem_mission_marker_link_command_fields(
                     "mission.registry.mission.marker.unlink",
                     "mission-optimized",
                     "marker-optimized",

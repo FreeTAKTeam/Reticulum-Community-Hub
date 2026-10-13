@@ -50,6 +50,15 @@ to the symbol); mission commands default missing values to `marker` and
 normalize the category. Since the extraction, mission commands also reject
 out-of-range coordinates, as HTTP always did.
 
+## Replication
+
+`replica::from_api_value` rebuilds a marker from its RCH API representation
+with the same validation as local creation, and `replica::supersedes` keeps
+the most recently updated copy. `MarkerRecord::create_with_id` and
+`marker::object_destination_hash` let a client mint the canonical identifier
+(REM does) so replicas never get a second ID. The wire contract is in
+`docs/rem-southbound-interface.md`.
+
 ## Features and targets
 
 - Default: pure domain and telemetry; no SQLite, no async runtime, no server
@@ -94,6 +103,8 @@ cargo test -p r3akt-map-core --features sqlite
 - `tests/markers.rs`: coordinate and symbol validation, normalization parity
   with the former server implementation, unchanged catalog JSON, create/move/
   rename and API representation, idempotency keys and fingerprints.
+- `tests/replica.rs`: API representation round trip, replica validation
+  matching local input, and last-writer-wins ordering.
 - `tests/sqlite_markers.rs`: schema creation and `local_id` migration, CRUD
   across restart, idempotent replay and key conflicts, the named-MessagePack
   stored layout, and malformed rows as errors.

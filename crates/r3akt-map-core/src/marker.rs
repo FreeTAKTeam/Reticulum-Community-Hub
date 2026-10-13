@@ -41,6 +41,8 @@ pub enum MarkerError {
     Latitude,
     #[error("lon must be between -180 and 180")]
     Longitude,
+    #[error("object_destination_hash must be 32 hexadecimal characters")]
+    Identifier,
 }
 
 /// A validated WGS 84 position.
@@ -133,6 +135,20 @@ pub fn supported_symbol(value: String) -> Result<String, MarkerError> {
     }
 }
 
+/// Validates a client-supplied marker identifier, the 32-character hex form
+/// minted by [`MarkerRecord::create`], and returns it in lowercase.
+///
+/// # Errors
+/// [`MarkerError::Identifier`].
+pub fn object_destination_hash(raw: &str) -> Result<String, MarkerError> {
+    let value = raw.trim().to_ascii_lowercase();
+    if value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value)
+    } else {
+        Err(MarkerError::Identifier)
+    }
+}
+
 /// Trims a marker name; `None` when it is blank.
 #[must_use]
 pub fn normalize_name(raw: &str) -> Option<String> {
@@ -144,9 +160,22 @@ impl MarkerRecord {
     /// Creates a marker with a fresh `object_destination_hash`.
     #[must_use]
     pub fn create(draft: MarkerDraft, local_id: String, now_ms: i64) -> Self {
+        Self::create_with_id(draft, Uuid::new_v4().simple().to_string(), local_id, now_ms)
+    }
+
+    /// Creates a marker under an identifier minted by another node (REM or a
+    /// peer), so every replica keeps one canonical identifier. Validate
+    /// client input with [`object_destination_hash`] first.
+    #[must_use]
+    pub fn create_with_id(
+        draft: MarkerDraft,
+        object_destination_hash: String,
+        local_id: String,
+        now_ms: i64,
+    ) -> Self {
         Self {
             local_id,
-            object_destination_hash: Uuid::new_v4().simple().to_string(),
+            object_destination_hash,
             origin_rch: draft.origin_rch,
             marker_type: draft.marker_type,
             symbol: draft.symbol,

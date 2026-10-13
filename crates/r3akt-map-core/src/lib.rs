@@ -9,6 +9,8 @@
 //! - [`marker`]: the marker record, validation, creation/update rules and the
 //!   RCH marker API representation.
 //! - [`symbols`]: the backend-owned symbol catalog, aliases and normalization.
+//! - [`replica`]: rebuilding replicated markers from their API representation
+//!   and last-writer-wins convergence between RCH and REM.
 //! - [`idempotency`]: idempotent marker creation keys and payload fingerprints.
 //! - [`telemetry`]: checked decoding and normalization of LXMF `FIELD_TELEMETRY`
 //!   Telemeter payloads (the verified RCH #258 receive contract).
@@ -22,6 +24,7 @@ pub mod bytes;
 pub mod idempotency;
 pub mod marker;
 pub mod msgpack;
+pub mod replica;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod symbols;

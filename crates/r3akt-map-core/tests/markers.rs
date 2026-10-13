@@ -211,3 +211,40 @@ fn idempotency_keys_and_fingerprints_are_stable() {
     assert!(idempotency::command_id("k").starts_with("rch/http/marker/"));
     assert_ne!(idempotency::command_id("k"), idempotency::command_id("k2"));
 }
+
+#[test]
+fn client_identifiers_are_validated_and_preserved() {
+    assert_eq!(
+        marker::object_destination_hash(" 0123456789ABCDEF0123456789abcdef "),
+        Ok("0123456789abcdef0123456789abcdef".to_string())
+    );
+    for invalid in [
+        "",
+        "abc",
+        "0123456789abcdef0123456789abcdeg",
+        &"a".repeat(33),
+    ] {
+        assert_eq!(
+            marker::object_destination_hash(invalid),
+            Err(MarkerError::Identifier),
+            "{invalid:?}"
+        );
+    }
+    assert_eq!(
+        MarkerError::Identifier.to_string(),
+        "object_destination_hash must be 32 hexadecimal characters"
+    );
+
+    let id = "0123456789abcdef0123456789abcdef".to_string();
+    let replica = MarkerRecord::create_with_id(draft(), id.clone(), "local".into(), 1_000);
+    assert_eq!(replica.object_destination_hash, id);
+    assert_eq!(replica.created_ts_ms, 1_000);
+
+    let fresh = MarkerRecord::create(draft(), "other".into(), 2_000);
+    assert_ne!(fresh.object_destination_hash, id);
+    assert!(marker::object_destination_hash(&fresh.object_destination_hash).is_ok());
+    assert!(idempotency::same_creation(&replica, &fresh));
+    let mut moved = fresh.clone();
+    moved.move_to(Position::new(1.0, 1.0).expect("position"), 3_000);
+    assert!(!idempotency::same_creation(&replica, &moved));
+}
