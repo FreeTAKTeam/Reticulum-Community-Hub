@@ -88,6 +88,55 @@ Some mission-content operations are ahead of current REM UI/runtime support.
 They still use the same reduced signature so the southbound protocol has one
 forward-compatible shape.
 
+## Map Marker Replication
+
+Point markers use one canonical `object_destination_hash` on every node and
+the shared `r3akt-map-core` marker API representation as the replica payload.
+
+REM to RCH: REM sends the standard mission command envelope in
+`FIELD_COMMANDS` with `FIELD_GROUP` set to its active TEAM UID:
+
+- `mission.marker.create` with `object_destination_hash` (32 hex characters,
+  minted by REM), `marker_type`, `symbol`, `name`, `category`, `lat`, `lon`
+  and optional `notes`. RCH keeps the supplied identifier; repeating the same
+  create is an idempotent replay, and reusing the identifier for different
+  fields is rejected. Without the field, RCH mints an identifier as before.
+- `mission.marker.patch` (`object_destination_hash`, `name`),
+  `mission.marker.position.patch` (`object_destination_hash`, `lat`, `lon`)
+  and `mission.marker.delete` (`object_destination_hash`).
+
+These commands require `mission.content.write`. Accepted team-scoped commands
+are relayed to the TEAM's REM destinations with the resulting event.
+
+RCH to REM: every replica arrives in `FIELD_EVENT` (`0x0D`) as
+
+```json
+{
+  "13": {
+    "event_type": "mission.marker.created",
+    "payload": { "object_destination_hash": "...", "type": "fire", "symbol": "fire",
+                 "name": "Ridge", "category": "incident", "notes": null,
+                 "position": { "lat": 44.5, "lon": -1.25 }, "origin_rch": "...",
+                 "created_at": "...", "updated_at": "...", "time": "...", "stale_at": "..." },
+    "source": { "rns_identity": "<rch identity>" }
+  }
+}
+```
+
+`event_type` is `mission.marker.created`, `mission.marker.updated`,
+`mission.marker.position.updated` or `mission.marker.deleted`. Relayed REM
+commands use RCH's full event envelope (`event_id`, `timestamp`, `topics` in
+addition); receivers read only `event_type` and `payload`. Marker changes
+made through the RCH API also carry the legacy marker-as-telemetry
+`mission.registry.telemetry.upsert` command for older REM builds; current REM
+applies the event and ignores telemetry whose `object_type` is `marker`.
+
+Receivers rebuild the marker with `r3akt_map_core::replica::from_api_value`
+(the same validation as local creation) and keep the copy with the later
+`updated_at` (`replica::supersedes`). Deletes remove the identifier; there
+are no tombstones, so a delete can be undone by an older replica that
+arrives later.
+
 ## Migration Note
 
 The old verbose southbound command envelope is intentionally unsupported for REM

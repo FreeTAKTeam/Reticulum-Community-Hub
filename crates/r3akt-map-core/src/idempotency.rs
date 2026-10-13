@@ -43,6 +43,13 @@ pub fn creation_fingerprint(marker: &MarkerRecord) -> String {
     digest(payload.to_string().as_bytes())
 }
 
+/// Whether two markers carry the same creation fields, so a repeated create
+/// for an existing identifier is a replay rather than a conflict.
+#[must_use]
+pub fn same_creation(existing: &MarkerRecord, candidate: &MarkerRecord) -> bool {
+    creation_fingerprint(existing) == creation_fingerprint(candidate)
+}
+
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

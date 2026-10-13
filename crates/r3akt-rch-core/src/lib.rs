@@ -14,6 +14,7 @@
 )]
 
 mod command_scope;
+mod marker_commands;
 mod operation_rights;
 mod text;
 
@@ -5075,52 +5076,6 @@ impl RchCore {
         }
     }
 
-    fn apply_marker_command(
-        &mut self,
-        command: &MissionCommandEnvelope,
-    ) -> Result<Option<EventEnvelope>, RchCoreError> {
-        match command.command_type.as_str() {
-            "mission.marker.list" => Ok(Some(Self::event(
-                "mission.marker.listed",
-                command,
-                json!({ "markers": self.marker_values() }),
-            ))),
-            "mission.marker.create" => {
-                let marker = self.create_marker_from_args(command, &command.args)?;
-                Ok(Some(Self::event(
-                    "mission.marker.created",
-                    command,
-                    Self::marker_value(&marker),
-                )))
-            }
-            "mission.marker.position.patch" => {
-                let marker = self.patch_marker_position_from_args(&command.args)?;
-                Ok(Some(Self::event(
-                    "mission.marker.position.updated",
-                    command,
-                    Self::marker_value(&marker),
-                )))
-            }
-            "mission.marker.patch" => {
-                let marker = self.patch_marker_from_args(&command.args)?;
-                Ok(Some(Self::event(
-                    "mission.marker.updated",
-                    command,
-                    Self::marker_value(&marker),
-                )))
-            }
-            "mission.marker.delete" => {
-                let marker = self.delete_marker_from_args(&command.args)?;
-                Ok(Some(Self::event(
-                    "mission.marker.deleted",
-                    command,
-                    Self::marker_value(&marker),
-                )))
-            }
-            other => Err(RchCoreError::UnsupportedCommand(other.to_string())),
-        }
-    }
-
     fn apply_zone_command(
         &mut self,
         command: &MissionCommandEnvelope,
@@ -6423,96 +6378,6 @@ impl RchCore {
         self.identity_states
             .get(identity)
             .is_some_and(|state| state.is_banned || state.is_blackholed)
-    }
-
-    fn create_marker_from_args(
-        &mut self,
-        command: &MissionCommandEnvelope,
-        args: &Value,
-    ) -> Result<MarkerRecord, RchCoreError> {
-        use r3akt_map_core::{marker, symbols};
-        let position =
-            r3akt_map_core::Position::new(required_f64(args, "lat")?, required_f64(args, "lon")?)?;
-        // Mission commands default absent or unusable type/symbol to `marker`
-        // and normalize the category, unlike the HTTP route.
-        let normalized_or_marker = |keys: &[&str]| {
-            symbols::normalize(&optional_text(args, keys).unwrap_or_else(|| "marker".to_string()))
-                .unwrap_or_else(|| "marker".to_string())
-        };
-        let marker_type = marker::supported_type(normalized_or_marker(&["marker_type", "type"]))?;
-        let symbol = marker::supported_symbol(normalized_or_marker(&["symbol"]))?;
-        let category = symbols::normalize(
-            &optional_text(args, &["category"]).unwrap_or_else(|| "marker".to_string()),
-        )
-        .unwrap_or_else(|| symbol.clone());
-        let marker = MarkerRecord::create(
-            r3akt_map_core::MarkerDraft {
-                marker_type,
-                symbol,
-                name: optional_text(args, &["name"]).unwrap_or_else(|| "Marker".to_string()),
-                category,
-                position,
-                notes: optional_text(args, &["notes"]),
-                origin_rch: normalize_hash(Some(&command.source.rns_identity)).unwrap_or_default(),
-            },
-            Uuid::new_v4().simple().to_string(),
-            utc_now_ms(),
-        );
-        self.markers
-            .insert(marker.object_destination_hash.clone(), marker.clone());
-        Ok(marker)
-    }
-
-    fn patch_marker_position_from_args(
-        &mut self,
-        args: &Value,
-    ) -> Result<MarkerRecord, RchCoreError> {
-        let marker_hash = required_text(args, &["object_destination_hash"])?;
-        let marker_hash = normalize_hash(Some(&marker_hash)).ok_or_else(|| {
-            RchCoreError::InvalidPayload("object_destination_hash is required".to_string())
-        })?;
-        let position =
-            r3akt_map_core::Position::new(required_f64(args, "lat")?, required_f64(args, "lon")?)?;
-        let marker = self
-            .markers
-            .get_mut(&marker_hash)
-            .ok_or(RchCoreError::TopicNotFound)?;
-        marker.move_to(position, utc_now_ms());
-        Ok(marker.clone())
-    }
-
-    fn patch_marker_from_args(&mut self, args: &Value) -> Result<MarkerRecord, RchCoreError> {
-        let marker_hash = required_text(args, &["object_destination_hash"])?;
-        let marker_hash = normalize_hash(Some(&marker_hash)).ok_or_else(|| {
-            RchCoreError::InvalidPayload("object_destination_hash is required".to_string())
-        })?;
-        let name =
-            match optional_text(args, &["name"]) {
-                Some(name) => Some(r3akt_map_core::marker::normalize_name(&name).ok_or_else(
-                    || RchCoreError::InvalidPayload("Marker name is required".to_string()),
-                )?),
-                None => None,
-            };
-        let marker = self
-            .markers
-            .get_mut(&marker_hash)
-            .ok_or(RchCoreError::TopicNotFound)?;
-        let now = utc_now_ms();
-        match name {
-            Some(name) => marker.rename(name, now),
-            None => marker.updated_ts_ms = now,
-        }
-        Ok(marker.clone())
-    }
-
-    fn delete_marker_from_args(&mut self, args: &Value) -> Result<MarkerRecord, RchCoreError> {
-        let marker_hash = required_text(args, &["object_destination_hash"])?;
-        let marker_hash = normalize_hash(Some(&marker_hash)).ok_or_else(|| {
-            RchCoreError::InvalidPayload("object_destination_hash is required".to_string())
-        })?;
-        self.markers
-            .remove(&marker_hash)
-            .ok_or(RchCoreError::TopicNotFound)
     }
 
     fn create_zone_from_args(&mut self, args: &Value) -> Result<ZoneRecord, RchCoreError> {
