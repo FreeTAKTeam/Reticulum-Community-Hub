@@ -1,5 +1,8 @@
 //! RCH owns custody checkpoints and ordered business completion independently of daemon ACKs.
 mod lease;
+mod pending_indexes;
+#[cfg(test)]
+mod pending_lookup_tests;
 pub use lease::RchConsumerLease;
 
 use super::{RchCoreError, RchSqliteStore};
@@ -7,6 +10,10 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+const NEXT_INBOX_EVENT_SQL: &str = "SELECT payload FROM rch_broker_inbox i JOIN rch_broker_checkpoint c USING(journal_id) WHERE c.consumer_id=?1 AND i.status NOT IN ('applied','rejected') ORDER BY i.position LIMIT 1";
+const PENDING_BROKER_INTENT_SQL: &str =
+    "SELECT payload FROM rch_broker_dispatch WHERE state='pending' ORDER BY rowid LIMIT 1";
 
 fn inbox_version() -> u16 {
     1
@@ -300,7 +307,10 @@ impl RchSqliteStore {
         Ok(())
     }
     pub fn next_inbox_event(&self, consumer: &str) -> Result<Option<InboxEvent>, RchCoreError> {
-        let payload:Option<String>=self.connection.query_row("SELECT payload FROM rch_broker_inbox i JOIN rch_broker_checkpoint c USING(journal_id) WHERE c.consumer_id=?1 AND i.status NOT IN ('applied','rejected') ORDER BY i.position LIMIT 1",[consumer],|r|r.get(0)).optional()?;
+        let payload: Option<String> = self
+            .connection
+            .query_row(NEXT_INBOX_EVENT_SQL, [consumer], |r| r.get(0))
+            .optional()?;
         payload.as_deref().map(decode).transpose()
     }
 }
@@ -322,7 +332,10 @@ impl RchSqliteStore {
         self.connection.query_row("SELECT journal_id,stored,receipt FROM rch_broker_checkpoint WHERE consumer_id=?1 AND receipt IS NOT NULL",[consumer],|r|Ok((r.get(0)?,u64::try_from(r.get::<_,i64>(1)?).map_err(|e|rusqlite::Error::FromSqlConversionFailure(1,rusqlite::types::Type::Integer,Box::new(e)))?,r.get(2)?))).optional().map_err(Into::into)
     }
     pub fn pending_broker_intent(&self) -> Result<Option<DurableOutboundIntent>, RchCoreError> {
-        let payload:Option<String>=self.connection.query_row("SELECT payload FROM rch_broker_dispatch WHERE state='pending' ORDER BY rowid LIMIT 1",[],|r|r.get(0)).optional()?;
+        let payload: Option<String> = self
+            .connection
+            .query_row(PENDING_BROKER_INTENT_SQL, [], |r| r.get(0))
+            .optional()?;
         payload.as_deref().map(decode).transpose()
     }
     pub fn record_broker_admission(

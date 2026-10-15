@@ -207,6 +207,7 @@ pub struct AppState {
     lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
     broker_consumer_lease: Option<Arc<Mutex<r3akt_rch_core::RchConsumerLease>>>,
     broker_work_gate: Arc<RwLock<()>>,
+    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 3]>,
     broker_lane_errors: Arc<RwLock<[Option<String>; 4]>>,
     rch_service_identity_config: Option<Arc<RchServiceIdentityConfig>>,
     identity_announce_update_error: Arc<RwLock<Option<String>>>,
@@ -486,6 +487,7 @@ impl Default for AppState {
             lxmf_zmq_data_plane: None,
             broker_consumer_lease: None,
             broker_work_gate: Arc::new(RwLock::new(())),
+            durable_broker_worker_stores: Arc::new(std::array::from_fn(|_| Mutex::new(None))),
             broker_lane_errors: Arc::new(RwLock::new([None, None, None, None])),
             rch_service_identity_config: None,
             identity_announce_update_error: Arc::default(),
@@ -11392,7 +11394,8 @@ fn run_kill_switch_purge_worker(state: AppState) {
             return;
         }
     };
-    let result = stop_runtime_services(&state)
+    let result = durable_broker::close_worker_stores(&state)
+        .and_then(|()| stop_runtime_services(&state))
         .and_then(|()| {
             with_required_core_store_write_unchecked(
                 &state,
@@ -35436,7 +35439,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "7");
+        assert_eq!(payload["persistence"]["schema_version"], "8");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

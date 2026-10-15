@@ -6,13 +6,23 @@ use super::{
     outbound_lxmf_content, outbound_lxmf_fields, outbound_lxmf_title, plane,
     record_system_event_best_effort, sha256_lower_hex, storage,
 };
+#[cfg(test)]
 pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
     let _quiescence = state
         .broker_work_gate
         .read()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     ensure_kill_switch_persistence_unlocked(state)?;
-    let Some(intent) = open(state)?.pending_broker_intent().map_err(storage)? else {
+    let mut store = open(state)?;
+    dispatch_with_store(state, &mut store)
+}
+
+pub(super) fn dispatch_with_store(
+    state: &AppState,
+    store: &mut r3akt_rch_core::RchSqliteStore,
+) -> Result<bool, ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
+    let Some(intent) = store.pending_broker_intent().map_err(storage)? else {
         return Ok(false);
     };
     let destination = intent
@@ -23,6 +33,7 @@ pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
     if !outbound_identity_allowed(state, destination, destination) {
         reject_dispatch(
             state,
+            store,
             &intent.operation_id,
             "current destination authorization rejected this intent",
         )?;
@@ -51,7 +62,12 @@ pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
                             | "SDK_BROKER_OPERATION_CONFLICT"
                     ) =>
             {
-                reject_dispatch(state, &intent.operation_id, &format!("{code}: {message}"))?;
+                reject_dispatch(
+                    state,
+                    store,
+                    &intent.operation_id,
+                    &format!("{code}: {message}"),
+                )?;
                 return Ok(true);
             }
             Err(error) => return Err(ApiError::ServiceUnavailable(error.to_string())),
@@ -62,7 +78,7 @@ pub(super) fn dispatch(state: &AppState) -> Result<bool, ApiError> {
         .write()
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let record = OutboundMessageRecord::from(
-        open(state)?
+        store
             .record_broker_admission(&receipt.operation_id, &receipt.message_id)
             .map_err(storage)?,
     );
@@ -235,13 +251,18 @@ pub(super) fn stage_business_message(
     Ok(message)
 }
 
-fn reject_dispatch(state: &AppState, operation: &str, reason: &str) -> Result<(), ApiError> {
+fn reject_dispatch(
+    state: &AppState,
+    store: &mut r3akt_rch_core::RchSqliteStore,
+    operation: &str,
+    reason: &str,
+) -> Result<(), ApiError> {
     let mut messages = state
         .messages
         .write()
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let record = OutboundMessageRecord::from(
-        open(state)?
+        store
             .reject_broker_intent(operation, reason)
             .map_err(storage)?,
     );

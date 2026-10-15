@@ -2,6 +2,13 @@
 use super::*;
 use r3akt_rch_core::{DurableOutboundIntent, InboxBatch, InboxEvent, RchCommandTransaction};
 use r3akt_transport_rns::durable_broker as broker;
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(test)]
+static STORE_OPEN_COUNTS: OnceLock<Mutex<HashMap<std::path::PathBuf, usize>>> = OnceLock::new();
 
 fn storage(error: r3akt_rch_core::RchCoreError) -> ApiError {
     ApiError::ServiceUnavailable(error.to_string())
@@ -12,7 +19,51 @@ fn open(state: &AppState) -> Result<RchSqliteStore, ApiError> {
         .sqlite_path
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("durable broker requires RCH SQLite".into()))?;
-    RchSqliteStore::open(path.as_ref()).map_err(storage)
+    let store = RchSqliteStore::open(path.as_ref()).map_err(storage)?;
+    #[cfg(test)]
+    record_store_open(path.as_ref());
+    Ok(store)
+}
+
+#[cfg(test)]
+fn record_store_open(path: &FsPath) {
+    let counts = STORE_OPEN_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut counts) = counts.lock() {
+        *counts.entry(path.to_path_buf()).or_default() += 1;
+    }
+}
+
+#[cfg(test)]
+fn store_open_count(path: &FsPath) -> usize {
+    STORE_OPEN_COUNTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|counts| counts.get(path).copied())
+        .unwrap_or_default()
+}
+
+fn persistence_locked_for_purge(state: &AppState) -> bool {
+    match state.kill_switch.read() {
+        Ok(runtime) => matches!(
+            runtime.mode,
+            super::KillSwitchRuntimeMode::Deleting | super::KillSwitchRuntimeMode::Completed
+        ),
+        Err(_) => true,
+    }
+}
+
+/// Call while worker store users are quiescent (purge holds the gate for writing).
+pub(super) fn close_worker_stores(state: &AppState) -> Result<(), ApiError> {
+    let mut stores = Vec::with_capacity(state.durable_broker_worker_stores.len());
+    for slot in state.durable_broker_worker_stores.iter() {
+        let mut slot = slot
+            .lock()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        stores.push(slot.take());
+    }
+    drop(stores);
+    Ok(())
 }
 fn plane(state: &AppState) -> Result<&ZmqDataPlane, ApiError> {
     state
@@ -23,22 +74,48 @@ fn plane(state: &AppState) -> Result<&ZmqDataPlane, ApiError> {
 
 pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let setup = (|| {
-            let path = state.sqlite_path.as_ref().ok_or_else(|| {
+        let setup_state = state.clone();
+        let setup = tokio::task::spawn_blocking(move || {
+            let path = setup_state.sqlite_path.as_ref().ok_or_else(|| {
                 ApiError::ServiceUnavailable("durable broker requires SQLite".into())
             })?;
             let _ = path;
-            let lease = state.broker_consumer_lease.clone().ok_or_else(|| {
+            let lease = setup_state.broker_consumer_lease.clone().ok_or_else(|| {
                 ApiError::ServiceUnavailable(
                     "durable consumer ownership was not acquired at startup".into(),
                 )
             })?;
-            let consumer = open(&state)?.durable_consumer_id().map_err(storage)?;
-            plane(&state)?;
+            let _quiescence = setup_state
+                .broker_work_gate
+                .read()
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            ensure_kill_switch_persistence_unlocked(&setup_state)?;
+            let mut stores = Vec::with_capacity(3);
+            for _ in 0..3 {
+                stores.push(open(&setup_state)?);
+            }
+            let consumer = stores[0].durable_consumer_id().map_err(storage)?;
+            plane(&setup_state)?;
+            for (slot, store) in setup_state.durable_broker_worker_stores.iter().zip(stores) {
+                let mut slot = slot
+                    .lock()
+                    .map_err(|error| ApiError::Internal(error.to_string()))?;
+                if slot.is_some() {
+                    return Err(ApiError::Internal(
+                        "durable broker worker stores already have an owner".into(),
+                    ));
+                }
+                *slot = Some(store);
+            }
             Ok::<_, ApiError>((lease, consumer))
-        })();
+        })
+        .await;
         let (_lease, consumer) = match setup {
-            Ok(value) => value,
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                record_reticulumd_inbound_worker_event_error(&state, error.to_string());
+                return;
+            }
             Err(error) => {
                 record_reticulumd_inbound_worker_event_error(&state, error.to_string());
                 return;
@@ -54,6 +131,7 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                     if state.runtime_exit.is_requested() {
                         break;
                     }
+                    let persistence_locked = persistence_locked_for_purge(&state);
                     let mut drain = false;
                     if lane == 0 {
                         set_reticulumd_inbound_worker_running(
@@ -62,15 +140,36 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                             interval,
                         );
                     }
-                    if !runtime_shutdown_requested(&state) {
+                    if !runtime_shutdown_requested(&state) && !persistence_locked {
                         let task_state = state.clone();
                         let task_consumer = consumer.clone();
                         // Keep the completion owner: an external timeout must not detach a database write.
-                        let result = tokio::task::spawn_blocking(move || match lane {
-                            0 => intake(&task_state, &task_consumer).map(|()| false),
-                            1 => apply(&task_state, &task_consumer),
-                            2 => dispatch(&task_state),
-                            _ => announces(&task_state).map(|()| false),
+                        let result = tokio::task::spawn_blocking(move || {
+                            if lane == 3 {
+                                return announces(&task_state).map(|()| false);
+                            }
+                            let _quiescence = task_state
+                                .broker_work_gate
+                                .read()
+                                .map_err(|error| ApiError::Internal(error.to_string()))?;
+                            ensure_kill_switch_persistence_unlocked(&task_state)?;
+                            let mut slot = task_state.durable_broker_worker_stores[lane]
+                                .lock()
+                                .map_err(|error| ApiError::Internal(error.to_string()))?;
+                            if slot.is_none() {
+                                *slot = Some(open(&task_state)?);
+                            }
+                            let store = slot.as_mut().ok_or_else(|| {
+                                ApiError::Internal(
+                                    "durable worker store was not initialized".into(),
+                                )
+                            })?;
+                            match lane {
+                                0 => intake_with_store(&task_state, &task_consumer, store)
+                                    .map(|()| false),
+                                1 => apply_with_store(&task_state, &task_consumer, store),
+                                _ => dispatch_with_store(&task_state, store),
+                            }
                         })
                         .await;
                         let error = match result {
@@ -121,17 +220,43 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                 record_reticulumd_inbound_worker_event_error(&state, error.to_string());
             }
         }
+        let cleanup_state = state.clone();
+        match tokio::task::spawn_blocking(move || {
+            let _quiescence = cleanup_state
+                .broker_work_gate
+                .read()
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            close_worker_stores(&cleanup_state)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                record_reticulumd_inbound_worker_event_error(&state, error.to_string());
+            }
+            Err(error) => record_reticulumd_inbound_worker_event_error(&state, error.to_string()),
+        }
         set_reticulumd_inbound_worker_running(&state, false, interval);
     })
 }
 
+#[cfg(test)]
 fn intake(state: &AppState, consumer: &str) -> Result<(), ApiError> {
     let _quiescence = state
         .broker_work_gate
         .read()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     ensure_kill_switch_persistence_unlocked(state)?;
     let mut store = open(state)?;
+    intake_with_store(state, consumer, &mut store)
+}
+
+fn intake_with_store(
+    state: &AppState,
+    consumer: &str,
+    store: &mut RchSqliteStore,
+) -> Result<(), ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
     let checkpoint = store.inbox_checkpoint(consumer).map_err(storage)?;
     let plane = plane(state)?;
     let remote = plane
@@ -239,6 +364,11 @@ pub(super) fn diagnostics(state: &AppState) -> Result<Value, ApiError> {
         .read()
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .clone();
+    let _quiescence = state
+        .broker_work_gate
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    ensure_kill_switch_persistence_unlocked(state)?;
     let mut store = open(state)?;
     let consumer = store.durable_consumer_id().map_err(storage)?;
     let checkpoint = store.inbox_checkpoint(&consumer).map_err(storage)?;
@@ -270,8 +400,12 @@ mod chat_presentation;
 mod envelope;
 mod inbound_attachments;
 mod outbound;
+#[cfg(test)]
 use application::apply;
+use application::apply_with_store;
+#[cfg(test)]
 use outbound::dispatch;
+use outbound::dispatch_with_store;
 pub(super) use outbound::queue_northbound;
 
 fn retry_delay(failures: u32) -> Duration {

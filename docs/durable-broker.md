@@ -19,6 +19,16 @@ migration backs up existing RCH data. Bootstrap events preserve historical rows
 without executing old commands or replaying old relays. One RCH process owns a
 state directory, enforced by a separate SQLite lease.
 
+Schema 8 adds indexed lookups for pending dispatches and unfinished inbox
+events, including unknown or upgrade-required states. Existing databases are
+backed up before the additive index migration; completed history is retained.
+The intake, application and dispatch owners retain their configured SQLite
+connections across idle cycles, and join before transport shutdown. Purge takes
+the exclusive broker gate and closes retained connections before wiping and
+deleting database files. The before/after query-cost evidence
+and remaining production checks are in
+[the idle-broker regression record](issue-276-idle-broker.md).
+
 Paired LXMF-rs source: `e237f80c0c9e219e4090be04a4229d3328074f73`
 merged into Framework `main` by PR #660. Cargo dependencies and managed
 daemon builds use this same immutable revision.
