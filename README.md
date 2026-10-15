@@ -57,10 +57,11 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The latest published preview is
-[v3.0.0-preview.23](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.23),
-a full-platform testing release paired with LXMF-rs 0.13.0 at the immutable
-revision `a424760137c7eaee5d5de7fb9ef2347871b85da1`. Release notes for every
+The next full-platform testing preview is
+[v3.0.0-preview.24](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.24),
+a full-platform testing release paired with LXMF-rs 0.14.0 and the
+`reticulumd-test-0.14.0-issue663.1` daemon tag at immutable revision
+`c2174f3295240dd3f171c41310effed7416f0949`. Release notes for every
 preview are attached to its
 [GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
 older notes are kept under [`docs/`](docs/).
@@ -81,8 +82,7 @@ The simplest route is to use a package from [GitHub Releases](https://github.com
 
 Requirements:
 
-- Rust 1.85 or newer for the server workspace, and Rust 1.88 or newer for the
-  Tauri desktop shell;
+- Rust 1.88 or newer for the server workspace and Tauri desktop shell;
 - a local Reticulum configuration;
 - [`LXMF-rs`](https://github.com/FreeTAKTeam/LXMF-rs) `reticulumd` for live LXMF transport;
 - Node.js and npm only when building the web or desktop interface.

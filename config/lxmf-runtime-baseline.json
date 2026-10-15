@@ -1,9 +1,11 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "v0.13.0",
-  "sdk_version": "0.13.0",
+  "release_tag": "reticulumd-test-0.14.0-issue663.1",
+  "sdk_version": "0.14.0",
   "daemon_package": "reticulumd",
-  "daemon_features": ["zmq-pipeline-rpc"],
+  "daemon_features": [
+    "zmq-pipeline-rpc"
+  ],
   "contract_version": 2,
   "contract_release": "v2.6",
   "data_plane": "zmq",

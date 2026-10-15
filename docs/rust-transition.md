@@ -57,8 +57,8 @@ and at least one topic/chat/checklist/mission flow.
 
 GitHub PR quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88 for the
-normal quality gates and Rust 1.85 for a locked minimum-version workspace
-check. It exposes separate required checks for formatting, clippy with
+quality gates and the locked workspace minimum-version check, matching the
+paired LXMF-rs 0.14.0 dependency. It exposes separate required checks for formatting, clippy with
 `-D warnings`, MSRV and denied-warning rustdoc, locked workspace tests, UI
 lint/type-check/tests/build, release server/TAK-service builds, and
 `cargo audit`.
@@ -222,9 +222,13 @@ Release blockers cleared in the latest parity pass:
   six `/internal/delivery-*` mutation callbacks have been removed without
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
-- Production library dependencies use LXMF `0.13.0` plus the issue #238 ZeroMQ fix from an immutable Git revision; a clean server build does not require a sibling checkout.
-  CI and release packages pin commit
-  `fb5c2a1f938a7aab2f68e67976ef4e074218f258` (based on `v0.13.0`, including response-writer, restart-cursor and storage-contention reactor fixes and indexed propagation-mark lookup for #242 and memory/disk/poll-lock corrections for LXMF-rs #655 and bounded propagation queues/inventory allocations for #657, durable inventory ownership, projected poll metadata and call-local failed-exchange diagnostics). The matching
+- Production library dependencies use LXMF `0.14.0` from immutable revision
+  `c2174f3295240dd3f171c41310effed7416f0949`
+  (`reticulumd-test-0.14.0-issue663.1`); a clean server build does not require a
+  sibling checkout. CI and release packages use that same revision, including
+  bounded indexed propagation refill and the unchanged announce-cache fast path
+  for #663 alongside the existing #655/#657 response and recovery protections.
+  The paired dependency requires Rust 1.88 or newer. The matching
   ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow.

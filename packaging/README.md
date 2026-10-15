@@ -3,7 +3,7 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, checksum-recorded LXMF `0.13.0` `reticulumd` binary with ZeroMQ
+  binary, checksum-recorded LXMF `0.14.0` `reticulumd` binary with ZeroMQ
   support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
@@ -21,7 +21,7 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-windows-x64-v3.0.0-preview.23.zip`; the same version, Git ref,
+`rch-rust-full-windows-x64-v3.0.0-preview.24.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs label artifacts with the `release_version` input, or with
 the branch name when that input is blank.
@@ -34,24 +34,25 @@ skipped. Published releases own asset builds; pushing a tag alone no longer
 starts a duplicate package build. Normal releases retain the full matrix.
 
 The release workflow owns all five server packages and both desktop packages.
-The most recent full-matrix release is
-[`v3.0.0-preview.23`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.23);
+The next full-matrix candidate is
+[`v3.0.0-preview.24`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.24);
 its release notes list the packages, upgrade steps, and remaining acceptance
 limits. Notes for earlier previews are kept under [`docs/`](../docs/).
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
-LXMF 0.13.0 `reticulumd` path when that checkout is intentionally dirty; hosted
+LXMF 0.14.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`a424760137c7eaee5d5de7fb9ef2347871b85da1` (LXMF `0.13.0`, durable ZeroMQ broker and paired RCH inbox/outbox for #659, plus the paired #657 response lifecycle fix already shipped in preview.21). The Rust library dependencies resolve that same immutable Git revision without
+`c2174f3295240dd3f171c41310effed7416f0949`
+(`reticulumd-test-0.14.0-issue663.1`, LXMF `0.14.0`, paired ZeroMQ polling and daemon resource-lifecycle fixes for #663, alongside RCH durable broker and inbox/outbox lifecycle fixes for #276). The Rust library dependencies resolve the matching immutable LXMF revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
-`cargo audit`; the workspace separately verifies its declared Rust 1.85
-minimum version.
+`cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
+0.14.0 dependency.
 
 ## Python Store Migration
 
