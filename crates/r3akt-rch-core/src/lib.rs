@@ -33,6 +33,7 @@ pub use sqlite_message_history::{
     ChatHistoryFilter, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT, RECENT_MESSAGE_IDLE_MS,
     json_resident_bytes,
 };
+pub(crate) use sqlite_values::{sqlite_read_u64, sqlite_read_usize, sqlite_u64};
 mod sqlite_marker_idempotency;
 mod sqlite_operation_rights;
 mod sqlite_payload_deltas;
@@ -41,6 +42,7 @@ mod sqlite_read_snapshots;
 mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
+mod sqlite_values;
 pub use sqlite_commands::{CommandDelta, RchCommandTransaction};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
@@ -16675,29 +16677,3 @@ mod durable_inbox;
 pub use durable_inbox::{
     DurableOutboundIntent, InboxBatch, InboxCheckpoint, InboxEvent, RchConsumerLease,
 };
-
-fn sqlite_u64(value: u64) -> Result<i64, RchCoreError> {
-    i64::try_from(value).map_err(|error| {
-        RchCoreError::InvalidPayload(format!("SQLite integer out of range: {error}"))
-    })
-}
-fn sqlite_read_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
-    let value: i64 = row.get(index)?;
-    u64::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            index,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
-}
-fn sqlite_read_usize(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<usize> {
-    let value: i64 = row.get(index)?;
-    usize::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            index,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
-}
