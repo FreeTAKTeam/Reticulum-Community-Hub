@@ -33,6 +33,7 @@ pub use sqlite_message_history::{
     ChatHistoryFilter, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT, RECENT_MESSAGE_IDLE_MS,
     json_resident_bytes,
 };
+pub(crate) use sqlite_values::{sqlite_read_u64, sqlite_read_usize, sqlite_u64};
 mod sqlite_marker_idempotency;
 mod sqlite_operation_rights;
 mod sqlite_payload_deltas;
@@ -41,6 +42,7 @@ mod sqlite_read_snapshots;
 mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
+mod sqlite_values;
 pub use sqlite_commands::{CommandDelta, RchCommandTransaction};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
@@ -426,7 +428,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "7";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "8";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -2800,7 +2802,8 @@ impl RchSqliteStore {
         if migration_4_applied {
             self.migrate_durable_inbox()?;
             self.migrate_command_indexes()?;
-            return self.migrate_identity_directory();
+            self.migrate_identity_directory()?;
+            return self.migrate_broker_pending_indexes();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2968,7 +2971,8 @@ impl RchSqliteStore {
         self.integrity_check()?;
         self.migrate_durable_inbox()?;
         self.migrate_command_indexes()?;
-        self.migrate_identity_directory()
+        self.migrate_identity_directory()?;
+        self.migrate_broker_pending_indexes()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -12944,7 +12948,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "7");
+        assert_eq!(store.schema_version().expect("schema version"), "8");
     }
 
     #[test]
@@ -16334,7 +16338,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "7");
+        assert_eq!(store.schema_version().expect("schema version"), "8");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16378,7 +16382,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 7);
+        assert_eq!(migration_count, 8);
 
         let index_exists: bool = store
             .connection
@@ -16438,7 +16442,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "7");
+        assert_eq!(store.schema_version().expect("schema version"), "8");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");
@@ -16673,29 +16677,3 @@ mod durable_inbox;
 pub use durable_inbox::{
     DurableOutboundIntent, InboxBatch, InboxCheckpoint, InboxEvent, RchConsumerLease,
 };
-
-fn sqlite_u64(value: u64) -> Result<i64, RchCoreError> {
-    i64::try_from(value).map_err(|error| {
-        RchCoreError::InvalidPayload(format!("SQLite integer out of range: {error}"))
-    })
-}
-fn sqlite_read_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
-    let value: i64 = row.get(index)?;
-    u64::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            index,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
-}
-fn sqlite_read_usize(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<usize> {
-    let value: i64 = row.get(index)?;
-    usize::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            index,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
-}

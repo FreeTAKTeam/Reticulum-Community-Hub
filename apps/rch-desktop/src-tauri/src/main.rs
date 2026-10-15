@@ -5,6 +5,7 @@
     clippy::unwrap_used
 )]
 
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -56,14 +57,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     let (mut reticulumd_rx, reticulumd_child) = app
         .shell()
         .sidecar("reticulumd")?
-        .args(vec![
-            "--db".to_string(),
-            reticulumd_db_path.to_string_lossy().to_string(),
-            "--zmq-rpc-command".to_string(),
-            zmq_command.clone(),
-            "--rpc".to_string(),
-            "127.0.0.1:0".to_string(),
-        ])
+        .args(reticulumd_sidecar_args(&reticulumd_db_path, &zmq_command))
         .spawn()?;
     store_process(
         &app.state::<BackendProcess>().reticulumd,
@@ -93,20 +87,12 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         }
     });
 
-    let args = vec![
-        "--bind".to_string(),
-        "127.0.0.1:8000".to_string(),
-        "--db-path".to_string(),
-        db_path.to_string_lossy().to_string(),
-        "--lxmf-zmq-command".to_string(),
-        zmq_command,
-        "--lxmf-zmq-response".to_string(),
-        zmq_response,
-        "--reticulumd-source".to_string(),
-        "rch-desktop".to_string(),
-    ];
-
-    let server = app.shell().sidecar("r3akt-rch-server")?.args(args).spawn();
+    let server_args = rch_server_sidecar_args(&db_path, &zmq_command, &zmq_response);
+    let server = app
+        .shell()
+        .sidecar("r3akt-rch-server")?
+        .args(server_args)
+        .spawn();
     let (mut rx, child) = match server {
         Ok(server) => server,
         Err(error) => {
@@ -142,6 +128,31 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     });
 
     Ok(())
+}
+
+fn reticulumd_sidecar_args(db_path: &Path, zmq_command: &str) -> Vec<String> {
+    vec![
+        "--db".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--zmq-rpc-command".to_string(),
+        zmq_command.to_string(),
+        "--zmq-durable-broker".to_string(),
+        "--rpc".to_string(),
+        "127.0.0.1:0".to_string(),
+    ]
+}
+
+fn rch_server_sidecar_args(db_path: &Path, zmq_command: &str, zmq_response: &str) -> Vec<String> {
+    vec![
+        "--bind".to_string(),
+        "127.0.0.1:8000".to_string(),
+        "--db-path".to_string(),
+        db_path.to_string_lossy().to_string(),
+        "--lxmf-zmq-command".to_string(),
+        zmq_command.to_string(),
+        "--lxmf-zmq-response".to_string(),
+        zmq_response.to_string(),
+    ]
 }
 
 fn store_process(
@@ -222,5 +233,53 @@ fn wait_for_loopback_port(port: u16, timeout: Duration) -> std::io::Result<()> {
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rch_server_sidecar_args, reticulumd_sidecar_args};
+    use std::path::Path;
+
+    #[test]
+    fn managed_daemon_uses_durable_broker_for_zmq() {
+        let args = reticulumd_sidecar_args(Path::new("reticulum.db"), "tcp://127.0.0.1:9100");
+
+        assert_eq!(argument_value(&args, "--db"), Some("reticulum.db"));
+        assert_eq!(
+            argument_value(&args, "--zmq-rpc-command"),
+            Some("tcp://127.0.0.1:9100")
+        );
+        assert!(args.iter().any(|arg| arg == "--zmq-durable-broker"));
+        assert_eq!(argument_value(&args, "--rpc"), Some("127.0.0.1:0"));
+        assert!(!args.iter().any(|arg| arg == "--transport"));
+        assert!(!args.iter().any(|arg| arg == "--config"));
+    }
+
+    #[test]
+    fn server_uses_derived_zmq_identity_without_source_assertion() {
+        let args = rch_server_sidecar_args(
+            Path::new("rch.db"),
+            "tcp://127.0.0.1:9100",
+            "tcp://127.0.0.1:9101",
+        );
+
+        assert_eq!(argument_value(&args, "--bind"), Some("127.0.0.1:8000"));
+        assert_eq!(argument_value(&args, "--db-path"), Some("rch.db"));
+        assert_eq!(
+            argument_value(&args, "--lxmf-zmq-command"),
+            Some("tcp://127.0.0.1:9100")
+        );
+        assert_eq!(
+            argument_value(&args, "--lxmf-zmq-response"),
+            Some("tcp://127.0.0.1:9101")
+        );
+        assert!(!args.iter().any(|arg| arg == "--reticulumd-source"));
+    }
+
+    fn argument_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+        args.windows(2)
+            .find(|pair| pair[0] == name)
+            .map(|pair| pair[1].as_str())
     }
 }

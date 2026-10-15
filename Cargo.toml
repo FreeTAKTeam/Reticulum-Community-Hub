@@ -18,7 +18,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "EPL-2.0"
 repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 
@@ -34,10 +34,10 @@ r3akt-rch-server = { path = "crates/r3akt-rch-server" }
 r3akt-tak-connector = { path = "crates/r3akt-tak-connector" }
 r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
-rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "a424760137c7eaee5d5de7fb9ef2347871b85da1", version = "0.13.0" }
-rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "a424760137c7eaee5d5de7fb9ef2347871b85da1", version = "0.13.0" }
-lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "a424760137c7eaee5d5de7fb9ef2347871b85da1", version = "0.13.0", default-features = false, features = ["std"] }
-lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "a424760137c7eaee5d5de7fb9ef2347871b85da1", version = "0.13.0", default-features = false, features = ["zmq-pipeline-backend"] }
+rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9c8bc7b52c4ed5eeb94716247b900864d812fcb6", version = "0.14.0" }
+rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9c8bc7b52c4ed5eeb94716247b900864d812fcb6", version = "0.14.0" }
+lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9c8bc7b52c4ed5eeb94716247b900864d812fcb6", version = "0.14.0", default-features = false, features = ["std"] }
+lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9c8bc7b52c4ed5eeb94716247b900864d812fcb6", version = "0.14.0", default-features = false, features = ["zmq-pipeline-backend"] }
 base64 = "0.22"
 argon2 = "0.5"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }

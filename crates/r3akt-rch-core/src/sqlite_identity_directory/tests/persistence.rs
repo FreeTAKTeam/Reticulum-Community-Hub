@@ -43,7 +43,7 @@ fn migration_preserves_payloads_backs_up_and_read_only_queries_work() {
     .unwrap();
     drop(old);
     let store = RchSqliteStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), "7");
+    assert_eq!(store.schema_version().unwrap(), "8");
     drop(store);
     let backup =
         rusqlite::Connection::open(format!("{}.pre-migration-v7.bak", path.display())).unwrap();

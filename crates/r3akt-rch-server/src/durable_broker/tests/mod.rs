@@ -428,6 +428,74 @@ fn paired_outbound_reconciles_lost_admission_reply_and_applies_terminal_receipt(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn broker_workers_reuse_store_connections_across_idle_polls_and_join() {
+    let dir = std::env::temp_dir().join(format!("rch-store-reuse-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let rch_path = dir.join("rch.db");
+    let fixture = Fixture::open(&dir.join("daemon.db"));
+    let state = fixture.state(&rch_path, &dir.join("identity"));
+    let opened_before_spawn = store_open_count(&rch_path);
+
+    let owner = spawn(state.clone(), Duration::from_millis(50));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let polls = state
+                .reticulumd_inbound_worker_stats
+                .read()
+                .unwrap()
+                .event_polls_total;
+            if polls >= 3 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+    {
+        let lane_errors = state.broker_lane_errors.read().unwrap();
+        assert!(lane_errors.iter().all(Option::is_none), "{lane_errors:?}");
+    }
+
+    state.kill_switch.write().unwrap().mode = super::super::KillSwitchRuntimeMode::Deleting;
+    let purge_state = state.clone();
+    tokio::task::spawn_blocking(move || super::super::run_kill_switch_purge_worker(purge_state))
+        .await
+        .unwrap();
+    assert_eq!(
+        state.kill_switch.read().unwrap().mode,
+        super::super::KillSwitchRuntimeMode::Completed
+    );
+    assert!(
+        state
+            .durable_broker_worker_stores
+            .iter()
+            .all(|slot| slot.lock().unwrap().is_none()),
+        "purge must release idle worker connections before unlinking the database"
+    );
+    assert!(!rch_path.exists(), "purge must unlink the database");
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+
+    request_runtime_exit(&state);
+    tokio::time::timeout(Duration::from_secs(3), owner)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+    assert!(
+        !rch_path.exists(),
+        "workers must not recreate the purged database"
+    );
+
+    plane(&state).unwrap().shutdown().unwrap();
+    drop(state);
+    drop(fixture);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paired_owning_workers_pause_resume_and_join_without_abandoning_custody() {
     let dir = std::env::temp_dir().join(format!("rch-owners-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

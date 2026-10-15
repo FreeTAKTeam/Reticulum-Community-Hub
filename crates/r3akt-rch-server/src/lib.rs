@@ -60,6 +60,7 @@ pub use runtime_exit::{request_runtime_exit, shutdown_runtime_for_exit};
 mod durable_broker;
 mod runtime_delivery_workers;
 mod runtime_periodic_workers;
+mod websocket_json;
 pub use runtime_delivery_workers::{
     spawn_reticulumd_inbound_worker, spawn_reticulumd_inbound_worker_with_interval,
 };
@@ -70,6 +71,7 @@ pub use runtime_periodic_workers::{
 mod topic_diagnostics;
 
 use topic_diagnostics::{apply_config_text, topic_subscription_diagnostics};
+use websocket_json::parse_ws_json;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::future::pending;
@@ -207,6 +209,7 @@ pub struct AppState {
     lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
     broker_consumer_lease: Option<Arc<Mutex<r3akt_rch_core::RchConsumerLease>>>,
     broker_work_gate: Arc<RwLock<()>>,
+    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 3]>,
     broker_lane_errors: Arc<RwLock<[Option<String>; 4]>>,
     rch_service_identity_config: Option<Arc<RchServiceIdentityConfig>>,
     identity_announce_update_error: Arc<RwLock<Option<String>>>,
@@ -486,6 +489,7 @@ impl Default for AppState {
             lxmf_zmq_data_plane: None,
             broker_consumer_lease: None,
             broker_work_gate: Arc::new(RwLock::new(())),
+            durable_broker_worker_stores: Arc::new(std::array::from_fn(|_| Mutex::new(None))),
             broker_lane_errors: Arc::new(RwLock::new([None, None, None, None])),
             rch_service_identity_config: None,
             identity_announce_update_error: Arc::default(),
@@ -11392,7 +11396,8 @@ fn run_kill_switch_purge_worker(state: AppState) {
             return;
         }
     };
-    let result = stop_runtime_services(&state)
+    let result = durable_broker::close_worker_stores(&state)
+        .and_then(|()| stop_runtime_services(&state))
         .and_then(|()| {
             with_required_core_store_write_unchecked(
                 &state,
@@ -19856,18 +19861,6 @@ async fn authenticate_socket(
     send_ws_json(socket, ws_message("auth.ok", json!({})))
         .await
         .is_ok()
-}
-
-fn parse_ws_json(payload: &str) -> Result<Value, serde_json::Error> {
-    let parsed = serde_json::from_str::<Value>(payload)?;
-    if parsed.is_object() {
-        Ok(parsed)
-    } else {
-        Err(serde_json::Error::io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "WebSocket payload must be a JSON object",
-        )))
-    }
 }
 
 fn ws_message(message_type: &str, data: Value) -> Value {
@@ -35436,7 +35429,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "7");
+        assert_eq!(payload["persistence"]["schema_version"], "8");
         assert!(
             payload["persistence"]["path"]
                 .as_str()
