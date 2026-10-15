@@ -21,7 +21,7 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-windows-x64-v3.0.0-preview.24.zip`; the same version, Git ref,
+`rch-rust-full-windows-x64-v3.0.0-preview.25.zip`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs label artifacts with the `release_version` input, or with
 the branch name when that input is blank.
@@ -35,16 +35,16 @@ starts a duplicate package build. Normal releases retain the full matrix.
 
 The release workflow owns all five server packages and both desktop packages.
 The next full-matrix candidate is
-[`v3.0.0-preview.24`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.24);
-its release notes list the packages, upgrade steps, and remaining acceptance
+[`v3.0.0-preview.25`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25).
+Its release notes list the packages, upgrade steps, and remaining acceptance
 limits. Notes for earlier previews are kept under [`docs/`](../docs/).
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
 LXMF 0.14.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`c2174f3295240dd3f171c41310effed7416f0949`
-(`reticulumd-test-0.14.0-issue663.1`, LXMF `0.14.0`, paired ZeroMQ polling and daemon resource-lifecycle fixes for #663, alongside RCH durable broker and inbox/outbox lifecycle fixes for #276). The Rust library dependencies resolve the matching immutable LXMF revision without
+`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
+(`reticulumd-test-0.14.0-issue663.2`, LXMF `0.14.0`, paired ZeroMQ polling, daemon resource-lifecycle, and broker-only identity-bridge fixes for #663, alongside RCH durable broker and inbox/outbox lifecycle fixes for #276). The Rust library dependencies resolve the matching immutable LXMF revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 

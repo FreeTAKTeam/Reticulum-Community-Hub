@@ -58,10 +58,10 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
 The next full-platform testing preview is
-[v3.0.0-preview.24](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.24),
+[v3.0.0-preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25),
 a full-platform testing release paired with LXMF-rs 0.14.0 and the
-`reticulumd-test-0.14.0-issue663.1` daemon tag at immutable revision
-`c2174f3295240dd3f171c41310effed7416f0949`. Release notes for every
+`reticulumd-test-0.14.0-issue663.2` daemon tag at immutable revision
+`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`. Release notes for every
 preview are attached to its
 [GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
 older notes are kept under [`docs/`](docs/).

@@ -53,3 +53,11 @@ Local SQLite, socket, replay, and lifecycle tests do not establish sustained
 production memory or swap behavior, fresh delivery on the deployed two-core
 host, or physical power-loss recovery. Multi-hour production-shaped load,
 hardware acceptance, and live client delivery remain outstanding.
+
+## Desktop package correction
+
+The preview.24 packaging workflow completed all seven package jobs, but
+post-publication inspection found that its desktop launcher did not pass
+`--zmq-durable-broker` when starting the managed `reticulumd` sidecar. Preview.24
+is retained as historical release evidence; use preview.25 for the corrected
+desktop package. The daemon source pairing is unchanged.

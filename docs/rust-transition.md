@@ -223,8 +223,8 @@ Release blockers cleared in the latest parity pass:
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
 - Production library dependencies use LXMF `0.14.0` from immutable revision
-  `c2174f3295240dd3f171c41310effed7416f0949`
-  (`reticulumd-test-0.14.0-issue663.1`); a clean server build does not require a
+  `9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
+  (`reticulumd-test-0.14.0-issue663.2`); a clean server build does not require a
   sibling checkout. CI and release packages use that same revision, including
   bounded indexed propagation refill and the unchanged announce-cache fast path
   for #663 alongside the existing #655/#657 response and recovery protections.

@@ -13,14 +13,21 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
-## Preview.24 resource testing candidate
+## Preview.25 resource testing candidate
 
-The current preview.24 candidate pairs the SDK and bundled daemon at
-`c2174f3295240dd3f171c41310effed7416f0949`
-(`reticulumd-test-0.14.0-issue663.1`, SDK 0.14.0), with a Rust 1.88 minimum and
-schema 8 pending-only indexes. See [its release notes](release-notes-v3.0.0-preview.24.md)
-for the current scope and acceptance boundary. The issue-specific development
-and preview records below retain their historical pins and measurements.
+The preview.25 candidate carries preview.24's schema 8 durable-broker indexes,
+retained worker stores, and paired LXMF-rs 0.14.0 source, and corrects the
+desktop launcher's missing `--zmq-durable-broker` flag and passes the
+configured local identity to broker-only daemon startup, which does not create
+transport interfaces or listeners. The SDK and bundled daemon remain pinned at
+`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
+(`reticulumd-test-0.14.0-issue663.2`, SDK 0.14.0), with a Rust 1.88 minimum and
+schema 8 pending-only indexes. Preview.24 remains the historical package
+record; its desktop launcher omission and supersession are recorded in
+[its release notes](release-notes-v3.0.0-preview.24.md). See
+[preview.25 release notes](release-notes-v3.0.0-preview.25.md) for the current
+scope and acceptance boundary. The issue-specific development and preview
+records below retain their historical pins and measurements.
 
 ## Issue #238 development baseline
 
@@ -121,7 +128,7 @@ server-package-only milestone, not the full stable 3.0 release.
 | Rust core preserves Python-shaped domain behavior | `crates/r3akt-rch-core/src/lib.rs` tests | Core tests cover topics, clients, missions, teams, members, assets, skills, assignments, checklists, EAM, delivery policy, authorization, SQLite migration, and Python-shaped responses | Passed locally |
 | TAK is a separate service, not embedded in `r3akt-rch-server` | `crates/r3akt-tak-connector/src/bin/r3akt-tak-service.rs`, packaging files | `r3akt-tak-service` bridges RCH telemetry/chat to TAK and TAK CoT to RCH marker routes through northbound HTTP; `r3akt-rch-server` does not own TAK socket lifecycle | Passed locally |
 | Voice is an additional LXMF chat capability, not a voice-only destination class | `crates/r3akt-rch-server/src/lib.rs` tests | Voice-capable peer routing tests keep voice-capable identities in chat/fanout routing | Passed locally |
-| Rust minimum-version gate matches the paired LXMF dependency | `.github/workflows/rust-pr-quality.yml`, workspace package metadata, locked check | The paired LXMF-rs 0.14.0 test daemon requires Rust 1.88, so the workspace minimum and locked minimum-version check use Rust 1.88. `cargo +1.88.0 check --workspace --all-targets --locked` passed locally against `c2174f3295240dd3f171c41310effed7416f0949`. Historical Rust 1.85 validation applies only to earlier dependency baselines. | Passed locally |
+| Rust minimum-version gate matches the paired LXMF dependency | `.github/workflows/rust-pr-quality.yml`, workspace package metadata, locked check | The paired LXMF-rs 0.14.0 test daemon requires Rust 1.88, so the workspace minimum and locked minimum-version check use Rust 1.88. `cargo +1.88.0 check --workspace --all-targets --locked` passed locally against `9c8bc7b52c4ed5eeb94716247b900864d812fcb6`. Historical Rust 1.85 validation applies only to earlier dependency baselines. | Passed locally |
 | PR Rust quality control is explicit and branch-protectable | `.github/workflows/rust-pr-quality.yml` | Pull requests into `rust-next` or `main` get separate checks for `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -- --test-threads=1`, release builds for `r3akt-rch-server` and `r3akt-tak-service`, and `cargo audit --deny warnings`. The workflow is branch-protectable; current push evidence is provided by the stricter committed alpha gate in `Rust workspace` run `26696071362`. | Workflow defined; push gate passed |
 | Release CI gate runs the committed alpha verifier | `.github/workflows/rust.yml`, `scripts/release-readiness.ps1` | CI invokes `scripts/release-readiness.ps1 -ServerOnlyAlpha`, which runs Rust format, clippy, workspace tests, the server release build, and the ZeroMQ-configured release HTTP smoke. `Rust workspace` run `26696071362` passed on commit `8dc69773af38ced251138c007c6f0bdc9543ea02`. | Passed in CI |
 | Server release binary builds and smokes with ZeroMQ configured | `scripts/release-readiness.ps1` | Alpha runner builds `r3akt-rch-server`, starts it with `--lxmf-zmq-command`, `--lxmf-zmq-response`, and `--reticulumd-source`, and validates `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`, and `/diagnostics/runtime` against a temporary SQLite DB. This passed locally through `.\scripts\release-readiness.ps1 -ServerOnlyAlpha` on 2026-05-28 against LXMF-rs `origin/main` `cbccf0f`. The Rust workspace baseline on 2026-07-18 targeted LXMF-rs `v0.9.5` commit `7cafc5b4be21ff4f777d0f2300cfb79e5d0da23c`; on 2026-07-18, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and the focused release-critical crate tests passed against that baseline. Earlier release-build and local workflow-YAML checks passed before publishing `v3.0.0-preview.2` against the prior `v0.5.0` baseline. | Passed locally |

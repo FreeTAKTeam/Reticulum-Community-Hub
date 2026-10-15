@@ -1,8 +1,9 @@
 # Durable ZeroMQ cutover
 
 RCH requires the LXMF-rs revision pinned in Cargo manifests, Cargo.lock and all
-LXMF_REF workflow values. A managed daemon receives `--zmq-durable-broker`;
-start a separately managed daemon with that flag explicitly. The existing
+LXMF_REF workflow values. A managed daemon receives `--zmq-durable-broker`; start a separately managed
+daemon with that flag explicitly. Broker-only startup bridges the configured
+local identity without creating transport interfaces or listeners. Existing
 PUSH/PULL or ROUTER/DEALER endpoints retain their configuration.
 
 RCH does not maintain a legacy polling/history-import or outbound retry owner.
@@ -29,8 +30,8 @@ deleting database files. The before/after query-cost evidence
 and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
-Paired LXMF-rs source: `c2174f3295240dd3f171c41310effed7416f0949`
-(`reticulumd-test-0.14.0-issue663.1`, SDK 0.14.0). Cargo dependencies, workflow
+Paired LXMF-rs source: `9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
+(`reticulumd-test-0.14.0-issue663.2`, SDK 0.14.0). Cargo dependencies, workflow
 checkouts and managed daemon builds use this same immutable revision.
 Building the paired source requires Rust 1.88 or newer.
 
@@ -60,7 +61,7 @@ point old binaries at migrated databases; rollback uses pre-cutover backups
 and reconciliation of work admitted after that backup.
 
 Full daemon contract, limits and recovery details are maintained in LXMF-rs:
-[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/c2174f3295240dd3f171c41310effed7416f0949/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
+[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/9c8bc7b52c4ed5eeb94716247b900864d812fcb6/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
 Local socket, SQLite, crash and paired-worker tests do not establish hardware
 power-loss behavior or a production multi-hour memory/swap plateau.
 
