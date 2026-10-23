@@ -350,6 +350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-queue"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1121,22 +1130,23 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lxmf-reference"
-version = "0.13.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "lxmf-sdk"
-version = "0.13.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
 dependencies = [
  "hex",
  "hmac",
  "lxmf-reference",
  "lxmf-wire",
  "reticulum-rs-rpc",
+ "reticulum-rs-zeromq",
  "serde",
  "serde_json",
  "sha2",
@@ -1144,13 +1154,12 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "zeroize",
- "zeromq 0.6.0 (git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1)",
 ]
 
 [[package]]
 name = "lxmf-wire"
-version = "0.13.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -1587,7 +1596,7 @@ dependencies = [
  "tower",
  "tower-http",
  "uuid",
- "zeromq 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zeromq",
 ]
 
 [[package]]
@@ -1622,7 +1631,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "zeromq 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zeromq",
 ]
 
 [[package]]
@@ -1714,8 +1723,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reticulum-rs-core"
-version = "0.13.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
 dependencies = [
  "aes",
  "atomicwrites",
@@ -1735,11 +1744,12 @@ dependencies = [
 
 [[package]]
 name = "reticulum-rs-rpc"
-version = "0.13.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
+ "crossbeam-channel",
  "hex",
  "hkdf",
  "hmac",
@@ -1756,6 +1766,29 @@ dependencies = [
  "shlex",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "reticulum-rs-zeromq"
+version = "0.14.0"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=9c8bc7b52c4ed5eeb94716247b900864d812fcb6#9c8bc7b52c4ed5eeb94716247b900864d812fcb6"
+dependencies = [
+ "async-trait",
+ "asynchronous-codec",
+ "bytes",
+ "crossbeam-queue",
+ "futures",
+ "log",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "rand",
+ "regex",
+ "scc",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -2485,9 +2518,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.23.3"
+version = "1.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
+checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -2830,29 +2863,6 @@ name = "zeromq"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efb2c254fd8f366755335c9e43b865f8484fe3bd717d65ffe7c3f28852863030"
-dependencies = [
- "async-trait",
- "asynchronous-codec",
- "bytes",
- "crossbeam-queue",
- "futures",
- "log",
- "num-traits",
- "once_cell",
- "parking_lot",
- "rand",
- "regex",
- "scc",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "zeromq"
-version = "0.6.0"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=a424760137c7eaee5d5de7fb9ef2347871b85da1#a424760137c7eaee5d5de7fb9ef2347871b85da1"
 dependencies = [
  "async-trait",
  "asynchronous-codec",

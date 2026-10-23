@@ -1,17 +1,29 @@
 use super::envelope::apply_envelope;
+#[cfg(test)]
+use super::open;
 use super::{
     ApiError, AppState, ClientRecord, MarkerRecord, OutboundMessageRecord, SubscriberRecord,
     TopicRecord, Value, ZoneRecord, broadcast_message_event, broadcast_system_event,
     broadcast_telemetry_event, ensure_kill_switch_persistence_unlocked, json,
-    normalize_identity_key, open, storage, unix_now_ms,
+    normalize_identity_key, storage, unix_now_ms,
 };
+#[cfg(test)]
 pub(super) fn apply(state: &AppState, consumer: &str) -> Result<bool, ApiError> {
     let _quiescence = state
         .broker_work_gate
         .read()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     ensure_kill_switch_persistence_unlocked(state)?;
     let mut store = open(state)?;
+    apply_with_store(state, consumer, &mut store)
+}
+
+pub(super) fn apply_with_store(
+    state: &AppState,
+    consumer: &str,
+    store: &mut r3akt_rch_core::RchSqliteStore,
+) -> Result<bool, ApiError> {
+    ensure_kill_switch_persistence_unlocked(state)?;
     let Some(event) = store.next_inbox_event(consumer).map_err(storage)? else {
         return Ok(false);
     };

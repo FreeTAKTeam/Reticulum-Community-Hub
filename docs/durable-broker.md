@@ -1,8 +1,9 @@
 # Durable ZeroMQ cutover
 
 RCH requires the LXMF-rs revision pinned in Cargo manifests, Cargo.lock and all
-LXMF_REF workflow values. A managed daemon receives `--zmq-durable-broker`;
-start a separately managed daemon with that flag explicitly. The existing
+LXMF_REF workflow values. A managed daemon receives `--zmq-durable-broker`; start a separately managed
+daemon with that flag explicitly. Broker-only startup bridges the configured
+local identity without creating transport interfaces or listeners. Existing
 PUSH/PULL or ROUTER/DEALER endpoints retain their configuration.
 
 RCH does not maintain a legacy polling/history-import or outbound retry owner.
@@ -19,9 +20,20 @@ migration backs up existing RCH data. Bootstrap events preserve historical rows
 without executing old commands or replaying old relays. One RCH process owns a
 state directory, enforced by a separate SQLite lease.
 
-Paired LXMF-rs source: `e237f80c0c9e219e4090be04a4229d3328074f73`
-merged into Framework `main` by PR #660. Cargo dependencies and managed
-daemon builds use this same immutable revision.
+Schema 8 adds indexed lookups for pending dispatches and unfinished inbox
+events, including unknown or upgrade-required states. Existing databases are
+backed up before the additive index migration; completed history is retained.
+The intake, application and dispatch owners retain their configured SQLite
+connections across idle cycles, and join before transport shutdown. Purge takes
+the exclusive broker gate and closes retained connections before wiping and
+deleting database files. The before/after query-cost evidence
+and remaining production checks are in
+[the idle-broker regression record](issue-276-idle-broker.md).
+
+Paired LXMF-rs source: `9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
+(`reticulumd-test-0.14.0-issue663.2`, SDK 0.14.0). Cargo dependencies, workflow
+checkouts and managed daemon builds use this same immutable revision.
+Building the paired source requires Rust 1.88 or newer.
 
 The daemon physical budget is persisted on first enablement. Its main database
 page cap uses one quarter of the selected budget to leave WAL and control
@@ -49,7 +61,7 @@ point old binaries at migrated databases; rollback uses pre-cutover backups
 and reconciliation of work admitted after that backup.
 
 Full daemon contract, limits and recovery details are maintained in LXMF-rs:
-[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/e237f80c0c9e219e4090be04a4229d3328074f73/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
+[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/9c8bc7b52c4ed5eeb94716247b900864d812fcb6/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
 Local socket, SQLite, crash and paired-worker tests do not establish hardware
 power-loss behavior or a production multi-hour memory/swap plateau.
 

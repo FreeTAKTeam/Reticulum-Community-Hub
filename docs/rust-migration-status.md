@@ -79,15 +79,15 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 
 ## Local server
 
-Rust library dependencies resolve LXMF-rs `0.13.0` plus the issue #238 fix at the immutable commit
-`bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68` from Git. A sibling checkout is
-needed for local daemon development and default desktop sidecar preparation.
+Rust library dependencies and release packages pair LXMF-rs `0.14.0` with
+`reticulumd-test-0.14.0-issue663.2`. A sibling checkout is needed for local
+daemon development and default desktop sidecar preparation.
 For a fresh development layout, run this from the RCH repository:
 
 ```bash
 git clone --filter=blob:none --no-checkout https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
-git -C ../LXMF-rs fetch origin bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
-git -C ../LXMF-rs checkout --detach bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68
+git -C ../LXMF-rs fetch origin reticulumd-test-0.14.0-issue663.2
+git -C ../LXMF-rs checkout --detach reticulumd-test-0.14.0-issue663.2
 ```
 
 If that sibling already exists, preserve any local changes and use a clean
@@ -134,7 +134,7 @@ Minimum Rust checks:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo +1.85.0 check --workspace --all-targets --locked
+cargo +1.88.0 check --workspace --all-targets --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo audit --deny warnings
 cargo build --release -p r3akt-rch-server
