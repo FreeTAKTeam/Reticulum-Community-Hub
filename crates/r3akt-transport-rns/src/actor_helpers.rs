@@ -8,15 +8,11 @@ use super::{
 };
 
 pub(super) fn atomic_max_usize(target: &AtomicUsize, candidate: usize) {
-    let _result = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        (candidate > current).then_some(candidate)
-    });
+    target.fetch_max(candidate, Ordering::Relaxed);
 }
 
 pub(super) fn atomic_max_u64(target: &AtomicU64, candidate: u64) {
-    let _result = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-        (candidate > current).then_some(candidate)
-    });
+    target.fetch_max(candidate, Ordering::Relaxed);
 }
 
 pub(super) fn send_actor_response(
@@ -35,11 +31,11 @@ pub(super) fn recv_prioritized_actor_request(
     send_burst: &mut usize,
 ) -> Option<ZmqSdkActorRequest> {
     loop {
-        if *send_burst >= 32 {
-            if let Ok(request) = control_receiver.try_recv() {
-                *send_burst = 0;
-                return Some(request);
-            }
+        if *send_burst >= 32
+            && let Ok(request) = control_receiver.try_recv()
+        {
+            *send_burst = 0;
+            return Some(request);
         }
         match send_receiver.try_recv() {
             Ok(request) => {

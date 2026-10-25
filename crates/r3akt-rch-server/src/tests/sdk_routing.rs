@@ -31,7 +31,7 @@ fn targeted_and_explicit_recipient_sends_never_decode_100001_history_rows() {
     .expect("targeted admission independent of history");
     assert_eq!(
         outbound_destinations(&state, &message).expect("recipients"),
-        [destination.clone()]
+        std::slice::from_ref(&destination)
     );
     assert_eq!(message.delivery_method, "durable_broker");
     assert_eq!(message.delivery_policy_reason, "sdk_owned");

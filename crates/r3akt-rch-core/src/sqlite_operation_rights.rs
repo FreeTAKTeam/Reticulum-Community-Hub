@@ -53,19 +53,18 @@ impl RchSqliteStore {
             .as_ref()
             .map(|payload| decode_msgpack(payload))
             .transpose()?;
-        if let Some(record) = &previous {
-            if (
+        if let Some(record) = &previous
+            && (
                 &record.subject_type,
                 &record.subject_id,
                 &record.operation,
                 &record.scope_type,
                 &record.scope_id,
             ) != (&key.0, &key.1, &key.2, &key.3, &key.4)
-            {
-                return Err(RchCoreError::Decode(
-                    "operation-right payload does not match its durable key".to_string(),
-                ));
-            }
+        {
+            return Err(RchCoreError::Decode(
+                "operation-right payload does not match its durable key".to_string(),
+            ));
         }
         let record = operation_right_record(&key, previous.as_ref(), granted);
         let rows_written = if previous.as_ref() == Some(&record) {

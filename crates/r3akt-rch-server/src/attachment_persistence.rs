@@ -13,13 +13,13 @@ impl Drop for UncommittedFile {
         let Some(path) = self.path.as_ref() else {
             return;
         };
-        if let Err(error) = std::fs::remove_file(path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "Cannot remove uncommitted attachment {}: {error}",
-                    path.display()
-                );
-            }
+        if let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "Cannot remove uncommitted attachment {}: {error}",
+                path.display()
+            );
         }
     }
 }

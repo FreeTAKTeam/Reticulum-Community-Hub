@@ -71,10 +71,10 @@ pub fn shutdown_runtime_for_exit(state: &AppState) -> Result<(), String> {
         false,
         Duration::from_millis(RETICULUMD_INBOUND_WORKER_POLL_MS),
     );
-    if let Some(data_plane) = &state.lxmf_zmq_data_plane {
-        if let Err(error) = data_plane.shutdown() {
-            errors.push(format!("LXMF SDK: {error}"));
-        }
+    if let Some(data_plane) = &state.lxmf_zmq_data_plane
+        && let Err(error) = data_plane.shutdown()
+    {
+        errors.push(format!("LXMF SDK: {error}"));
     }
     if let Err(error) = state.stop_managed_reticulumd() {
         errors.push(format!("managed reticulumd: {error}"));

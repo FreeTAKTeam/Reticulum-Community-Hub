@@ -49,7 +49,7 @@ requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 
 Pull request quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,
+`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.99.1 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
 `cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
 0.14.0 dependency.

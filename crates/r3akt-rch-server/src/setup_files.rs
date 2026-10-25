@@ -99,13 +99,13 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), ApiError> {
         std::fs::rename(&temporary, path)
     };
     if let Err(error) = operation() {
-        if let Err(cleanup) = std::fs::remove_file(&temporary) {
-            if cleanup.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "failed to clean staged setup file {}: {cleanup}",
-                    temporary.display()
-                );
-            }
+        if let Err(cleanup) = std::fs::remove_file(&temporary)
+            && cleanup.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to clean staged setup file {}: {cleanup}",
+                temporary.display()
+            );
         }
         return Err(ApiError::Internal(format!(
             "cannot install setup configuration {}: {error}",

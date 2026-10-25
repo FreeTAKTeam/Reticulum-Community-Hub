@@ -187,6 +187,10 @@ impl ZmqDataPlaneMetrics {
         self.enqueued_total.fetch_sub(1, Ordering::Relaxed);
     }
 
+    #[allow(
+        deprecated,
+        reason = "`try_update` replaces `fetch_update` only from Rust 1.95; the MSRV is 1.88"
+    )]
     fn record_dequeued(&self, queued_at: Instant, is_send_lane: bool) {
         match self.queued_at.lock() {
             Ok(mut queue) => {
@@ -236,12 +240,12 @@ impl ZmqDataPlaneMetrics {
         } else {
             self.failed_total.fetch_add(1, Ordering::Relaxed);
         }
-        if let Ok(ZmqSdkActorResponse::Batch(results)) = result {
-            if results.iter().any(|item| !item.accepted) && results.iter().any(|item| item.accepted)
-            {
-                self.partial_acceptance_total
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+        if let Ok(ZmqSdkActorResponse::Batch(results)) = result
+            && results.iter().any(|item| !item.accepted)
+            && results.iter().any(|item| item.accepted)
+        {
+            self.partial_acceptance_total
+                .fetch_add(1, Ordering::Relaxed);
         }
         let batch_rate_limited = matches!(
             result,
@@ -1930,19 +1934,18 @@ fn run_zmq_data_plane_actor(
         if session.is_none() {
             match open_zmq_sdk_actor_session(config) {
                 Ok(mut opened) => {
-                    if let Some(identity) = service_identity.as_ref() {
-                        if let Err(error) =
+                    if let Some(identity) = service_identity.as_ref()
+                        && let Err(error) =
                             register_zmq_actor_identity(&mut opened, identity.clone())
-                        {
-                            let result = Err(error);
-                            metrics.record_result(&result, response_started.elapsed());
-                            send_actor_response(
-                                &request.response,
-                                result,
-                                "identity session restore failure",
-                            );
-                            continue;
-                        }
+                    {
+                        let result = Err(error);
+                        metrics.record_result(&result, response_started.elapsed());
+                        send_actor_response(
+                            &request.response,
+                            result,
+                            "identity session restore failure",
+                        );
+                        continue;
                     }
                     metrics.set_runtime_info(opened.runtime_info.clone());
                     session = Some(opened);
@@ -1978,10 +1981,10 @@ fn run_zmq_data_plane_actor(
             _ => None,
         };
         let result = send_lxmf_zmq_actor_request(active_session, request.payload);
-        if result.is_ok() {
-            if let Some(identity) = identity_after_request {
-                service_identity = Some(identity);
-            }
+        if result.is_ok()
+            && let Some(identity) = identity_after_request
+        {
+            service_identity = Some(identity);
         }
         metrics.record_result(&result, response_started.elapsed());
         if result
@@ -5096,8 +5099,7 @@ mod tests {
         let announces = list_reticulumd_announces(endpoint.as_str(), 500).expect("list announces");
         eprintln!("reticulumd returned {} announces", announces.len());
         if env::var("R3AKT_RETICULUMD_EXPECT_ANNOUNCE")
-            .ok()
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         {
             assert!(
                 !announces.is_empty(),
@@ -5150,11 +5152,11 @@ mod tests {
         crate::test_block_on(transport.publish(envelope)).expect("publish live envelope");
         let mut received = None;
         for _ in 0..poll_attempts {
-            if let Some(envelope) = crate::test_block_on(transport.poll()).expect("poll live") {
-                if envelope.id == expected_id {
-                    received = Some(envelope);
-                    break;
-                }
+            if let Some(envelope) = crate::test_block_on(transport.poll()).expect("poll live")
+                && envelope.id == expected_id
+            {
+                received = Some(envelope);
+                break;
             }
             thread::sleep(Duration::from_millis(poll_delay_ms));
         }

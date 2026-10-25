@@ -65,25 +65,23 @@ pub(super) fn direct_lxmf_message_payloads(
         match result {
             DirectLxmfCommandResult::Valid(mut command) => {
                 if command.name == "telemetry.collect" {
-                    if command.args.get("topic_id").is_none() {
-                        if let Some(topic) = fields.and_then(|f| {
+                    if command.args.get("topic_id").is_none()
+                        && let Some(topic) = fields.and_then(|f| {
                             optional_field_value(f, &["TopicID", "topic_id", "topic", "Topic"])
-                        }) {
-                            let Some(topic) =
-                                topic.as_str().map(str::trim).filter(|s| !s.is_empty())
-                            else {
-                                decoded.command_diagnostics.push(format!("malformed LXMF FIELD_COMMANDS (0x09) entry {index}: topic must be a non-empty string"));
-                                continue;
-                            };
-                            command.args["topic_id"] = JsonValue::String(topic.into());
-                        }
+                        })
+                    {
+                        let Some(topic) = topic.as_str().map(str::trim).filter(|s| !s.is_empty())
+                        else {
+                            decoded.command_diagnostics.push(format!("malformed LXMF FIELD_COMMANDS (0x09) entry {index}: topic must be a non-empty string"));
+                            continue;
+                        };
+                        command.args["topic_id"] = JsonValue::String(topic.into());
                     }
                 } else if let Some(team_uid) = fields.and_then(|f| {
                     optional_field_string(f, &["11", "FIELD_GROUP", "group", "Group"])
-                }) {
-                    if let Some(args) = command.args.as_object_mut() {
-                        args.insert("_rem_team_uid".into(), JsonValue::String(team_uid.into()));
-                    }
+                }) && let Some(args) = command.args.as_object_mut()
+                {
+                    args.insert("_rem_team_uid".into(), JsonValue::String(team_uid.into()));
                 }
                 decoded.envelopes.push(ProtocolEnvelope::new(
                     NodeId::new(source),
@@ -105,11 +103,9 @@ pub(super) fn direct_lxmf_message_payloads(
             .command_diagnostics
             .iter()
             .all(|d| d.starts_with("unsupported"))
+        && let Some(envelope) = direct_lxmf_fallback_envelope(fields, message, source, local_source)
     {
-        if let Some(envelope) = direct_lxmf_fallback_envelope(fields, message, source, local_source)
-        {
-            decoded.envelopes.push(envelope);
-        }
+        decoded.envelopes.push(envelope);
     }
     if let Some(id) = message
         .get("id")

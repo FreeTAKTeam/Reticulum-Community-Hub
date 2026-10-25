@@ -208,7 +208,7 @@ where
         tokio::task::spawn_blocking(move || verification_state.verify_lxmf_zmq_data_plane()).await;
     let verification_error = match verification_result {
         Ok(Ok(())) => None,
-        Ok(Err(error)) => Some(error.to_string()),
+        Ok(Err(error)) => Some(error.clone()),
         Err(error) => Some(format!("ZeroMQ startup verification task failed: {error}")),
     };
     if let Some(error) = verification_error {
@@ -295,20 +295,20 @@ fn build_runtime_state(
                 )
                 .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
         }
-    } else if let Some(endpoint) = managed_reticulumd_launch.rpc.clone() {
-        if let Some(exe) = managed_reticulumd_launch.exe.as_ref() {
-            state = state
-                .with_managed_reticulumd(
-                    exe,
-                    endpoint,
-                    managed_reticulumd_launch
-                        .db_path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy().to_string()),
-                    managed_reticulumd_launch.config_path.as_ref(),
-                )
-                .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
-        }
+    } else if let Some(endpoint) = managed_reticulumd_launch.rpc.clone()
+        && let Some(exe) = managed_reticulumd_launch.exe.as_ref()
+    {
+        state = state
+            .with_managed_reticulumd(
+                exe,
+                endpoint,
+                managed_reticulumd_launch
+                    .db_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+                managed_reticulumd_launch.config_path.as_ref(),
+            )
+            .with_managed_reticulumd_transport(managed_reticulumd_launch.transport.clone());
     }
     Ok(state)
 }
@@ -337,10 +337,10 @@ fn apply_runtime_config(
     if let Some(path) = reticulum_config_path {
         state = state.with_reticulum_config_path(path);
     }
-    if let Some(endpoint) = &args.reticulumd_rpc {
-        if let Some(source) = args.reticulumd_source.as_deref() {
-            state = state.with_reticulumd_rpc(endpoint.as_str(), source);
-        }
+    if let Some(endpoint) = &args.reticulumd_rpc
+        && let Some(source) = args.reticulumd_source.as_deref()
+    {
+        state = state.with_reticulumd_rpc(endpoint.as_str(), source);
     }
     if let (Some(command), Some(response)) = (&args.lxmf_zmq_command, &args.lxmf_zmq_response) {
         state
@@ -501,11 +501,11 @@ fn expand_user_path(value: impl AsRef<str>) -> PathBuf {
 
 fn expand_user_path_with_home(value: impl AsRef<str>, home: Option<&Path>) -> PathBuf {
     let value = value.as_ref();
-    if let Some(tail) = value.strip_prefix('~') {
-        if let Some(home) = home {
-            let tail = tail.trim_start_matches(['/', '\\']);
-            return home.join(tail);
-        }
+    if let Some(tail) = value.strip_prefix('~')
+        && let Some(home) = home
+    {
+        let tail = tail.trim_start_matches(['/', '\\']);
+        return home.join(tail);
     }
     PathBuf::from(value)
 }
@@ -967,11 +967,11 @@ fn stop_command(args: &ControlArgs) -> i32 {
         println!("RCH stop requested.");
         return 0;
     }
-    if let Some(state) = state {
-        if stop_with_signal(state.pid) {
-            println!("RCH stop signal sent.");
-            return 0;
-        }
+    if let Some(state) = state
+        && stop_with_signal(state.pid)
+    {
+        println!("RCH stop signal sent.");
+        return 0;
     }
     println!("RCH is not running.");
     1

@@ -768,12 +768,12 @@ impl AppState {
         let source = identity.delivery_destination.ok_or_else(|| {
             "reticulumd did not return the RCH LXMF delivery destination".to_string()
         })?;
-        if let Some(expected) = self.rch_source_assertion.as_deref() {
-            if !expected.eq_ignore_ascii_case(source.as_str()) {
-                return Err(format!(
-                    "--reticulumd-source assertion mismatch: configured {expected}, derived {source}"
-                ));
-            }
+        if let Some(expected) = self.rch_source_assertion.as_deref()
+            && !expected.eq_ignore_ascii_case(source.as_str())
+        {
+            return Err(format!(
+                "--reticulumd-source assertion mismatch: configured {expected}, derived {source}"
+            ));
         }
         self.reticulumd_source = Some(Arc::new(source.clone()));
         self.prune_telemetry_for_local_source(&source);
@@ -1107,15 +1107,14 @@ impl AppState {
             .telemetry_records
             .write()
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
-            if let Some(existing) = records.iter().find(|existing| {
+        if let Some(peer_key) = telemetry_identity_key(&record.peer_destination)
+            && let Some(existing) = records.iter().find(|existing| {
                 telemetry_identity_key(&existing.peer_destination)
                     .is_some_and(|existing_key| existing_key == peer_key)
-            }) {
-                if existing.timestamp_s > record.timestamp_s {
-                    return Ok(existing.clone());
-                }
-            }
+            })
+            && existing.timestamp_s > record.timestamp_s
+        {
+            return Ok(existing.clone());
         }
         let record = persist_telemetry_record_row(self, &record)?;
         if let Some(peer_key) = telemetry_identity_key(&record.peer_destination) {
@@ -1142,10 +1141,10 @@ impl AppState {
                 return Ok(PathBuf::from(storage_dir).join(dirname));
             }
         }
-        if let Some(path) = &self.sqlite_path {
-            if let Some(parent) = path.parent() {
-                return Ok(parent.join(dirname));
-            }
+        if let Some(path) = &self.sqlite_path
+            && let Some(parent) = path.parent()
+        {
+            return Ok(parent.join(dirname));
         }
         std::env::current_dir()
             .map(|path| path.join("RTH_Store").join(dirname))
@@ -2652,13 +2651,11 @@ fn import_reticulumd_announce_batch(
                     || (!capabilities.is_empty() && record.announce_capabilities != capabilities)
             });
             if !should_record {
-                if touch_unchanged_records {
-                    if let Some(prior) = prior {
-                        records_to_touch.push(r3akt_rch_core::IdentityAnnounceRecord {
-                            last_seen_ts_ms: touch_ts_ms,
-                            ..prior
-                        });
-                    }
+                if touch_unchanged_records && let Some(prior) = prior {
+                    records_to_touch.push(r3akt_rch_core::IdentityAnnounceRecord {
+                        last_seen_ts_ms: touch_ts_ms,
+                        ..prior
+                    });
                 }
                 continue;
             }
@@ -2932,15 +2929,14 @@ fn mission_uid_from_response_fields(
         .get("event_type")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if event_type.starts_with("mission.registry.mission.") {
-        if let Some(uid) = payload
+    if event_type.starts_with("mission.registry.mission.")
+        && let Some(uid) = payload
             .get("uid")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            return Some(uid.to_string());
-        }
+    {
+        return Some(uid.to_string());
     }
     let result = response
         .results_field()
@@ -9192,7 +9188,7 @@ fn resolve_hub_display_name_for_app_info(
 fn normalize_reticulum_destination_for_app_info(value: &str) -> Option<String> {
     let candidate = value.trim().trim_start_matches("0x").to_ascii_lowercase();
     if candidate.is_empty()
-        || candidate.len() % 2 != 0
+        || !candidate.len().is_multiple_of(2)
         || !candidate.chars().all(|ch| ch.is_ascii_hexdigit())
     {
         return None;
@@ -9474,14 +9470,13 @@ fn decode_announce_capabilities_from_app_data(app_data: &[u8]) -> Vec<String> {
         }
     }
 
-    if let Some(slots) = msgpack_top_level_array_slices(app_data) {
-        if let Some(capabilities) = slots
+    if let Some(slots) = msgpack_top_level_array_slices(app_data)
+        && let Some(capabilities) = slots
             .into_iter()
             .skip(2)
             .find_map(decode_announce_capability_slot_bytes)
-        {
-            return capabilities;
-        }
+    {
+        return capabilities;
     }
 
     let Ok(decoded) = rmp_serde::from_slice::<Value>(app_data) else {
@@ -9679,12 +9674,12 @@ fn json_value_as_bytes(value: &Value) -> Option<Vec<u8>> {
 
 fn decode_hex_bytes(raw_hex: &str) -> Option<Vec<u8>> {
     let text = raw_hex.trim();
-    if text.is_empty() || text.len() % 2 != 0 {
+    if text.is_empty() || !text.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(text.len() / 2);
     let chars = text.as_bytes();
-    for pair in chars.chunks_exact(2) {
+    for pair in chars.as_chunks::<2>().0 {
         let high = hex_value(pair[0])?;
         let low = hex_value(pair[1])?;
         bytes.push((high << 4) | low);
@@ -10670,16 +10665,16 @@ fn private_identity_hash(identity: &PrivateIdentity) -> String {
 }
 
 fn parse_existing_reticulum_identity_hash(bytes: &[u8]) -> Option<String> {
-    if bytes.len() == PRIVATE_KEY_LENGTH {
-        if let Ok(identity) = PrivateIdentity::from_private_key_bytes(bytes) {
-            return Some(private_identity_hash(&identity));
-        }
+    if bytes.len() == PRIVATE_KEY_LENGTH
+        && let Ok(identity) = PrivateIdentity::from_private_key_bytes(bytes)
+    {
+        return Some(private_identity_hash(&identity));
     }
     let text = std::str::from_utf8(bytes).ok()?.trim();
-    if text.len() >= PRIVATE_KEY_LENGTH * 2 {
-        if let Ok(identity) = PrivateIdentity::new_from_hex_string(text) {
-            return Some(private_identity_hash(&identity));
-        }
+    if text.len() >= PRIVATE_KEY_LENGTH * 2
+        && let Ok(identity) = PrivateIdentity::new_from_hex_string(text)
+    {
+        return Some(private_identity_hash(&identity));
     }
     if text.len() >= 32
         && text
@@ -10698,15 +10693,15 @@ fn parse_existing_reticulum_identity_hash(bytes: &[u8]) -> Option<String> {
 }
 
 fn write_reticulum_identity_file(path: &FsPath, key_bytes: &[u8]) -> Result<(), ApiError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                ApiError::Internal(format!(
-                    "failed to create Reticulum identity directory {}: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            ApiError::Internal(format!(
+                "failed to create Reticulum identity directory {}: {error}",
+                parent.display()
+            ))
+        })?;
     }
     #[cfg(unix)]
     {
@@ -10914,29 +10909,29 @@ fn kill_switch_artifact_candidates(state: &AppState) -> Vec<KillSwitchArtifactCa
             push_known_reticulum_runtime_candidates(&mut candidates, parent);
         }
     }
-    if let Ok(managed) = state.managed_reticulumd.read() {
-        if let Some(path) = &managed.config_path {
-            push_artifact_candidate(
-                &mut candidates,
-                path.clone(),
-                KillSwitchArtifactKind::Configuration,
-            );
-        }
+    if let Ok(managed) = state.managed_reticulumd.read()
+        && let Some(path) = &managed.config_path
+    {
+        push_artifact_candidate(
+            &mut candidates,
+            path.clone(),
+            KillSwitchArtifactKind::Configuration,
+        );
     }
     for category in ["file", "image"] {
         if let Ok(path) = state.attachment_storage_path(category) {
             push_artifact_candidate(&mut candidates, path, KillSwitchArtifactKind::Attachment);
         }
     }
-    if let Some(path) = &state.sqlite_path {
-        if let Some(parent) = path.parent() {
-            for dirname in ["files", "images"] {
-                push_artifact_candidate(
-                    &mut candidates,
-                    parent.join(dirname),
-                    KillSwitchArtifactKind::Attachment,
-                );
-            }
+    if let Some(path) = &state.sqlite_path
+        && let Some(parent) = path.parent()
+    {
+        for dirname in ["files", "images"] {
+            push_artifact_candidate(
+                &mut candidates,
+                parent.join(dirname),
+                KillSwitchArtifactKind::Attachment,
+            );
         }
     }
 
@@ -11193,38 +11188,37 @@ fn kill_switch_elapsed_progress(elapsed_ms: i64) -> u8 {
 }
 
 fn kill_switch_status_payload(state: &AppState) -> Result<Value, ApiError> {
-    if let Ok(runtime) = state.kill_switch.read() {
-        if matches!(
+    if let Ok(runtime) = state.kill_switch.read()
+        && matches!(
             runtime.mode,
             KillSwitchRuntimeMode::Deleting
                 | KillSwitchRuntimeMode::Completed
                 | KillSwitchRuntimeMode::Failed
-        ) {
-            let now_ms = unix_now_ms();
-            let mut progress_percent = runtime.progress_percent;
-            if runtime.mode == KillSwitchRuntimeMode::Deleting {
-                let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
-                let elapsed = now_ms.saturating_sub(started_at);
-                progress_percent = kill_switch_elapsed_progress(elapsed);
-                progress_percent = progress_percent.max(runtime.progress_percent);
-            }
-            let targets =
-                advance_kill_switch_targets(&runtime.targets, runtime.mode, progress_percent);
-            return Ok(json!({
-                "state": runtime.mode.as_str(),
-                "arm_a": runtime.arm_a,
-                "arm_b": runtime.arm_b,
-                "pin_enrolled": false,
-                "pin_created_at": Value::Null,
-                "initial_pin": Value::Null,
-                "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
-                "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
-                "progress_percent": progress_percent,
-                "message": runtime.message.clone(),
-                "targets": targets,
-                "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
-            }));
+        )
+    {
+        let now_ms = unix_now_ms();
+        let mut progress_percent = runtime.progress_percent;
+        if runtime.mode == KillSwitchRuntimeMode::Deleting {
+            let started_at = runtime.purge_started_at_ts_ms.unwrap_or(now_ms);
+            let elapsed = now_ms.saturating_sub(started_at);
+            progress_percent = kill_switch_elapsed_progress(elapsed);
+            progress_percent = progress_percent.max(runtime.progress_percent);
         }
+        let targets = advance_kill_switch_targets(&runtime.targets, runtime.mode, progress_percent);
+        return Ok(json!({
+            "state": runtime.mode.as_str(),
+            "arm_a": runtime.arm_a,
+            "arm_b": runtime.arm_b,
+            "pin_enrolled": false,
+            "pin_created_at": Value::Null,
+            "initial_pin": Value::Null,
+            "authorized_at": runtime.authorized_at_ts_ms.map(iso8601_from_unix_ms),
+            "purge_started_at": runtime.purge_started_at_ts_ms.map(iso8601_from_unix_ms),
+            "progress_percent": progress_percent,
+            "message": runtime.message.clone(),
+            "targets": targets,
+            "updated_at": iso8601_from_unix_ms(runtime.updated_at_ts_ms),
+        }));
     }
     let Some(secret) = load_kill_switch_pin(state)? else {
         let now_ms = unix_now_ms();
@@ -11705,19 +11699,19 @@ fn mission_team_member_destinations(
         if !team_uids.contains(&team_uid) {
             continue;
         }
-        if let Some(identity) = reticulum_destination_hash(&member.rns_identity) {
-            if !destinations.contains(&identity) {
-                destinations.push(identity);
-            }
+        if let Some(identity) = reticulum_destination_hash(&member.rns_identity)
+            && !destinations.contains(&identity)
+        {
+            destinations.push(identity);
         }
         for link in &team_member_client_links {
             if link.team_member_uid != member.uid {
                 continue;
             }
-            if let Some(identity) = reticulum_destination_hash(&link.client_identity) {
-                if !destinations.contains(&identity) {
-                    destinations.push(identity);
-                }
+            if let Some(identity) = reticulum_destination_hash(&link.client_identity)
+                && !destinations.contains(&identity)
+            {
+                destinations.push(identity);
             }
         }
     }
@@ -12032,24 +12026,23 @@ fn initial_rem_checklist_command_messages(
                     take_timestamp_ms(),
                 ));
             }
-            if let Some(args) = status_set_args(task) {
-                if args
+            if let Some(args) = status_set_args(task)
+                && args
                     .get("user_status")
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|status| status.eq_ignore_ascii_case("COMPLETE"))
-                {
-                    messages.push(rem_checklist_task_command_message_at(
-                        "checklist.task.status.set",
-                        rem_args_with_checklist_and_mission_uid(
-                            args,
-                            checklist_uid.as_ref(),
-                            effective_mission_uid,
-                        ),
-                        source_identity,
-                        mission_change_uid,
-                        take_timestamp_ms(),
-                    ));
-                }
+            {
+                messages.push(rem_checklist_task_command_message_at(
+                    "checklist.task.status.set",
+                    rem_args_with_checklist_and_mission_uid(
+                        args,
+                        checklist_uid.as_ref(),
+                        effective_mission_uid,
+                    ),
+                    source_identity,
+                    mission_change_uid,
+                    take_timestamp_ms(),
+                ));
             }
         }
     }
@@ -12374,10 +12367,10 @@ fn rem_wire_command_args(command_type: &str, args: &Value) -> Value {
     };
     let mut out = serde_json::Map::new();
     for key in keys {
-        if let Some(value) = object.get(*key) {
-            if !value.is_null() {
-                out.insert((*key).to_string(), value.clone());
-            }
+        if let Some(value) = object.get(*key)
+            && !value.is_null()
+        {
+            out.insert((*key).to_string(), value.clone());
         }
     }
     Value::Object(out)
@@ -12405,10 +12398,10 @@ fn rem_args_with_checklist_and_mission_uid(
     let Some(mut object) = args.as_object().cloned() else {
         return args;
     };
-    if !object.contains_key("checklist_uid") {
-        if let Some(value) = checklist_uid {
-            object.insert("checklist_uid".to_string(), value.clone());
-        }
+    if !object.contains_key("checklist_uid")
+        && let Some(value) = checklist_uid
+    {
+        object.insert("checklist_uid".to_string(), value.clone());
     }
     Value::Object(object)
 }
@@ -12912,10 +12905,10 @@ fn rem_checklist_columns_value(checklist: &serde_json::Map<String, Value>) -> Ve
 fn json_object_without_nulls<const N: usize>(entries: [(&str, Option<Value>); N]) -> Value {
     let mut object = serde_json::Map::new();
     for (key, value) in entries {
-        if let Some(value) = value {
-            if !value.is_null() {
-                object.insert(key.to_string(), value);
-            }
+        if let Some(value) = value
+            && !value.is_null()
+        {
+            object.insert(key.to_string(), value);
         }
     }
     Value::Object(object)
@@ -14457,12 +14450,12 @@ fn eam_payload_for_path(callsign: String, payload: Value) -> Result<Value, ApiEr
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(body_callsign) = body_callsign {
-        if body_callsign != callsign {
-            return Err(ApiError::BadRequest(
-                "callsign in body must match the path callsign".to_string(),
-            ));
-        }
+    if let Some(body_callsign) = body_callsign
+        && body_callsign != callsign
+    {
+        return Err(ApiError::BadRequest(
+            "callsign in body must match the path callsign".to_string(),
+        ));
     }
     object.insert("callsign".to_string(), json!(callsign));
     Ok(Value::Object(object))
@@ -15163,28 +15156,28 @@ fn parse_zone_update_payload(input: Value) -> Result<ZoneUpdatePayload, ApiError
 }
 
 fn validate_zone_pydantic_shape(input: &Value, require_points: bool) -> Result<(), ApiError> {
-    if let Some(Value::String(name)) = input.get("name") {
-        if name.is_empty() {
-            return Err(ApiError::PydanticValidation(python_string_too_short_body(
-                "name",
-                json!(name),
-                1,
-            )));
-        }
+    if let Some(Value::String(name)) = input.get("name")
+        && name.is_empty()
+    {
+        return Err(ApiError::PydanticValidation(python_string_too_short_body(
+            "name",
+            json!(name),
+            1,
+        )));
     }
     if let Some(points) = input.get("points") {
         if points.is_null() && !require_points {
             return Ok(());
         }
-        if let Some(points) = points.as_array() {
-            if points.len() < 3 {
-                return Err(ApiError::PydanticValidation(python_list_too_short_body(
-                    "points",
-                    Value::Array(points.clone()),
-                    3,
-                    points.len(),
-                )));
-            }
+        if let Some(points) = points.as_array()
+            && points.len() < 3
+        {
+            return Err(ApiError::PydanticValidation(python_list_too_short_body(
+                "points",
+                Value::Array(points.clone()),
+                3,
+                points.len(),
+            )));
         }
     }
     Ok(())
@@ -15262,10 +15255,10 @@ async fn list_checklists(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    if accepts_html(&headers) {
-        if let Some(response) = ui_index_response(&state)? {
-            return Ok(response);
-        }
+    if accepts_html(&headers)
+        && let Some(response) = ui_index_response(&state)?
+    {
+        return Ok(response);
     }
     if state.sqlite_path.is_none() {
         return Ok(Json(json!({ "checklists": [] })).into_response());
@@ -18842,10 +18835,10 @@ fn parse_python_optional_int(value: &Value) -> Result<i64, ApiError> {
     if let Some(number) = value.as_i64() {
         return Ok(number);
     }
-    if let Some(text) = value.as_str() {
-        if let Ok(number) = text.parse::<i64>() {
-            return Ok(number);
-        }
+    if let Some(text) = value.as_str()
+        && let Ok(number) = text.parse::<i64>()
+    {
+        return Ok(number);
     }
     Err(ApiError::PydanticValidation(python_int_parsing_body(
         "RejectTests",
