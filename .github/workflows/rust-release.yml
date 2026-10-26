@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: 392fc1b928af2c30ef4290f78f173d37aa9ef15e
+  LXMF_REF: a690ab0b501e03719364aac3d6a18bb715ccd531
   RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
@@ -168,7 +168,7 @@ jobs:
             -v "$PWD:/work/rch:ro" -v "$PWD/dist:/output" -w /work/rch \
             rch-debian-builder scripts/build-debian-package.sh \
             "/output/$PACKAGE_NAME" "$DEBIAN_VERSION" /output
-          scripts/test-debian-package.sh "dist/rch-server_${DEBIAN_VERSION}_amd64.deb"
+          scripts/test-debian-package.sh "dist/rch-server_${DEBIAN_VERSION//\~/.}_amd64.deb"
 
       - name: Upload Debian package artifact
         if: github.event_name != 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''

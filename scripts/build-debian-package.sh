@@ -63,7 +63,8 @@ Description: Reticulum Community Hub Rust server and paired daemon
  Includes the shared operator UI and standalone TAK service.
  Configure the hub and Reticulum interfaces before manually starting services.
 EOF
-archive="rch-server_${version}_amd64.deb"
+# GitHub normalizes tildes in asset names; hash the public filename.
+archive="rch-server_${version//\~/.}_amd64.deb"
 dpkg-deb --root-owner-group --build "$package" "$output/$archive"
 (cd "$output" && sha256sum "$archive" > "$archive.sha256")
 printf '%s\n' "$output/$archive" "$output/$archive.sha256"

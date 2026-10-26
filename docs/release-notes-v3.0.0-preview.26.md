@@ -15,7 +15,7 @@ or delayed delivery is resolved.
 
 The existing release workflow builds
 `rch-rust-full-linux-amd64-v3.0.0-preview.26.tar.gz` and
-`rch-server_3.0.0~preview.26-1_amd64.deb`, each with a `.sha256` file. Both
+`rch-server_3.0.0.preview.26-1_amd64.deb`, each with a `.sha256` file. Both
 contain `r3akt-rch-server`, `r3akt-tak-service`, the matching ZeroMQ-capable
 `reticulumd`, the shared UI, service helpers, configuration templates,
 documentation and `release-manifest.json`. The Debian package adds managed
@@ -74,7 +74,7 @@ into the same directory:
 
 ```bash
 set -e
-asset='rch-server_3.0.0~preview.26-1_amd64.deb'
+asset='rch-server_3.0.0.preview.26-1_amd64.deb'
 release='https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/download/v3.0.0-preview.26'
 curl -fLO "$release/$asset"
 curl -fLO "$release/$asset.sha256"
