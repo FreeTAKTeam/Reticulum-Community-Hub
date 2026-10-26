@@ -13,7 +13,29 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
-## Preview.26 Linux AMD64 testing candidate
+## Preview.27 paired testing candidate
+
+Preview.27 pairs the RCH server and bundled daemon with LXMF-rs source
+`a690ab0b501e03719364aac3d6a18bb715ccd531`
+(`reticulumd-test-0.15.0-rch663-678.3`, SDK 0.15.0, contract 2/v2.6).
+It includes the merged dirty-persistence timer, truthful ZeroMQ readiness,
+broker deadline/replay recovery, dedicated WAL maintenance, and native packet
+receipt-binding corrections. Both source lockfiles select Tokio 1.53.3.
+
+The existing Linux AMD64 server workflow builds on Debian 12 with Rust 1.88
+and publishes the full archive plus
+`rch-server_3.0.0.preview.27-1_amd64.deb` and checksums. The Debian metadata
+version is `3.0.0~preview.27-1`; public filenames are normalized before hashing.
+Configuration, state, identities, and explicit service startup follow the
+existing [Debian package guide](../packaging/README.md#debian-amd64-installation).
+
+See [the preview.27 notes](release-notes-v3.0.0-preview.27.md). Record final
+source CI, the committed server gate, source and binary identities, checksum
+verification, and installed paired-daemon qualification against the actual
+release artifacts. DigitalOcean deployment, real-peer delivery, and sustained
+resource acceptance remain separate from these bounded testing gates.
+
+## Preview.26 Linux AMD64 testing candidate (historical)
 
 Preview.26 targets the complete Linux AMD64 server archive and Debian installer
 for DigitalOcean evaluation, using the existing release workflow's
