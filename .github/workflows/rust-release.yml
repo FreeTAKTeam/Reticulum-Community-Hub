@@ -20,6 +20,7 @@ permissions:
 
 env:
   LXMF_REF: 392fc1b928af2c30ef4290f78f173d37aa9ef15e
+  RUSTUP_TOOLCHAIN: "1.88"
 
 jobs:
   server-package:
@@ -55,7 +56,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -89,8 +90,17 @@ jobs:
           cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
 
       - name: Build matching ZMQ-capable reticulumd
+        shell: pwsh
         working-directory: LXMF-rs
-        run: cargo build --release -p reticulumd --features zmq-pipeline-rpc
+        run: |
+          $baseline = Get-Content ../rch/config/lxmf-runtime-baseline.json -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($baseline.daemon_tokio_version)) {
+            throw "The paired daemon Tokio security version is required."
+          }
+          cargo update -p tokio --precise $baseline.daemon_tokio_version
+          if ($LASTEXITCODE -ne 0) { throw "Failed to apply the paired daemon Tokio security update." }
+          cargo build --release -p reticulumd --features zmq-pipeline-rpc --locked
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build the paired daemon." }
 
       - name: Record LXMF release commit
         id: lxmf
@@ -184,7 +194,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

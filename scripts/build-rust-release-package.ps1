@@ -131,6 +131,7 @@ $manifest = [ordered]@{
         release_tag = $lxmfBaseline.release_tag
         commit = $LxmfCommit
         sdk_version = $lxmfBaseline.sdk_version
+        daemon_tokio_version = $lxmfBaseline.daemon_tokio_version
         daemon_sha256 = $reticulumdHash.Hash
         daemon_checksum_verified = $true
         daemon_features = $lxmfBaseline.daemon_features

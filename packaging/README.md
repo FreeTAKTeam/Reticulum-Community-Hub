@@ -52,6 +52,10 @@ The Rust library dependencies resolve the matching immutable revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
 
+The bundled daemon build applies the same Tokio 1.53.3 security update as RCH;
+`release-manifest.json` records `lxmf.daemon_tokio_version` alongside the exact
+LXMF source commit and daemon checksum.
+
 The upstream standalone Linux AMD64 daemon archive uses static musl. RCH's
 existing release workflow rebuilds the pinned source for the host target;
 its daemon is not the same published binary. Verify the RCH archive checksum,

@@ -29,8 +29,12 @@ position and classification together, and ignores older source observations.
 Historical duplicate TAK markers are retained. The desktop launch correction
 is in source; this Linux server candidate does not publish a new desktop build.
 
-Both Rust lockfiles select Tokio 1.53.3 for RUSTSEC-2026-0386. The workspace
-dependency audit continues to deny warnings without an advisory exception.
+Both Rust lockfiles select Tokio 1.53.3 for RUSTSEC-2026-0386. The paired
+upstream daemon lockfile has Tokio 1.53.2, so the package workflow also applies
+Tokio 1.53.3 before its locked daemon build. This registry dependency override
+is recorded as `lxmf.daemon_tokio_version` in the release manifest; the LXMF
+source commit remains unchanged. The workspace dependency audit continues to
+deny warnings without an advisory exception.
 
 ## Linux runtime requirements
 

@@ -24,6 +24,10 @@ with `reticulumd-test-0.15.0-rch663-678.1` at immutable source
 state/configuration preservation, runtime requirements and acceptance limits.
 Desktop and other-platform artifacts are outside this candidate's scope.
 
+The bundled daemon build applies the same Tokio 1.53.3 security update as RCH;
+`release-manifest.json` records `lxmf.daemon_tokio_version` alongside the exact
+LXMF source commit and daemon checksum.
+
 Local `-ServerOnlyAlpha` qualification passed on 2026-10-26: 716 workspace
 tests with two existing specialized ignores, strict Clippy and Rustdoc, link
 checks, an optimized server build and authenticated HTTP smoke. The workspace

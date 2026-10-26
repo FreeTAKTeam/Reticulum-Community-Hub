@@ -73,6 +73,10 @@ Install the server and daemon from the same package or pinned revision. The
 upstream standalone daemon is static musl; RCH packages rebuild that source,
 so verify the published RCH binaries' glibc requirements before installation.
 
+The bundled daemon build applies the same Tokio 1.53.3 security update as RCH;
+`release-manifest.json` records `lxmf.daemon_tokio_version` alongside the exact
+LXMF source commit and daemon checksum.
+
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 
 The implementation, migration, and validation notes that previously occupied this README are now referenced from [the Rust migration status document](docs/rust-migration-status.md).
