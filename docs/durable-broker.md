@@ -31,7 +31,7 @@ and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
 Paired LXMF-rs source: `a690ab0b501e03719364aac3d6a18bb715ccd531`
-(`reticulumd-test-0.15.0-rch663-678.3`, SDK 0.15.0). Cargo dependencies, workflow
+(`reticulumd-test-0.15.0-rch663-678.4`, SDK 0.15.0). Cargo dependencies, workflow
 checkouts and managed daemon builds use this same immutable revision.
 Building the paired source requires Rust 1.88 or newer.
 
