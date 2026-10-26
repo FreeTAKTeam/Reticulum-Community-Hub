@@ -57,16 +57,21 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The next full-platform testing preview is
-[v3.0.0-preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25),
-a full-platform testing release paired with LXMF-rs 0.14.0 and the
-`reticulumd-test-0.14.0-issue663.2` daemon tag at immutable revision
-`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`. Release notes for every
+The next testing candidate is
+[v3.0.0-preview.26](docs/release-notes-v3.0.0-preview.26.md), a Linux AMD64
+server prerelease for DigitalOcean evaluation. It pairs LXMF-rs SDK 0.15.0
+with [`reticulumd-test-0.15.0-rch663-678.1`](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.15.0-rch663-678.1)
+at immutable revision `392fc1b928af2c30ef4290f78f173d37aa9ef15e`.
+The existing release workflow selects the complete Linux AMD64 server bundle;
+other server platforms and desktop packages are outside this candidate's scope.
+[Preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25)
+remains the earlier full-platform package record. Release notes for every
 preview are attached to its
 [GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
 older notes are kept under [`docs/`](docs/).
-Upgrading the RCH SDK alone does not fix an old daemon's response writer; install
-`reticulumd` from the same package or pinned revision as the server.
+Install the server and daemon from the same package or pinned revision. The
+upstream standalone daemon is static musl; RCH packages rebuild that source,
+so verify the published RCH binaries' glibc requirements before installation.
 
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 
@@ -119,8 +124,8 @@ persisted inbox and outbound intents replace legacy event polling and retry
 ownership. See [durable broker cutover](docs/durable-broker.md) before upgrading
 an existing deployment.
 
-For an already running daemon, use its command endpoint, a response endpoint
-owned by this RCH instance, and its local delivery destination:
+For an already running daemon, use its command endpoint and a response endpoint
+owned by this RCH instance:
 
 ```bash
 cargo run -p r3akt-rch-server -- \
@@ -128,11 +133,13 @@ cargo run -p r3akt-rch-server -- \
   --config-path ./config.ini --api-key change-this-preview-key \
   --lxmf-zmq-command tcp://127.0.0.1:9100 \
   --lxmf-zmq-response tcp://127.0.0.1:9101 \
-  --reticulumd-source '<local-destination>' \
   --ui-dist-path ./ui/dist
 ```
 
-To let RCH manage the matching daemon, replace `--reticulumd-source` with
+RCH registers and derives its service destination. `--reticulumd-source` is
+optional and only asserts that registered RCH destination.
+
+To let RCH manage the matching daemon, add
 `--reticulumd-exe ../LXMF-rs/target/release/reticulumd`, and provide
 `--reticulumd-db-path ./reticulum.db` and
 `--reticulum-config-path "$HOME/.reticulum/config"`. Build that daemon with
