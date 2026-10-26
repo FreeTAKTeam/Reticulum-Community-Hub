@@ -22,7 +22,7 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-linux-amd64-v3.0.0-preview.27.tar.gz`; the same version, Git ref,
+`rch-rust-full-linux-amd64-v3.0.0-preview.29.tar.gz`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs label artifacts with the `release_version` input, or with
 the branch name when that input is blank.
@@ -33,13 +33,13 @@ release body. This builds the full Linux AMD64 archive, Debian installer and
 their checksums, with the pinned daemon, UI, and TAK service; desktop and other
 platform jobs are skipped. Published releases own asset builds; pushing a tag
 alone no longer starts a duplicate package build. Normal releases retain the
-full matrix. Versioned releases such as `v3.0.0-preview.27` produce
-`rch-server_3.0.0.preview.27-1_amd64.deb`; a manual branch label without a
+full matrix. Versioned releases such as `v3.0.0-preview.29` produce
+`rch-server_3.0.0.preview.29-1_amd64.deb`; a manual branch label without a
 release version produces only the archive.
 
 The release workflow owns all five server packages and both desktop packages.
 The current testing candidate is
-[`v3.0.0-preview.27`](../docs/release-notes-v3.0.0-preview.27.md), scoped to the
+[`v3.0.0-preview.29`](../docs/release-notes-v3.0.0-preview.29.md), scoped to the
 complete Linux AMD64 server archive and Debian installer for DigitalOcean
 evaluation. Its release body must include the Linux-only marker above. This candidate does not publish
 desktop or other-platform packages. Preview.25 remains the earlier full-matrix
@@ -49,7 +49,7 @@ Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
 LXMF 0.15.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`a690ab0b501e03719364aac3d6a18bb715ccd531`
+`6782e899ff3feebf221397517dca8525a5c70661`
 (`reticulumd-test-0.15.0-rch663-678.3`, SDK `0.15.0`). This source also includes the merged timer-driven persistence, broker deadline
 recovery, dedicated WAL maintenance, and native packet receipt-binding fixes.
 The Rust library dependencies resolve the matching immutable revision without
@@ -84,12 +84,12 @@ locked workspace tests, release builds for the server and TAK service, and
 
 ## Debian AMD64 installation
 
-Download `rch-server_3.0.0.preview.27-1_amd64.deb` and its `.sha256` file from
+Download `rch-server_3.0.0.preview.29-1_amd64.deb` and its `.sha256` file from
 the same release into one directory. Verify before installing:
 
 ```bash
-sha256sum -c rch-server_3.0.0.preview.27-1_amd64.deb.sha256
-sudo apt install ./rch-server_3.0.0.preview.27-1_amd64.deb
+sha256sum -c rch-server_3.0.0.preview.29-1_amd64.deb.sha256
+sudo apt install ./rch-server_3.0.0.preview.29-1_amd64.deb
 ```
 
 The package installs binaries, UI and the release manifest under `/opt/rch`.

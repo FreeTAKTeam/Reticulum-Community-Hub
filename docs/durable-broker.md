@@ -30,7 +30,7 @@ deleting database files. The before/after query-cost evidence
 and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
-Paired LXMF-rs source: `a690ab0b501e03719364aac3d6a18bb715ccd531`
+Paired LXMF-rs source: `6782e899ff3feebf221397517dca8525a5c70661`
 (`reticulumd-test-0.15.0-rch663-678.3`, SDK 0.15.0). Cargo dependencies, workflow
 checkouts and managed daemon builds use this same immutable revision.
 Building the paired source requires Rust 1.88 or newer.
@@ -61,7 +61,7 @@ point old binaries at migrated databases; rollback uses pre-cutover backups
 and reconciliation of work admitted after that backup.
 
 Full daemon contract, limits and recovery details are maintained in LXMF-rs:
-[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/a690ab0b501e03719364aac3d6a18bb715ccd531/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
+[OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/6782e899ff3feebf221397517dca8525a5c70661/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
 Local socket, SQLite, crash and paired-worker tests do not establish hardware
 power-loss behavior or a production multi-hour memory/swap plateau.
 
