@@ -171,6 +171,9 @@ fn oversized_attachment_is_rejected_before_sql_effects_and_next_input_can_apply(
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod fanout;
+
 fn attachment(data: Vec<u8>) -> TopicAttachment {
     TopicAttachment {
         name: "test.bin".into(),

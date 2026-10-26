@@ -187,10 +187,7 @@ impl ZmqDataPlaneMetrics {
         self.enqueued_total.fetch_sub(1, Ordering::Relaxed);
     }
 
-    #[allow(
-        deprecated,
-        reason = "`try_update` replaces `fetch_update` only from Rust 1.95; the MSRV is 1.88"
-    )]
+    #[allow(deprecated, reason = "`try_update` needs Rust 1.95; the MSRV is 1.88")]
     fn record_dequeued(&self, queued_at: Instant, is_send_lane: bool) {
         match self.queued_at.lock() {
             Ok(mut queue) => {

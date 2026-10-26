@@ -179,7 +179,6 @@ pub(super) fn reply(
     published.push(super::envelope::outgoing(
         unit,
         event,
-        published.len(),
         envelope.source.as_str(),
         "",
         json!({"_lxmf_fields_msgpack_b64":BASE64_STANDARD.encode(packed)}),
@@ -212,7 +211,6 @@ fn failure_reply(
     published.push(super::envelope::outgoing(
         unit,
         event,
-        published.len(),
         envelope.source.as_str(),
         content,
         json!({"13":{"event_type":"rch.telemetry.response","status":status,"topic_id":topic}}),

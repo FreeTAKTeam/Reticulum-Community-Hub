@@ -215,8 +215,13 @@ pub(super) fn stage_business_message(
         .saturating_add(title.len())
         .saturating_add(content.len())
         .saturating_add(4096);
-    if destinations.len() > 256 || bytes.saturating_mul(destinations.len()) > 32 * 1024 * 1024 {
-        return Err(ApiError::ServiceUnavailable(
+    if destinations
+        .len()
+        .saturating_add(unit.staged_outbound_intent_count())
+        > 256
+        || bytes.saturating_mul(destinations.len()) > 32 * 1024 * 1024
+    {
+        return Err(ApiError::BadRequest(
             "durable northbound fanout count/byte limit exceeded before admission".into(),
         ));
     }
@@ -244,7 +249,13 @@ pub(super) fn stage_business_message(
             message: CoreMessageRecord::from(message.clone()),
             request: json!({"identity":"","operation_id":operation,"destination":destination,"title":title,"content":content,"fields":fields,"options":{"method":"direct","try_propagation_on_fail":true}}),
         };
-        unit.stage_outbound_intent(&intent).map_err(storage)?;
+        unit.stage_outbound_intent(&intent)
+            .map_err(|error| match error {
+                r3akt_rch_core::RchCoreError::InvalidPayload(reason) => {
+                    ApiError::BadRequest(reason)
+                }
+                error => storage(error),
+            })?;
     }
     Ok(message)
 }

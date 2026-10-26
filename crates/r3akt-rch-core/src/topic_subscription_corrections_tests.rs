@@ -12,6 +12,7 @@ fn snapshot_rejects_duplicate_normalized_subscriptions_and_preserves_compatibili
 
     let mut duplicate = core.snapshot();
     duplicate.subscribers.push(SubscriberRecord {
+        subscriber_id: None,
         node_id: " FACEFEED ".to_string(),
         topic_id: " mission-1 ".to_string(),
         first_seen_ts_ms: 0,
@@ -61,6 +62,7 @@ fn sqlite_read_snapshot_keeps_topicless_compatibility_subscribers_loadable() {
         .expect("topic");
     store
         .upsert_subscriber(&SubscriberRecord {
+            subscriber_id: None,
             node_id: "DEST-COMPAT".to_string(),
             topic_id: String::new(),
             first_seen_ts_ms: 1,
@@ -166,6 +168,7 @@ fn sqlite_migration_preserves_existing_subscriber_payloads() {
         last_activity_ts_ms: 2,
     };
     let subscriber = SubscriberRecord {
+        subscriber_id: None,
         node_id: "DEST-LEGACY".to_string(),
         topic_id: "mission-legacy".to_string(),
         first_seen_ts_ms: 3,

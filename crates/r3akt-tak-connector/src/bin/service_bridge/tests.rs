@@ -95,19 +95,31 @@ fn inbound_post_failure_retains_the_event_and_retries_before_receiving_more() {
     .expect("client");
     let server = thread::spawn(move || {
         let mut bodies = Vec::new();
-        for status in ["503 Unavailable", "201 Created"] {
+        for (status, body) in [
+            ("200 OK", "[]"),
+            ("503 Unavailable", "{}"),
+            ("200 OK", "[]"),
+            (
+                "201 Created",
+                r#"{"object_destination_hash":"fixture-marker"}"#,
+            ),
+        ] {
             let (mut stream, _) = listener.accept().expect("accept");
             let request = crate::tests::read_http_request(&mut stream);
-            assert!(request.starts_with("POST /api/markers"));
-            assert!(
-                request
-                    .to_ascii_lowercase()
-                    .contains("idempotency-key: rch-tak-cot:")
-            );
-            bodies.push(request.split_once("\r\n\r\n").expect("body").1.to_string());
+            if request.starts_with("POST /api/markers") {
+                assert!(
+                    request
+                        .to_ascii_lowercase()
+                        .contains("idempotency-key: rch-tak-cot:")
+                );
+                bodies.push(request.split_once("\r\n\r\n").expect("body").1.to_string());
+            } else {
+                assert!(request.starts_with("GET /api/markers"));
+            }
             write!(
                 stream,
-                "HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
             )
             .expect("response");
         }
@@ -227,10 +239,20 @@ fn lost_committed_http_response_retries_the_same_idempotent_operation() {
     .expect("client");
     let server = thread::spawn(move || {
         let mut requests = Vec::new();
-        for attempt in 0..2 {
+        for attempt in 0..4 {
             let (mut stream, _) = listener.accept().expect("accept");
-            requests.push(crate::tests::read_http_request(&mut stream));
-            if attempt == 0 {
+            let request = crate::tests::read_http_request(&mut stream);
+            if attempt % 2 == 0 {
+                assert!(request.starts_with("GET /api/markers"));
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]",
+                    )
+                    .expect("marker list");
+                continue;
+            }
+            requests.push(request);
+            if attempt == 1 {
                 // Simulate a durable operation whose 201 response is lost in
                 // transit: the body is truncated after the success headers.
                 stream
@@ -239,11 +261,13 @@ fn lost_committed_http_response_retries_the_same_idempotent_operation() {
                     )
                     .expect("lost response headers");
             } else {
-                stream
-                    .write_all(
-                        b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                    )
-                    .expect("replayed response");
+                let body = r#"{"object_destination_hash":"fixture-marker"}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("replayed response");
             }
         }
         let key = |request: &str| {
@@ -262,7 +286,7 @@ fn lost_committed_http_response_retries_the_same_idempotent_operation() {
     let mut state = BridgeState::default();
     state.pending_cot.push_back((
         "fixture-peer:time:stale".to_string(),
-        json!({"lat": 1, "lon": 2}),
+        json!({"name": "fixture-peer", "lat": 1, "lon": 2}),
     ));
     assert!(flush_pending_cot(&client, &mut state).is_err());
     assert_eq!(state.pending_cot.len(), 1);
@@ -272,3 +296,5 @@ fn lost_committed_http_response_retries_the_same_idempotent_operation() {
     assert_eq!(state.cot.keys.len(), 1);
     server.join().expect("server");
 }
+
+mod markers;

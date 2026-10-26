@@ -93,18 +93,21 @@ const displayNameFromTelemetry = (telemetry?: Record<string, unknown>) => {
 };
 
 const normalizeTelemetryEntry = (entry: TelemetryEntry | TelemetryApiEntry): TelemetryEntry => {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new TypeError("Telemetry entry must be an object");
+  }
   const raw = entry as TelemetryApiEntry;
-  if (raw && (raw.telemetry || raw.peer_destination)) {
+  const identity = (raw.peer_destination ?? raw.identity_id ?? raw.identity)?.trim().toLowerCase();
+  if (raw.telemetry || raw.peer_destination) {
     const telemetry = raw.telemetry ?? raw.data ?? {};
-    const identity = raw.peer_destination ?? raw.identity_id ?? raw.identity;
     const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : undefined;
-    const created_at = raw.created_at ?? (timestamp ? new Date(timestamp * 1000).toISOString() : undefined);
+    const created_at = raw.created_at ?? (timestamp !== undefined ? new Date(timestamp * 1000).toISOString() : undefined);
     const label = resolveIdentityLabel(
       raw.display_name ?? raw.identity_label ?? displayNameFromTelemetry(telemetry),
       identity
     );
     const location = raw.location ?? extractLocation(telemetry);
-    const id = raw.id ?? (identity && timestamp ? `${identity}:${timestamp}` : identity ?? undefined);
+    const id = raw.id ?? (identity && timestamp !== undefined ? `${identity}:${timestamp}` : identity ?? undefined);
 
     return {
       id,
@@ -118,11 +121,24 @@ const normalizeTelemetryEntry = (entry: TelemetryEntry | TelemetryApiEntry): Tel
       data: telemetry
     };
   }
-  return entry as TelemetryEntry;
+  return { ...entry, identity_id: identity, identity };
 };
 
-const normalizeTelemetryEntries = (entries: Array<TelemetryEntry | TelemetryApiEntry>) =>
-  entries.map(normalizeTelemetryEntry);
+const normalizeTelemetryEntries = (entries: Array<TelemetryEntry | TelemetryApiEntry>) => {
+  const latest = new Map<string | TelemetryEntry, TelemetryEntry>();
+  for (const raw of entries) {
+    const entry = normalizeTelemetryEntry(raw);
+    const key = entry.identity_id || entry.identity || entry.id || entry;
+    const previous = latest.get(key);
+    const timestamp = Date.parse(entry.created_at ?? "");
+    const previousTimestamp = Date.parse(previous?.created_at ?? "");
+    if (!previous || timestamp > previousTimestamp ||
+      (Number.isFinite(timestamp) && !Number.isFinite(previousTimestamp))) {
+      latest.set(key, entry);
+    }
+  }
+  return [...latest.values()];
+};
 
 export const useTelemetryStore = defineStore("telemetry", () => {
   const entries = ref<TelemetryEntry[]>([]);
@@ -154,15 +170,7 @@ export const useTelemetryStore = defineStore("telemetry", () => {
   };
 
   const applyUpdate = (entry: TelemetryEntry | TelemetryApiEntry) => {
-    const normalized = normalizeTelemetryEntry(entry);
-    const key = normalized.id ?? normalized.identity_id ?? normalized.identity;
-    entries.value = [
-      normalized,
-      ...entries.value.filter((item) => {
-        const itemKey = item.id ?? item.identity_id ?? item.identity;
-        return key ? itemKey !== key : item.id !== normalized.id;
-      })
-    ].slice(0, 200);
+    entries.value = normalizeTelemetryEntries([entry, ...entries.value]).slice(0, 200);
   };
 
   return {

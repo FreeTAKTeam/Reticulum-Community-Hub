@@ -229,6 +229,7 @@ async fn reticulumd_inbound_direct_topic_keeps_all_subscribers_independent_of_an
     let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
     snapshot.subscribers = vec![
         r3akt_rch_core::SubscriberRecord {
+            subscriber_id: None,
             node_id: stale_subscriber.to_string(),
             topic_id: "direct".to_string(),
             reject_tests: None,
@@ -237,6 +238,7 @@ async fn reticulumd_inbound_direct_topic_keeps_all_subscribers_independent_of_an
             last_seen_ts_ms: now - r3akt_rch_core::RECENT_ANNOUNCE_WINDOW_MS - 10_000,
         },
         r3akt_rch_core::SubscriberRecord {
+            subscriber_id: None,
             node_id: fresh_subscriber.to_string(),
             topic_id: "direct".to_string(),
             reject_tests: None,
@@ -326,6 +328,7 @@ async fn reticulumd_inbound_direct_topic_preserves_subscriber_despite_stale_anno
     let now = crate::unix_now_ms();
     let mut snapshot = r3akt_rch_core::RchCore::new().snapshot();
     snapshot.subscribers = vec![r3akt_rch_core::SubscriberRecord {
+        subscriber_id: None,
         node_id: "peer-stale".to_string(),
         topic_id: "direct".to_string(),
         reject_tests: None,

@@ -11,6 +11,9 @@
 
 mod cli_runtime;
 
+#[cfg(all(test, unix))]
+mod cli_stop_tests;
+
 use std::future::Future;
 use std::io::{IsTerminal, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -967,13 +970,9 @@ fn stop_command(args: &ControlArgs) -> i32 {
         println!("RCH stop requested.");
         return 0;
     }
-    if let Some(state) = state
-        && stop_with_signal(state.pid)
-    {
-        println!("RCH stop signal sent.");
-        return 0;
-    }
-    println!("RCH is not running.");
+    eprintln!(
+        "RCH did not accept the stop request on port {port}. Check that it is running and the API key is valid."
+    );
     1
 }
 
@@ -995,18 +994,6 @@ fn status_command(args: &ControlArgs) -> i32 {
         .map_or_else(|| "null".to_string(), serde_json::Value::to_string);
     println!("RCH status: {status} (pid={pid}, port={port})");
     0
-}
-
-fn stop_with_signal(pid: u32) -> bool {
-    #[cfg(windows)]
-    let status = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .status();
-    #[cfg(not(windows))]
-    let status = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status();
-    status.is_ok_and(|status| status.success())
 }
 
 struct ControlClient {

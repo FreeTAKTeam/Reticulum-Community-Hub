@@ -104,6 +104,7 @@ fn legacy_scalar_topic_scope_filters_other_peers_and_denies_unsubscribed_sender(
         if subscribed {
             store
                 .upsert_subscriber(&r3akt_rch_core::SubscriberRecord {
+                    subscriber_id: None,
                     node_id: PEER.into(),
                     topic_id: "ops".into(),
                     first_seen_ts_ms: 0,
