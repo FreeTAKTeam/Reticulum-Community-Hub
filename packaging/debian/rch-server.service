@@ -1,0 +1,21 @@
+[Unit]
+Description=Reticulum Community Hub Rust Server
+After=network-online.target reticulumd.service
+Wants=network-online.target
+Requires=reticulumd.service
+
+[Service]
+Type=simple
+User=rch
+Group=rch
+WorkingDirectory=/var/lib/rch
+EnvironmentFile=/etc/rch/rch-server.env
+ExecStart=/opt/rch/bin/r3akt-rch-server --bind ${RCH_BIND} --db-path ${RCH_DB_PATH} --config-path ${RCH_CONFIG_PATH} --reticulum-config-path /etc/rch/reticulumd.toml --lxmf-zmq-command ${RCH_LXMF_ZMQ_COMMAND} --lxmf-zmq-response ${RCH_LXMF_ZMQ_RESPONSE} --ui-dist-path ${RCH_UI_DIST_PATH}
+Restart=on-failure
+RestartSec=5
+StateDirectory=rch
+LogsDirectory=rch
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

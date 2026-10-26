@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+if [ "$1" = configure ]; then
+    if ! getent group rch >/dev/null; then addgroup --system rch; fi
+    if ! getent passwd rch >/dev/null; then
+        adduser --system --ingroup rch --home /var/lib/rch --no-create-home --shell /usr/sbin/nologin rch
+    fi
+    for directory in /var/lib/rch /var/log/rch; do
+        if [ ! -e "$directory" ]; then install -d -m 750 -o rch -g rch "$directory"; fi
+    done
+    chown root:rch /etc/rch /etc/rch/rch-server.env
+    chown rch:rch /etc/rch/config.ini /etc/rch/reticulumd.toml
+    chmod 1770 /etc/rch
+    chmod 640 /etc/rch/rch-server.env /etc/rch/config.ini /etc/rch/reticulumd.toml
+    if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
+    echo "RCH installed without starting services. Configure /etc/rch, then explicitly start reticulumd.service and rch-server.service."
+fi

@@ -57,12 +57,13 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The next testing candidate is
+The current testing candidate is
 [v3.0.0-preview.26](docs/release-notes-v3.0.0-preview.26.md), a Linux AMD64
 server prerelease for DigitalOcean evaluation. It pairs LXMF-rs SDK 0.15.0
 with [`reticulumd-test-0.15.0-rch663-678.1`](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.15.0-rch663-678.1)
 at immutable revision `392fc1b928af2c30ef4290f78f173d37aa9ef15e`.
-The existing release workflow selects the complete Linux AMD64 server bundle;
+The existing release workflow builds the complete Linux AMD64 server archive
+and a Debian installer using Debian 12 (Bookworm) and Rust 1.88;
 other server platforms and desktop packages are outside this candidate's scope.
 [Preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25)
 remains the earlier full-platform package record. Release notes for every
@@ -70,12 +71,15 @@ preview are attached to its
 [GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
 older notes are kept under [`docs/`](docs/).
 Install the server and daemon from the same package or pinned revision. The
-upstream standalone daemon is static musl; RCH packages rebuild that source,
-so verify the published RCH binaries' glibc requirements before installation.
+AMD64 Debian package targets Debian 12 or later and compatible Ubuntu releases
+whose libraries satisfy its declared dependencies. It includes the UI and
+paired daemon, and requires no Rust, Node.js or Python toolchain to install.
 
-The bundled daemon build applies the same Tokio 1.53.3 security update as RCH;
-`release-manifest.json` records `lxmf.daemon_tokio_version` alongside the exact
-LXMF source commit and daemon checksum.
+The server package workflow selects Tokio 1.53.3 before its locked daemon
+build. `release-manifest.json` records the configured requirement as
+`lxmf.required_daemon_tokio_version`, alongside the LXMF source commit and
+daemon checksum. The workflow build log verifies dependency selection;
+package assembly does not infer a Tokio version from an arbitrary binary.
 
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 
@@ -85,7 +89,15 @@ The implementation, migration, and validation notes that previously occupied thi
 
 ### Install a packaged build
 
-The simplest route is to use a package from [GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases). Release assets may include server archives and desktop packages. Check the notes for the supported operating systems and the exact components included in each preview.
+The simplest route is to use a package from
+[GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases).
+On a supported Debian or Ubuntu AMD64 host, download the `.deb` and its
+`.sha256` file, verify the checksum, then install it with
+`sudo apt install ./rch-server_3.0.0~preview.26-1_amd64.deb`. Configure
+`/etc/rch` before explicitly enabling services; installation does not start
+them. See [the packaging instructions](packaging/README.md#debian-amd64-installation)
+for configuration, upgrade preservation and startup. Server archives and
+desktop packages have their own release notes and platform requirements.
 
 ### Build the Rust server from source
 

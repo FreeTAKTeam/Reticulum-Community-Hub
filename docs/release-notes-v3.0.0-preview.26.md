@@ -13,12 +13,14 @@ or delayed delivery is resolved.
 
 ## Scope and changes
 
-The existing release workflow builds only
-`rch-rust-full-linux-amd64-v3.0.0-preview.26.tar.gz` and its matching `.sha256`
-file. The archive contains `r3akt-rch-server`, `r3akt-tak-service`, the matching
-ZeroMQ-capable `reticulumd`, the shared UI, service helpers, configuration
-templates, documentation and `release-manifest.json`. Other server platforms
-and desktop bundles are outside this candidate's scope.
+The existing release workflow builds
+`rch-rust-full-linux-amd64-v3.0.0-preview.26.tar.gz` and
+`rch-server_3.0.0~preview.26-1_amd64.deb`, each with a `.sha256` file. Both
+contain `r3akt-rch-server`, `r3akt-tak-service`, the matching ZeroMQ-capable
+`reticulumd`, the shared UI, service helpers, configuration templates,
+documentation and `release-manifest.json`. The Debian package adds managed
+configuration, a system account and systemd units. Other server platforms and
+desktop bundles are outside this candidate's scope.
 
 RCH corrections preserve subscription IDs and multiple topic subscriptions
 across restart; select current map telemetry per peer; preserve multi-event
@@ -26,32 +28,72 @@ emergency log content; prevent oversized fanout from blocking the ordered
 inbox; and remove the unsafe stale saved-PID stop fallback. The TAK bridge
 keeps one managed marker per source UID, preserves operator names, updates
 position and classification together, and ignores older source observations.
-Historical duplicate TAK markers are retained. The desktop launch correction
+First-run setup selects the configured daemon format; TOML validation rejects
+incompatible INI before setup, apply or rollback changes files. Python setup
+retains its INI serialization. Historical duplicate TAK markers are retained. The desktop launch correction
 is in source; this Linux server candidate does not publish a new desktop build.
 
 Both Rust lockfiles select Tokio 1.53.3 for RUSTSEC-2026-0386. The paired
 upstream daemon lockfile has Tokio 1.53.2, so the package workflow also applies
-Tokio 1.53.3 before its locked daemon build. This registry dependency override
-is recorded as `lxmf.daemon_tokio_version` in the release manifest; the LXMF
-source commit remains unchanged. The workspace dependency audit continues to
-deny warnings without an advisory exception.
+Tokio 1.53.3 before its locked daemon build. The configured requirement is
+recorded as `lxmf.required_daemon_tokio_version` in the release manifest;
+the server workflow build log verifies dependency selection, while package
+assembly does not inspect a supplied binary's embedded Tokio version. The
+LXMF source commit remains unchanged. The workspace dependency audit continues
+to deny warnings without an advisory exception. No desktop dependency
+qualification is claimed by this Linux server candidate.
 
 ## Linux runtime requirements
 
-Use a 64-bit x86_64/AMD64 host. The upstream standalone daemon archive is static
-musl, but RCH's existing workflow rebuilds its daemon from the same source for
-the host target. Do not assume that RCH's server or daemon is static or
-byte-identical to the upstream binary. Preview.25 Linux binaries required glibc
-2.39; the actual preview.26 ELF dependencies must be verified from the published
-artifacts before deployment. Check `ldd --version`, inspect the extracted
-binaries with `file` and `ldd`, and stop if the host cannot satisfy their
-required libraries or glibc versions. Installing the package requires no Rust,
-Node.js or Python toolchain.
+Use a 64-bit x86_64/AMD64 host running Debian 12 or later, or a compatible
+Ubuntu release whose libraries satisfy the package's declared dependencies.
+The Linux AMD64 server workflow builds all three binaries in Debian 12
+(Bookworm) with Rust 1.88. `dpkg-shlibdeps` derives the installer's runtime
+library dependencies from those binaries; apt resolves them during install.
+Installing the package requires no Rust, Node.js or Python toolchain.
+
+The upstream standalone daemon archive is static musl; RCH rebuilds the same
+source and packages a different binary. Verify the actual published runtime
+dependencies before recording compatibility. For archive installation, inspect
+the extracted binaries with `file` and `ldd` and confirm that the host supplies
+their required libraries and glibc versions.
 
 ## Download and preserve an existing deployment
 
-Download both assets from the prerelease into the same directory and verify
-the checksum before extraction:
+Before upgrading an existing deployment, stop RCH and its daemon and back up
+the complete state, SQLite databases, identities, attachment directories and
+configuration consistently. Do not copy a live main SQLite database file
+alone. Preserve credentials, service accounts, paths, ownership, interface
+settings and service overrides. Keep the previous binaries/package. Do not
+erase retained history to obtain a lower memory result. Rollback requires the
+pre-upgrade backups and reconciliation of work admitted afterward; do not run
+old binaries against a migrated database.
+
+For Debian installation, download the package and checksum from the prerelease
+into the same directory:
+
+```bash
+set -e
+asset='rch-server_3.0.0~preview.26-1_amd64.deb'
+release='https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/download/v3.0.0-preview.26'
+curl -fLO "$release/$asset"
+curl -fLO "$release/$asset.sha256"
+sha256sum -c "$asset.sha256"
+sudo apt install "./$asset"
+```
+
+The package installs under `/opt/rch`, creates the `rch` system account and
+uses `/var/lib/rch` for state and `/var/log/rch` for logs. It does not enable
+or start services. Configure a unique `RTH_API_KEY` in
+`/etc/rch/rch-server.env`, review `/etc/rch/config.ini`, and configure the
+actual Reticulum interfaces in `/etc/rch/reticulumd.toml`. Defaults have no
+interfaces and disable discovery. Review dpkg upgrade prompts to retain or
+merge existing configuration. Package removal retains configuration, state,
+logs and the account; purge removes dpkg-managed configuration files while
+retaining state, logs and the account.
+
+To use the full archive instead, download it and its checksum, verify, and
+extract into a new directory:
 
 ```bash
 set -e
@@ -66,21 +108,33 @@ tar -xzf "$asset" -C "$install"
 cd "$install"
 ```
 
-Choose a new installation directory; keep the previous binaries. Before
-switching versions, stop RCH and its daemon and back up the complete state,
-SQLite databases, identities, attachment directories and configuration
-consistently. Do not copy a live main SQLite database file alone. Preserve the
-service account, database paths, RCH `config.ini`, Reticulum daemon TOML,
-identity paths, authentication and interface/ZeroMQ settings. Do not erase
-retained history to obtain a lower memory result. Rollback requires the
-pre-upgrade backups and reconciliation of work admitted afterward; do not run
-old binaries against a migrated database.
-
 ## Start and verify on the test host
 
-The following Bash example uses the packaged managed daemon. Set these paths
-to the existing deployment's actual locations; the two daemon ownership modes
-must not run simultaneously:
+After configuring the Debian installation, start it explicitly:
+
+```bash
+sudoedit /etc/rch/rch-server.env
+sudo -u rch -- vi /etc/rch/config.ini /etc/rch/reticulumd.toml
+sudo systemctl enable --now rch-server
+```
+
+The mutable configuration files belong to `rch`; edit them as that account
+(or use the authenticated setup flow). The root-owned environment file stays
+protected. First-run setup emits daemon TOML for this package; the legacy INI
+Reticulum editor is not a TOML editor. After changing daemon configuration,
+restart both services with `sudo systemctl restart reticulumd rch-server`.
+
+`rch-server.service` requires and starts `reticulumd.service`. Vendor units
+are in `/usr/lib/systemd/system`; use systemd overrides for operator changes.
+Hub and transport identities default to `/var/lib/rch/identity` and
+`/var/lib/rch/reticulum-identity`. Daemon RPC uses the private Unix socket
+`/run/rch/reticulumd.sock`. Inspect `journalctl -u rch-server -u reticulumd`
+when checking startup. Upgrades stop both services and require an explicit
+restart after configuration review.
+
+For archive installation, the following Bash example uses a managed daemon.
+Set these paths to the existing deployment's actual locations. Do not run
+this alongside the Debian services or another owner of the same daemon:
 
 ```bash
 RCH_STATE=/absolute/path/to/existing/rch-state
@@ -112,7 +166,7 @@ remote browser access requires HTTPS/WSS and exact `RCH_ALLOWED_ORIGINS`, as
 explained in [the operations guide](operations-and-troubleshooting.md).
 
 Check authenticated `/Status` and `/diagnostics/runtime` together. Verify the
-matching ZeroMQ backend, registered service identity, running managed daemon,
+matching ZeroMQ backend, registered service identity, running paired daemon,
 healthy durable-broker lanes, progress and error counters. For transport
 acceptance, trace a unique fresh message through custody and application to an
 actual recipient receipt. A command being accepted or HTTP 200 alone does not
@@ -134,8 +188,10 @@ against the actual release commit. The committed gate is
 checks and any configured live gates are separate evidence. Its default HTTP
 smoke runs without a daemon, so package qualification also needs a managed
 bundled-daemon smoke with temporary state and owned endpoints. Independently
-verify the public archive checksum, all embedded manifest identities and the
-packaged daemon checksum before recording package acceptance.
+verify both public package checksums, all embedded manifest identities and
+the packaged daemon checksum before recording package acceptance. Verify
+Debian installation, upgrade/removal preservation and paired-daemon startup
+from the actual package; the local source gate does not establish those results.
 
 These instructions do not assert future CI, artifact verification or an actual
 DigitalOcean deployment has passed. Multi-hour production memory/swap behavior,

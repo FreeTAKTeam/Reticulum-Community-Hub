@@ -15,8 +15,8 @@ The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier 
 
 ## Preview.26 Linux AMD64 testing candidate
 
-Preview.26 targets the complete Linux AMD64 server package for DigitalOcean
-evaluation, using the existing release workflow's
+Preview.26 targets the complete Linux AMD64 server archive and Debian installer
+for DigitalOcean evaluation, using the existing release workflow's
 `<!-- rch-release: linux-amd64-only -->` marker. It pairs LXMF-rs SDK 0.15.0
 with `reticulumd-test-0.15.0-rch663-678.1` at immutable source
 `392fc1b928af2c30ef4290f78f173d37aa9ef15e`. See
@@ -24,9 +24,20 @@ with `reticulumd-test-0.15.0-rch663-678.1` at immutable source
 state/configuration preservation, runtime requirements and acceptance limits.
 Desktop and other-platform artifacts are outside this candidate's scope.
 
-The bundled daemon build applies the same Tokio 1.53.3 security update as RCH;
-`release-manifest.json` records `lxmf.daemon_tokio_version` alongside the exact
-LXMF source commit and daemon checksum.
+The Linux AMD64 server workflow builds RCH, TAK and the daemon in Debian 12
+(Bookworm) with Rust 1.88. It publishes the existing archive and checksum plus
+`rch-server_3.0.0~preview.26-1_amd64.deb` and its checksum; `dpkg-shlibdeps`
+derives the installer's runtime library dependencies. The target is Debian 12
+or later and compatible Ubuntu AMD64 hosts satisfying those dependencies.
+Installation preserves operator state and does not enable or start services;
+see [the Debian installation instructions](../packaging/README.md#debian-amd64-installation).
+
+The server package workflow selects Tokio 1.53.3 before its locked daemon
+build. `release-manifest.json` records this configured requirement as
+`lxmf.required_daemon_tokio_version`, alongside the LXMF source commit and
+daemon checksum. Dependency selection is verified by the workflow build log,
+not inferred by package assembly from an arbitrary supplied binary. Desktop
+builds are outside this candidate's qualification.
 
 Local `-ServerOnlyAlpha` qualification passed on 2026-10-26: 716 workspace
 tests with two existing specialized ignores, strict Clippy and Rustdoc, link
@@ -35,9 +46,10 @@ audit passed for 291 locked dependencies; the standalone TAK service release
 build also passed. PR #281 passed all 13 hosted checks before merging.
 
 The daemon is rebuilt from that source by RCH's existing workflow; it is not
-the upstream standalone static-musl binary. Verify the public checksum,
-embedded RCH/LXMF identities and daemon hash, actual Linux runtime requirements,
-and a managed-daemon package smoke before recording package acceptance.
+the upstream standalone static-musl binary. Verify both public package
+checksums, embedded RCH/LXMF identities and daemon hash, actual Linux runtime
+requirements, Debian install/upgrade/remove preservation and a paired-daemon
+package smoke before recording package acceptance.
 The default `-ServerOnlyAlpha` smoke checks HTTP without a daemon; it does not
 establish durable-broker readiness, network delivery or DigitalOcean behavior.
 Record final-source CI, local gates, package checks and any deployment evidence
