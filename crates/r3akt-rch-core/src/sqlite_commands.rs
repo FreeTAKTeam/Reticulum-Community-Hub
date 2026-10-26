@@ -8,6 +8,7 @@ use super::{
     utc_now_ms,
 };
 use rusqlite::{OptionalExtension, TransactionBehavior};
+use std::cell::Cell;
 
 /// Owns the complete read, domain mutation and commit under one `SQLite` write reservation.
 /// Dropping an uncommitted command rolls back; no projection should be published before commit.
@@ -18,6 +19,7 @@ pub struct RchCommandTransaction<'conn> {
     checklist: bool,
     inbox: Option<(String, String, i64)>,
     rejection: Option<String>,
+    staged_outbound_intents: Cell<usize>,
     domain_snapshot: bool,
     rows_read: usize,
     payload_bytes_read: usize,
@@ -75,6 +77,7 @@ impl RchSqliteStore {
             checklist,
             inbox: None,
             rejection: None,
+            staged_outbound_intents: Cell::new(0),
             domain_snapshot: true,
             rows_read: 0,
             payload_bytes_read: 0,
@@ -290,6 +293,7 @@ impl RchSqliteStore {
             checklist,
             inbox: None,
             rejection: None,
+            staged_outbound_intents: Cell::new(0),
             domain_snapshot: true,
             rows_read: 0,
             payload_bytes_read: 0,

@@ -24,6 +24,7 @@ impl RchSqliteStore {
             checklist: false,
             inbox: None,
             rejection: None,
+            staged_outbound_intents: std::cell::Cell::new(0),
             domain_snapshot: false,
             rows_read: 0,
             payload_bytes_read: 0,
@@ -51,6 +52,7 @@ impl RchSqliteStore {
             checklist,
             inbox: None,
             rejection: None,
+            staged_outbound_intents: std::cell::Cell::new(0),
             domain_snapshot,
             rows_read: 0,
             payload_bytes_read: 0,
@@ -73,6 +75,35 @@ impl RchSqliteStore {
     }
 }
 impl RchCommandTransaction<'_> {
+    /// Roll back one failed envelope while preserving earlier envelopes in this inbox input.
+    pub fn apply_inbox_envelope<T, E>(
+        &mut self,
+        apply: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<Result<T, E>, RchCoreError> {
+        let before = self.before.clone();
+        let domain = self.core.snapshot();
+        let rejection = self.rejection.clone();
+        let outbound_intents = self.staged_outbound_intents.get();
+        self.transaction
+            .execute_batch("SAVEPOINT rch_inbox_envelope")?;
+        let result = apply(self);
+        if result.is_err() {
+            self.transaction
+                .execute_batch("ROLLBACK TO rch_inbox_envelope")?;
+            self.before = before;
+            self.restore_domain(domain)?;
+            self.rejection = rejection;
+            self.staged_outbound_intents.set(outbound_intents);
+        }
+        self.transaction
+            .execute_batch("RELEASE rch_inbox_envelope")?;
+        Ok(result)
+    }
+
+    pub fn staged_outbound_intent_count(&self) -> usize {
+        self.staged_outbound_intents.get()
+    }
+
     pub fn stage_client(
         &mut self,
         record: &super::super::ClientRecord,
@@ -139,6 +170,11 @@ impl RchCommandTransaction<'_> {
             }
             return Ok(());
         }
+        if self.inbox.is_some() && self.staged_outbound_intents.get() >= 256 {
+            return Err(RchCoreError::InvalidPayload(
+                "durable input exceeds 256 outbound intents".into(),
+            ));
+        }
         super::super::durable_inbox::admit_effect_bytes(&self.transaction, payload.len())?;
         let used: i64 = self.transaction.query_row(
             "SELECT outbox_bytes FROM rch_broker_profile WHERE singleton=1",
@@ -159,6 +195,8 @@ impl RchCommandTransaction<'_> {
             "UPDATE rch_broker_profile SET outbox_bytes=outbox_bytes+?1 WHERE singleton=1",
             [i64::try_from(payload.len()).map_err(|e| RchCoreError::Encode(e.to_string()))?],
         )?;
+        self.staged_outbound_intents
+            .set(self.staged_outbound_intents.get().saturating_add(1));
         Ok(())
     }
     pub fn claim_logical_input(

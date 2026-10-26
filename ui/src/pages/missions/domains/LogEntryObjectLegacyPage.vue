@@ -483,19 +483,23 @@ const editorTitle = computed(() => (editor.value.entry_uid ? "Edit Log Entry" : 
 const missionLabel = (missionUid: string) => missionByUid.value.get(missionUid) ?? missionUid;
 
 const restoreMecpDraftFromContent = (content: string) => {
+  mecpDraft.value = {
+    severity: "1",
+    category: "S",
+    eventCode: ""
+  };
   const match = /^MECP\/([0-3])\/(.+)$/i.exec(content.trim());
   if (!match) {
-    mecpDraft.value = {
-      severity: "1",
-      category: "S",
-      eventCode: ""
-    };
     return content;
   }
 
   const tokens = match[2].trim().split(/\s+/).filter((token) => token.length > 0);
   const eventCode = String(tokens[0] ?? "").toUpperCase();
   const detailsStart = tokens.findIndex((token) => !/^[A-Z][0-9]{2}$/i.test(token));
+  const codeCount = detailsStart < 0 ? tokens.length : detailsStart;
+  if (codeCount !== 1 || !mecpEventsByCategory[eventCode[0]]?.some((option) => option.value === eventCode)) {
+    return content;
+  }
   const details = detailsStart >= 0 ? tokens.slice(detailsStart).join(" ") : "";
   mecpDraft.value = {
     severity: match[1],

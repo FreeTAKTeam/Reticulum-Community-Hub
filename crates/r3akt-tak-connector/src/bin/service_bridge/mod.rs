@@ -3,7 +3,7 @@ use super::{
     TakInboundCotEvent, TakInboundCotResult, TakInboundService, TakService, Utc, Value, json,
 };
 use sha2::{Digest, Sha256};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 mod tests;
 
@@ -39,12 +39,19 @@ struct SnapshotProgress {
     remaining: usize,
 }
 
+#[derive(Clone)]
+struct CotMarker {
+    id: String,
+    source_time: Option<DateTime<Utc>>,
+}
+
 #[derive(Default)]
 pub(super) struct BridgeState {
     telemetry: SeenEntries,
     telemetry_progress: SnapshotProgress,
     chat: SeenEntries,
     cot: SeenEntries,
+    cot_markers: HashMap<String, CotMarker>,
     pending_cot: VecDeque<(String, Value)>,
 }
 
@@ -144,7 +151,7 @@ pub(super) fn bridge_tak_to_rch<R: TakCotReceiver>(
     };
     let key = format!("{}:{}:{}", event.uid, event.time, event.stale);
     if !state.cot.contains(&key) {
-        // Stop receiving when a pending POST fails. This keeps a single owned
+        // Stop receiving when a pending write fails. This keeps a single owned
         // event for retry rather than consuming and forgetting additional CoT.
         state
             .pending_cot
@@ -159,12 +166,121 @@ fn flush_pending_cot(
     state: &mut BridgeState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     while let Some((key, payload)) = state.pending_cot.front() {
-        let idempotency_key = format!("rch-tak-cot:{:x}", Sha256::digest(key.as_bytes()));
-        client.post_json_idempotent("/api/markers", payload, &idempotency_key)?;
+        apply_cot_marker(client, key, payload, &mut state.cot_markers)?;
         state.cot.insert(key.clone());
         state.pending_cot.pop_front();
     }
     Ok(())
+}
+
+fn apply_cot_marker(
+    client: &RchNorthboundClient,
+    event_key: &str,
+    payload: &Value,
+    known_markers: &mut HashMap<String, CotMarker>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let uid = payload["name"]
+        .as_str()
+        .ok_or("TAK marker UID is missing")?;
+    let source_time = marker_source_time(payload);
+    let (mut marker, created) = if let Some(marker) = known_markers.get(uid) {
+        (marker.clone(), false)
+    } else {
+        // The marker carries its UID association durably, including when a
+        // successful creation response was lost or the bridge has restarted.
+        let markers = client.get_json("/api/markers")?;
+        let token = marker_uid_token(uid);
+        let marker = markers
+            .as_array()
+            .ok_or("RCH marker response must be an array")?
+            .iter()
+            .find(|marker| {
+                marker["category"].as_str() == Some("tak")
+                    && marker["notes"]
+                        .as_str()
+                        .and_then(|notes| notes.split_whitespace().next())
+                        == Some(token.as_str())
+            });
+        if let Some(marker) = marker {
+            (
+                CotMarker {
+                    id: marker_identifier(marker)?.to_string(),
+                    source_time: marker_source_time(marker),
+                },
+                false,
+            )
+        } else {
+            let idempotency_key = format!("rch-tak-cot:{:x}", Sha256::digest(event_key.as_bytes()));
+            let marker = client.post_json_idempotent("/api/markers", payload, &idempotency_key)?;
+            (
+                CotMarker {
+                    id: marker_identifier(&marker)?.to_string(),
+                    source_time,
+                },
+                true,
+            )
+        }
+    };
+    if !created
+        && marker
+            .source_time
+            .is_some_and(|known| source_time.is_none_or(|incoming| incoming < known))
+    {
+        return Ok(());
+    }
+    if !created
+        && client
+            .patch_json(
+                &format!("/api/markers/{}/position", marker.id),
+                &json!({
+                    "lat": payload["lat"], "lon": payload["lon"],
+                    "type": payload["type"], "symbol": payload["symbol"],
+                    "notes": payload["notes"]
+                }),
+            )?
+            .is_none()
+    {
+        known_markers.remove(uid);
+        return Err(format!(
+            "TAK marker {} was deleted; retrying its UID lookup",
+            marker.id
+        )
+        .into());
+    }
+    marker.source_time = source_time;
+    if known_markers.len() >= SEEN_CAPACITY && !known_markers.contains_key(uid) {
+        known_markers.clear();
+    }
+    known_markers.insert(uid.to_string(), marker);
+    Ok(())
+}
+
+fn marker_identifier(marker: &Value) -> Result<&str, Box<dyn std::error::Error>> {
+    marker["object_destination_hash"]
+        .as_str()
+        .filter(|id| {
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
+        .ok_or_else(|| "RCH marker response contains an invalid marker identifier".into())
+}
+
+fn marker_uid_token(uid: &str) -> String {
+    format!("rch-tak-uid-sha256:{:x}", Sha256::digest(uid.as_bytes()))
+}
+
+fn marker_source_time(marker: &Value) -> Option<DateTime<Utc>> {
+    let token = marker["notes"].as_str()?.split_whitespace().nth(1)?;
+    let time = token.strip_prefix("rch-tak-time:")?;
+    match DateTime::parse_from_rfc3339(time) {
+        Ok(time) => Some(time.with_timezone(&Utc)),
+        Err(error) => {
+            eprintln!("TAK marker has an invalid source observation time {time:?}: {error}");
+            None
+        }
+    }
 }
 
 pub(super) fn location_snapshot_from_entry(
@@ -231,8 +347,9 @@ pub(super) fn marker_payload_from_cot(event: &TakInboundCotEvent) -> Value {
         "lat": event.point.lat,
         "lon": event.point.lon,
         "notes": format!(
-            "TAK CoT type={} how={} hae={} ce={} le={}",
-            event.event_type, event.how, event.point.hae, event.point.ce, event.point.le
+            "{} rch-tak-time:{} TAK CoT type={} how={} hae={} ce={} le={}",
+            marker_uid_token(&event.uid), event.time, event.event_type, event.how,
+            event.point.hae, event.point.ce, event.point.le
         )
     })
 }

@@ -342,7 +342,13 @@ async fn separate_states_preserve_disjoint_marker_and_zone_patches() {
     let _response = patch_marker_position(
         Path(marker_id.clone()),
         State(first.clone()),
-        Json(MarkerPositionPayload { lat: 5.0, lon: 6.0 }),
+        Json(MarkerPositionPayload {
+            lat: 5.0,
+            lon: 6.0,
+            marker_type: None,
+            symbol: None,
+            notes: None,
+        }),
     )
     .await
     .expect("position");
@@ -378,7 +384,13 @@ async fn separate_states_preserve_disjoint_marker_and_zone_patches() {
         patch_marker_position(
             Path(marker_id),
             State(first),
-            Json(MarkerPositionPayload { lat: 7.0, lon: 8.0 })
+            Json(MarkerPositionPayload {
+                lat: 7.0,
+                lon: 8.0,
+                marker_type: None,
+                symbol: None,
+                notes: None,
+            })
         )
         .await
         .is_err()

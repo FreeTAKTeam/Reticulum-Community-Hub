@@ -49,6 +49,9 @@ mod identity_directory_config;
 use identity_directory::IdentityListQuery;
 pub use identity_directory_config::IdentityDirectoryConfig;
 mod marker_idempotency;
+mod marker_position;
+pub use marker_position::MarkerPositionPayload;
+use marker_position::patch_marker_position;
 mod message_residency;
 pub use message_residency::spawn_message_cache_maintenance;
 mod marker_fanout;
@@ -56,6 +59,7 @@ mod operation_right_persistence;
 mod rem_team_routing;
 mod runtime_exit;
 mod setup_files;
+mod subscribers;
 pub use runtime_exit::{request_runtime_exit, shutdown_runtime_for_exit};
 mod durable_broker;
 mod runtime_delivery_workers;
@@ -1242,32 +1246,6 @@ pub struct SubscriberRecord {
     pub metadata: Value,
 }
 
-impl From<CoreSubscriberRecord> for SubscriberRecord {
-    fn from(subscriber: CoreSubscriberRecord) -> Self {
-        Self {
-            subscriber_id: subscriber.node_id.clone(),
-            destination: subscriber.node_id,
-            topic_id: subscriber.topic_id,
-            reject_tests: subscriber.reject_tests,
-            metadata: subscriber.metadata,
-        }
-    }
-}
-
-impl From<SubscriberRecord> for CoreSubscriberRecord {
-    fn from(subscriber: SubscriberRecord) -> Self {
-        let now_ms = unix_now_ms();
-        Self {
-            node_id: subscriber.destination,
-            topic_id: subscriber.topic_id,
-            first_seen_ts_ms: now_ms,
-            last_seen_ts_ms: now_ms,
-            reject_tests: subscriber.reject_tests,
-            metadata: subscriber.metadata,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubscribeTopicPayload {
     #[serde(
@@ -1594,12 +1572,6 @@ pub struct MarkerCreatePayload {
     pub lon: f64,
     pub notes: Option<String>,
     pub ttl_seconds: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MarkerPositionPayload {
-    pub lat: f64,
-    pub lon: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5062,7 +5034,10 @@ fn openapi_components() -> Value {
                 "type": "object",
                 "properties": {
                     "lat": { "type": "number" },
-                    "lon": { "type": "number" }
+                    "lon": { "type": "number" },
+                    "type": { "type": "string" },
+                    "symbol": { "type": "string" },
+                    "notes": openapi_nullable_string()
                 },
                 "required": ["lat", "lon"]
             },
@@ -14779,44 +14754,6 @@ fn python_marker_alias_normalized_input(input: Value) -> Value {
     normalized
 }
 
-async fn patch_marker_position(
-    Path(object_destination_hash): Path<String>,
-    State(state): State<AppState>,
-    Json(payload): Json<MarkerPositionPayload>,
-) -> Result<Json<Value>, ApiError> {
-    let position = r3akt_map_core::Position::new(payload.lat, payload.lon)
-        .map_err(|error| ApiError::Unprocessable(error.to_string()))?;
-    let updated_at = unix_now_ms();
-    let marker = {
-        let mut markers = state
-            .markers
-            .write()
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let marker = if state.sqlite_path.is_some() {
-            with_required_core_store_write(&state, |store| {
-                store.update_marker(&object_destination_hash, |marker| {
-                    marker.move_to(position, updated_at);
-                })
-            })?
-            .ok_or_else(|| marker_not_found(&object_destination_hash))?
-        } else {
-            let mut marker = markers
-                .get(&object_destination_hash)
-                .cloned()
-                .ok_or_else(|| marker_not_found(&object_destination_hash))?;
-            marker.move_to(position, updated_at);
-            marker
-        };
-        markers.insert(object_destination_hash.clone(), marker.clone());
-        marker
-    };
-    record_marker_activity_after_commit(&state, "marker.updated", &marker);
-    Ok(Json(json!({
-        "status": "ok",
-        "updated_at": iso8601_from_unix_ms(updated_at)
-    })))
-}
-
 async fn patch_marker(
     Path(object_destination_hash): Path<String>,
     State(state): State<AppState>,
@@ -18783,20 +18720,17 @@ async fn subscribe_topic(
             payload.topic_id
         )));
     }
-    let subscriber = SubscriberRecord {
-        subscriber_id: Uuid::new_v4().simple().to_string(),
-        destination,
-        topic_id: payload.topic_id,
-        reject_tests: payload.reject_tests,
-        metadata: payload.metadata.unwrap_or_else(|| json!({})),
-    };
-    let mut subscribers = state
-        .subscribers
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    persist_subscriber_row(&state, &subscriber)?;
-    subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
-    drop(subscribers);
+    let subscriber = subscribers::create(
+        &state,
+        SubscriberPayload {
+            subscriber_id: None,
+            destination: Some(destination),
+            topic_id: Some(payload.topic_id),
+            reject_tests: payload.reject_tests,
+            metadata: payload.metadata,
+        },
+        false,
+    )?;
     drop(topics);
     Ok(Json(subscriber))
 }
@@ -18882,10 +18816,7 @@ async fn retrieve_subscriber(
         .subscribers
         .read()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let subscriber = subscribers
-        .get(subscriber_id.as_str())
-        .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Subscriber not found: {subscriber_id}")))?;
+    let subscriber = subscribers::get(&subscribers, &subscriber_id)?;
     Ok(Json(subscriber))
 }
 
@@ -18908,35 +18839,7 @@ async fn create_subscriber_record(
     payload: SubscriberPayload,
     prefer_payload_id: bool,
 ) -> Result<Json<SubscriberRecord>, ApiError> {
-    let destination = payload
-        .destination
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ApiError::BadRequest("Subscriber destination is required".to_string()))?;
-    let subscriber_id = if prefer_payload_id {
-        payload
-            .subscriber_id
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| destination.clone())
-    } else {
-        payload
-            .subscriber_id
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| Uuid::new_v4().simple().to_string())
-    };
-    let subscriber = SubscriberRecord {
-        subscriber_id,
-        destination,
-        topic_id: payload.topic_id.unwrap_or_default(),
-        reject_tests: payload.reject_tests,
-        metadata: payload.metadata.unwrap_or_else(|| json!({})),
-    };
-    let mut subscribers = state
-        .subscribers
-        .write()
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    persist_subscriber_row(&state, &subscriber)?;
-    subscribers.insert(subscriber.subscriber_id.clone(), subscriber.clone());
-    Ok(Json(subscriber))
+    subscribers::create(&state, payload, prefer_payload_id).map(Json)
 }
 
 async fn patch_subscriber(
@@ -18952,11 +18855,7 @@ async fn patch_subscriber(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let mut subscriber = subscribers
-        .get(subscriber_id.as_str())
-        .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Subscriber not found: {subscriber_id}")))?;
-    let previous = subscriber.clone();
+    let mut subscriber = subscribers::get(&subscribers, &subscriber_id)?;
     if let Some(destination) = payload.destination {
         subscriber.destination = destination;
     }
@@ -18969,9 +18868,7 @@ async fn patch_subscriber(
     if let Some(metadata) = payload.metadata {
         subscriber.metadata = metadata;
     }
-    replace_subscriber_row(&state, &previous, &subscriber)?;
-    subscribers.insert(subscriber_id, subscriber.clone());
-    Ok(Json(subscriber))
+    subscribers::save(&state, &mut subscribers, subscriber).map(Json)
 }
 
 async fn delete_subscriber(
@@ -18982,14 +18879,9 @@ async fn delete_subscriber(
         .subscribers
         .write()
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let subscriber = subscribers
-        .get(query.subscriber_id.as_str())
-        .cloned()
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("Subscriber not found: {}", query.subscriber_id))
-        })?;
+    let subscriber = subscribers::get(&subscribers, &query.subscriber_id)?;
     delete_subscriber_row(&state, &subscriber)?;
-    subscribers.remove(query.subscriber_id.as_str());
+    subscribers.remove(&subscriber.subscriber_id);
     Ok(Json(subscriber))
 }
 
@@ -19977,6 +19869,7 @@ mod tests {
     mod directory_pagination;
     mod durable_inbound;
     mod field_commands;
+    mod marker_metadata;
     mod memory_readers;
     mod operation_rights;
     mod release_durability;
