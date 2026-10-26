@@ -80,14 +80,15 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 ## Local server
 
 Rust library dependencies and release packages pair LXMF-rs `0.15.0` with
-`reticulumd-test-0.15.0-rch663-678.4`. A sibling checkout is needed for local
+`reticulumd-test-0.15.0-rch663-678.3`. A sibling checkout is needed for local
 daemon development and default desktop sidecar preparation.
 For a fresh development layout, run this from the RCH repository:
 
 ```bash
 git clone --filter=blob:none --no-checkout https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
-git -C ../LXMF-rs fetch origin reticulumd-test-0.15.0-rch663-678.4
-git -C ../LXMF-rs checkout --detach a690ab0b501e03719364aac3d6a18bb715ccd531
+git -C ../LXMF-rs fetch origin reticulumd-test-0.15.0-rch663-678.3
+git -C ../LXMF-rs checkout --detach 6782e899ff3feebf221397517dca8525a5c70661
+cargo update --manifest-path ../LXMF-rs/Cargo.toml -p tokio --precise 1.53.3
 ```
 
 If that sibling already exists, preserve any local changes and use a clean
