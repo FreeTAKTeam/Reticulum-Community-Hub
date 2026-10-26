@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    remove|upgrade|deconfigure)
+        if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
+            systemctl stop rch-server.service reticulumd.service
+        fi
+        ;;
+esac

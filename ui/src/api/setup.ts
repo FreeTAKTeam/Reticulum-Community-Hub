@@ -10,6 +10,7 @@ export interface SetupStatus {
   remote_password_created_at?: string | null;
   config_path?: string | null;
   reticulum_config_path?: string | null;
+  reticulum_config_format?: "toml" | "ini";
   reticulum_identity_hash?: string | null;
   reticulum_identity_path?: string | null;
   reticulum_identity_created?: boolean | null;

@@ -1,0 +1,6 @@
+# Configure interfaces before starting network operation.
+interfaces = []
+
+[reticulum]
+share_instance = false
+discover_interfaces = false

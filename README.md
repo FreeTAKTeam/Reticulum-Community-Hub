@@ -57,16 +57,29 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
-The next full-platform testing preview is
-[v3.0.0-preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25),
-a full-platform testing release paired with LXMF-rs 0.14.0 and the
-`reticulumd-test-0.14.0-issue663.2` daemon tag at immutable revision
-`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`. Release notes for every
+The current testing candidate is
+[v3.0.0-preview.26](docs/release-notes-v3.0.0-preview.26.md), a Linux AMD64
+server prerelease for DigitalOcean evaluation. It pairs LXMF-rs SDK 0.15.0
+with [`reticulumd-test-0.15.0-rch663-678.1`](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.15.0-rch663-678.1)
+at immutable revision `392fc1b928af2c30ef4290f78f173d37aa9ef15e`.
+The existing release workflow builds the complete Linux AMD64 server archive
+and a Debian installer using Debian 12 (Bookworm) and Rust 1.88;
+other server platforms and desktop packages are outside this candidate's scope.
+[Preview.25](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25)
+remains the earlier full-platform package record. Release notes for every
 preview are attached to its
 [GitHub release](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases);
 older notes are kept under [`docs/`](docs/).
-Upgrading the RCH SDK alone does not fix an old daemon's response writer; install
-`reticulumd` from the same package or pinned revision as the server.
+Install the server and daemon from the same package or pinned revision. The
+AMD64 Debian package targets Debian 12 or later and compatible Ubuntu releases
+whose libraries satisfy its declared dependencies. It includes the UI and
+paired daemon, and requires no Rust, Node.js or Python toolchain to install.
+
+The server package workflow selects Tokio 1.53.3 before its locked daemon
+build. `release-manifest.json` records the configured requirement as
+`lxmf.required_daemon_tokio_version`, alongside the LXMF source commit and
+daemon checksum. The workflow build log verifies dependency selection;
+package assembly does not infer a Tokio version from an arbitrary binary.
 
 The Python 2.9.x edition is preserved on the [`rch-python`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/tree/rch-python) branch for critical maintenance and reference behavior.
 
@@ -76,7 +89,15 @@ The implementation, migration, and validation notes that previously occupied thi
 
 ### Install a packaged build
 
-The simplest route is to use a package from [GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases). Release assets may include server archives and desktop packages. Check the notes for the supported operating systems and the exact components included in each preview.
+The simplest route is to use a package from
+[GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases).
+On a supported Debian or Ubuntu AMD64 host, download the `.deb` and its
+`.sha256` file, verify the checksum, then install it with
+`sudo apt install ./rch-server_3.0.0~preview.26-1_amd64.deb`. Configure
+`/etc/rch` before explicitly enabling services; installation does not start
+them. See [the packaging instructions](packaging/README.md#debian-amd64-installation)
+for configuration, upgrade preservation and startup. Server archives and
+desktop packages have their own release notes and platform requirements.
 
 ### Build the Rust server from source
 
@@ -119,8 +140,8 @@ persisted inbox and outbound intents replace legacy event polling and retry
 ownership. See [durable broker cutover](docs/durable-broker.md) before upgrading
 an existing deployment.
 
-For an already running daemon, use its command endpoint, a response endpoint
-owned by this RCH instance, and its local delivery destination:
+For an already running daemon, use its command endpoint and a response endpoint
+owned by this RCH instance:
 
 ```bash
 cargo run -p r3akt-rch-server -- \
@@ -128,11 +149,13 @@ cargo run -p r3akt-rch-server -- \
   --config-path ./config.ini --api-key change-this-preview-key \
   --lxmf-zmq-command tcp://127.0.0.1:9100 \
   --lxmf-zmq-response tcp://127.0.0.1:9101 \
-  --reticulumd-source '<local-destination>' \
   --ui-dist-path ./ui/dist
 ```
 
-To let RCH manage the matching daemon, replace `--reticulumd-source` with
+RCH registers and derives its service destination. `--reticulumd-source` is
+optional and only asserts that registered RCH destination.
+
+To let RCH manage the matching daemon, add
 `--reticulumd-exe ../LXMF-rs/target/release/reticulumd`, and provide
 `--reticulumd-db-path ./reticulum.db` and
 `--reticulum-config-path "$HOME/.reticulum/config"`. Build that daemon with

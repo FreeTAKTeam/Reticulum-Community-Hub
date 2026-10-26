@@ -8,12 +8,55 @@ and Reticulum gate is either passed or recorded as an explicit alpha risk.
 Audit date: 2026-06-22; preview.10 supplement: 2026-08-13;
 LXMF dependency supplement: 2026-09-30
 
-The table retains historical evidence. Current preview.11 findings, validation,
+The table retains historical evidence. Preview.11 findings, validation,
 limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
-## Preview.25 resource testing candidate
+## Preview.26 Linux AMD64 testing candidate
+
+Preview.26 targets the complete Linux AMD64 server archive and Debian installer
+for DigitalOcean evaluation, using the existing release workflow's
+`<!-- rch-release: linux-amd64-only -->` marker. It pairs LXMF-rs SDK 0.15.0
+with `reticulumd-test-0.15.0-rch663-678.1` at immutable source
+`392fc1b928af2c30ef4290f78f173d37aa9ef15e`. See
+[the preview.26 notes](release-notes-v3.0.0-preview.26.md) for package contents,
+state/configuration preservation, runtime requirements and acceptance limits.
+Desktop and other-platform artifacts are outside this candidate's scope.
+
+The Linux AMD64 server workflow builds RCH, TAK and the daemon in Debian 12
+(Bookworm) with Rust 1.88. It publishes the existing archive and checksum plus
+`rch-server_3.0.0~preview.26-1_amd64.deb` and its checksum; `dpkg-shlibdeps`
+derives the installer's runtime library dependencies. The target is Debian 12
+or later and compatible Ubuntu AMD64 hosts satisfying those dependencies.
+Installation preserves operator state and does not enable or start services;
+see [the Debian installation instructions](../packaging/README.md#debian-amd64-installation).
+
+The server package workflow selects Tokio 1.53.3 before its locked daemon
+build. `release-manifest.json` records this configured requirement as
+`lxmf.required_daemon_tokio_version`, alongside the LXMF source commit and
+daemon checksum. Dependency selection is verified by the workflow build log,
+not inferred by package assembly from an arbitrary supplied binary. Desktop
+builds are outside this candidate's qualification.
+
+Local `-ServerOnlyAlpha` qualification passed on 2026-10-26: 716 workspace
+tests with two existing specialized ignores, strict Clippy and Rustdoc, link
+checks, an optimized server build and authenticated HTTP smoke. The workspace
+audit passed for 291 locked dependencies; the standalone TAK service release
+build also passed. PR #281 passed all 13 hosted checks before merging.
+
+The daemon is rebuilt from that source by RCH's existing workflow; it is not
+the upstream standalone static-musl binary. Verify both public package
+checksums, embedded RCH/LXMF identities and daemon hash, actual Linux runtime
+requirements, Debian install/upgrade/remove preservation and a paired-daemon
+package smoke before recording package acceptance.
+The default `-ServerOnlyAlpha` smoke checks HTTP without a daemon; it does not
+establish durable-broker readiness, network delivery or DigitalOcean behavior.
+Record final-source CI, local gates, package checks and any deployment evidence
+separately. No future result or multi-hour memory/swap plateau is asserted by
+this candidate description.
+
+## Preview.25 resource testing candidate (historical)
 
 The preview.25 candidate carries preview.24's schema 8 durable-broker indexes,
 retained worker stores, and paired LXMF-rs 0.14.0 source, and corrects the
@@ -25,7 +68,7 @@ transport interfaces or listeners. The SDK and bundled daemon remain pinned at
 schema 8 pending-only indexes. Preview.24 remains the historical package
 record; its desktop launcher omission and supersession are recorded in
 [its release notes](release-notes-v3.0.0-preview.24.md). See
-[preview.25 release notes](release-notes-v3.0.0-preview.25.md) for the current
+[preview.25 release notes](release-notes-v3.0.0-preview.25.md) for its recorded
 scope and acceptance boundary. The issue-specific development and preview
 records below retain their historical pins and measurements.
 
@@ -184,20 +227,20 @@ an active bidirectional relay probe instead of depending on unsolicited CoT.
 `R3AKT_RETICULUMD_RECEIPT_DESTINATION`, and
 `R3AKT_RETICULUMD_FANOUT_DESTINATIONS`.
 
-## Current Decision
+## Historical initial alpha decision (commit `8dc69773`)
 
-The Rust edition is not ready for the stable 3.0 release yet.
+At this initial alpha baseline, the Rust edition was not ready for the stable 3.0 release.
 
 The initial alpha release scope is the Rust server/package line, with desktop
-bundles treated as preview artifacts. The server alpha gates are now green on
+bundles treated as preview artifacts. The server alpha gates were green on
 commit `8dc69773af38ced251138c007c6f0bdc9543ea02`: the committed Rust 1.85
 `ServerOnlyAlpha` verifier passed in CI, full release packaging passed in CI,
 downloaded server and desktop artifacts passed checksum verification, and live
 two-phone REM checklist fanout is documented as delivered and visible in both
 REM phone UIs.
 
-No current local server-alpha blocker is recorded in this audit. Remaining work
-before stable `v3.0.0`:
+No local server-alpha blocker was recorded at that baseline. The following was
+the remaining work then; it is not the preview.26 validation record:
 
 - Run the external RMAP Reticulum profile again after the latest ZeroMQ event
   polling refresh, if public testnet evidence is required for the release notes.

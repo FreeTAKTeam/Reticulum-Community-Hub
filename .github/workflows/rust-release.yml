@@ -19,7 +19,8 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: 9c8bc7b52c4ed5eeb94716247b900864d812fcb6
+  LXMF_REF: 392fc1b928af2c30ef4290f78f173d37aa9ef15e
+  RUSTUP_TOOLCHAIN: "1.88"
 
 jobs:
   server-package:
@@ -31,11 +32,11 @@ jobs:
         include: >-
           ${{ fromJSON(
             (inputs.linux_amd64_only || contains(github.event.release.body, '<!-- rch-release: linux-amd64-only -->')) &&
-            '[{"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"}]' ||
+            '[{"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"dist/debian-build/bin/r3akt-rch-server","tak_binary":"dist/debian-build/bin/r3akt-tak-service","reticulumd_binary":"dist/debian-build/bin/reticulumd"}]' ||
             '[{"platform":"Windows x64","os":"windows-latest","artifact":"rch-rust-full-windows-x64","archive_format":"zip","server_binary":"target/release/r3akt-rch-server.exe","tak_binary":"target/release/r3akt-tak-service.exe","reticulumd_binary":"../LXMF-rs/target/release/reticulumd.exe"},
               {"platform":"macOS x64","os":"macos-15-intel","artifact":"rch-rust-full-macos-x64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
               {"platform":"macOS arm64","os":"macos-latest","artifact":"rch-rust-full-macos-arm64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
-              {"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"},
+              {"platform":"Linux AMD64","os":"ubuntu-latest","artifact":"rch-rust-full-linux-amd64","archive_format":"tar.gz","server_binary":"dist/debian-build/bin/r3akt-rch-server","tak_binary":"dist/debian-build/bin/r3akt-tak-service","reticulumd_binary":"dist/debian-build/bin/reticulumd"},
               {"platform":"Linux Raspberry Pi 64","os":"ubuntu-24.04-arm","artifact":"rch-rust-full-linux-rpi64","archive_format":"tar.gz","server_binary":"target/release/r3akt-rch-server","tak_binary":"target/release/r3akt-tak-service","reticulumd_binary":"../LXMF-rs/target/release/reticulumd"}]'
           ) }}
 
@@ -55,7 +56,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -65,7 +66,7 @@ jobs:
           cache-dependency-path: rch/ui/package-lock.json
 
       - name: Install Linux reticulumd dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.platform != 'Linux AMD64'
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
@@ -83,14 +84,32 @@ jobs:
           npm --prefix ui run build
 
       - name: Build server and TAK service
+        if: matrix.platform != 'Linux AMD64'
         working-directory: rch
         run: |
-          cargo build --release -p r3akt-rch-server
-          cargo build --release -p r3akt-tak-connector --bin r3akt-tak-service
+          cargo build --locked --release -p r3akt-rch-server
+          cargo build --locked --release -p r3akt-tak-connector --bin r3akt-tak-service
+
+      - name: Apply matching daemon security dependency
+        shell: pwsh
+        working-directory: LXMF-rs
+        run: |
+          $baseline = Get-Content ../rch/config/lxmf-runtime-baseline.json -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($baseline.daemon_tokio_version)) {
+            throw "The paired daemon Tokio security version is required."
+          }
+          cargo update -p tokio --precise $baseline.daemon_tokio_version
+          if ($LASTEXITCODE -ne 0) { throw "Failed to apply the paired daemon Tokio security update." }
 
       - name: Build matching ZMQ-capable reticulumd
+        if: matrix.platform != 'Linux AMD64'
         working-directory: LXMF-rs
-        run: cargo build --release -p reticulumd --features zmq-pipeline-rpc
+        run: cargo build --release -p reticulumd --features zmq-pipeline-rpc --locked
+
+      - name: Build Debian 12 compatible AMD64 binaries
+        if: matrix.platform == 'Linux AMD64'
+        working-directory: rch
+        run: scripts/build-debian-release.sh ../LXMF-rs dist/debian-build
 
       - name: Record LXMF release commit
         id: lxmf
@@ -116,6 +135,11 @@ jobs:
           $safeVersion = $version -replace '[^0-9A-Za-z._+-]', '-'
           "release_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "package_name=${{ matrix.artifact }}-$safeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if ($version -match '^v?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.+-]+))?$') {
+            $debianVersion = $Matches[1]
+            if ($Matches[2]) { $debianVersion += "~$($Matches[2])" }
+            "debian_version=$debianVersion-1" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
 
       - name: Assemble full server package
         shell: pwsh
@@ -132,6 +156,34 @@ jobs:
             -IncludeTakService `
             -IncludeUi `
             -ArchiveFormat "${{ matrix.archive_format }}"
+
+      - name: Assemble Debian server package
+        if: matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''
+        working-directory: rch
+        env:
+          DEBIAN_VERSION: ${{ steps.package.outputs.debian_version }}
+          PACKAGE_NAME: ${{ steps.package.outputs.package_name }}
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work/rch:ro" -v "$PWD/dist:/output" -w /work/rch \
+            rch-debian-builder scripts/build-debian-package.sh \
+            "/output/$PACKAGE_NAME" "$DEBIAN_VERSION" /output
+          scripts/test-debian-package.sh "dist/rch-server_${DEBIAN_VERSION}_amd64.deb"
+
+      - name: Upload Debian package artifact
+        if: github.event_name != 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: rch-server-debian-amd64
+          path: rch/dist/rch-server_*.deb*
+          if-no-files-found: error
+
+      - name: Attach Debian package to GitHub release
+        if: github.event_name == 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rch/dist/rch-server_*.deb*
+          fail_on_unmatched_files: true
 
       - name: Upload server package artifact
         if: github.event_name != 'release'
@@ -184,7 +236,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
