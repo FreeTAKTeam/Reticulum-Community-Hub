@@ -2,6 +2,11 @@
 
 <!-- rch-release: linux-amd64-only -->
 
+> Superseded by [preview.28](release-notes-v3.0.0-preview.28.md): these artifacts
+> contain the tested `a690ab0b` source, but their `.3` standalone release alias
+> was claimed by another publisher at a different revision during the build.
+> The matching standalone daemon is `.4`; preview.28 corrects the metadata.
+
 Preview.27 is a Linux AMD64 testing pair for DigitalOcean evaluation. It uses
 LXMF-rs SDK and daemon 0.15.0 from immutable source
 `a690ab0b501e03719364aac3d6a18bb715ccd531`, published as

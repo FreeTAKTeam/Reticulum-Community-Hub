@@ -1,6 +1,6 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "reticulumd-test-0.15.0-rch663-678.3",
+  "release_tag": "reticulumd-test-0.15.0-rch663-678.4",
   "sdk_version": "0.15.0",
   "daemon_tokio_version": "1.53.3",
   "daemon_package": "reticulumd",
