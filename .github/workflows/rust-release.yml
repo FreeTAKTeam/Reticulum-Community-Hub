@@ -168,7 +168,7 @@ jobs:
             -v "$PWD:/work/rch:ro" -v "$PWD/dist:/output" -w /work/rch \
             rch-debian-builder scripts/build-debian-package.sh \
             "/output/$PACKAGE_NAME" "$DEBIAN_VERSION" /output
-          scripts/test-debian-package.sh "dist/rch-server_${DEBIAN_VERSION}_amd64.deb"
+          scripts/test-debian-package.sh "dist/rch-server_${DEBIAN_VERSION//\~/.}_amd64.deb"
 
       - name: Upload Debian package artifact
         if: github.event_name != 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''

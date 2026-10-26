@@ -26,7 +26,7 @@ Desktop and other-platform artifacts are outside this candidate's scope.
 
 The Linux AMD64 server workflow builds RCH, TAK and the daemon in Debian 12
 (Bookworm) with Rust 1.88. It publishes the existing archive and checksum plus
-`rch-server_3.0.0~preview.26-1_amd64.deb` and its checksum; `dpkg-shlibdeps`
+`rch-server_3.0.0.preview.26-1_amd64.deb` and its checksum; `dpkg-shlibdeps`
 derives the installer's runtime library dependencies. The target is Debian 12
 or later and compatible Ubuntu AMD64 hosts satisfying those dependencies.
 Installation preserves operator state and does not enable or start services;

@@ -34,7 +34,7 @@ their checksums, with the pinned daemon, UI, and TAK service; desktop and other
 platform jobs are skipped. Published releases own asset builds; pushing a tag
 alone no longer starts a duplicate package build. Normal releases retain the
 full matrix. Versioned releases such as `v3.0.0-preview.26` produce
-`rch-server_3.0.0~preview.26-1_amd64.deb`; a manual branch label without a
+`rch-server_3.0.0.preview.26-1_amd64.deb`; a manual branch label without a
 release version produces only the archive.
 
 The release workflow owns all five server packages and both desktop packages.
@@ -84,12 +84,12 @@ locked workspace tests, release builds for the server and TAK service, and
 
 ## Debian AMD64 installation
 
-Download `rch-server_3.0.0~preview.26-1_amd64.deb` and its `.sha256` file from
+Download `rch-server_3.0.0.preview.26-1_amd64.deb` and its `.sha256` file from
 the same release into one directory. Verify before installing:
 
 ```bash
-sha256sum -c rch-server_3.0.0~preview.26-1_amd64.deb.sha256
-sudo apt install ./rch-server_3.0.0~preview.26-1_amd64.deb
+sha256sum -c rch-server_3.0.0.preview.26-1_amd64.deb.sha256
+sudo apt install ./rch-server_3.0.0.preview.26-1_amd64.deb
 ```
 
 The package installs binaries, UI and the release manifest under `/opt/rch`.
