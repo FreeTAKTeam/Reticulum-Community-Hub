@@ -5,9 +5,9 @@ use super::{
     REMOTE_ACCESS_PASSWORD_HASH_SETTING, REMOTE_ACCESS_PASSWORD_SALT_SETTING, Request, SocketAddr,
     State, Uuid, Value, argon2id_hash, browser_security, ensure_reticulum_identity_status,
     is_local_client_addr, iso8601_from_unix_ms, json, load_kill_switch_pin,
-    load_stored_remote_password, read_config_file, request_client_addr, setup_files, unix_now_ms,
-    upsert_ini_setting, validate_ini_text, with_required_core_store_write,
-    with_required_core_store_write_unchecked,
+    load_stored_remote_password, read_config_file, request_client_addr, reticulum_config_format,
+    setup_files, unix_now_ms, upsert_ini_setting, validate_reticulum_config,
+    with_required_core_store_write, with_required_core_store_write_unchecked,
 };
 
 pub(super) async fn first_run_setup_status(
@@ -101,7 +101,10 @@ fn complete_setup(state: &AppState, payload: &FirstRunSetupPayload) -> Result<Va
     }
 
     if let Some(reticulum_config_text) = payload.reticulum_config_text.as_deref() {
-        let errors = validate_ini_text(reticulum_config_text);
+        let errors = validate_reticulum_config(
+            state.reticulum_config_path.as_deref(),
+            reticulum_config_text,
+        );
         if !errors.is_empty() {
             return Err(ApiError::BadRequest(format!(
                 "Invalid Reticulum configuration payload: {}",
@@ -230,6 +233,7 @@ pub(super) fn first_run_setup_status_payload(
                     .map(|path| path.display().to_string())
             })
             .flatten(),
+        "reticulum_config_format": reticulum_config_format(state.reticulum_config_path.as_deref()),
         "reticulum_identity_hash": reticulum_identity.as_ref().map(|identity| identity.hash.clone()),
         "reticulum_identity_path": expose_paths
             .then(|| {

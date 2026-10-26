@@ -79,15 +79,15 @@ members against `r3akt-identity`, `r3akt-profile-rch`, and `r3akt-rch-core`.
 
 ## Local server
 
-Rust library dependencies and release packages pair LXMF-rs `0.14.0` with
-`reticulumd-test-0.14.0-issue663.2`. A sibling checkout is needed for local
+Rust library dependencies and release packages pair LXMF-rs `0.15.0` with
+`reticulumd-test-0.15.0-rch663-678.1`. A sibling checkout is needed for local
 daemon development and default desktop sidecar preparation.
 For a fresh development layout, run this from the RCH repository:
 
 ```bash
 git clone --filter=blob:none --no-checkout https://github.com/FreeTAKTeam/LXMF-rs.git ../LXMF-rs
-git -C ../LXMF-rs fetch origin reticulumd-test-0.14.0-issue663.2
-git -C ../LXMF-rs checkout --detach reticulumd-test-0.14.0-issue663.2
+git -C ../LXMF-rs fetch origin reticulumd-test-0.15.0-rch663-678.1
+git -C ../LXMF-rs checkout --detach 392fc1b928af2c30ef4290f78f173d37aa9ef15e
 ```
 
 If that sibling already exists, preserve any local changes and use a clean
@@ -106,7 +106,7 @@ cargo run -p r3akt-rch-server -- \
   --api-key change-this-preview-key
 ```
 
-For outbound and inbound LXMF traffic, add the ZeroMQ command and response endpoints plus the local source destination:
+For outbound and inbound LXMF traffic, add the ZeroMQ command and response endpoints. RCH registers and derives its service destination:
 
 ```bash
 cargo run -p r3akt-rch-server -- \
@@ -116,7 +116,6 @@ cargo run -p r3akt-rch-server -- \
   --reticulum-config-path "$HOME/.reticulum/config" \
   --lxmf-zmq-command tcp://127.0.0.1:9100 \
   --lxmf-zmq-response tcp://127.0.0.1:9101 \
-  --reticulumd-source '<local-destination>' \
   --api-key change-this-preview-key
 ```
 

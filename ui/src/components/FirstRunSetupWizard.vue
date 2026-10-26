@@ -172,7 +172,7 @@
 import { computed, onMounted, ref } from "vue";
 import BaseButton from "./BaseButton.vue";
 import BaseInput from "./BaseInput.vue";
-import { completeSetup, fetchSetupStatus } from "../api/setup";
+import { completeSetup, fetchSetupStatus, type SetupStatus } from "../api/setup";
 import type { ApiError } from "../api/client";
 import { createEmptyReticulumConfig, serializeReticulumConfig } from "../utils/reticulum-config";
 import type { ReticulumInterfaceConfig } from "../utils/reticulum-config";
@@ -211,6 +211,7 @@ const killSwitchPinConfirm = ref("");
 const reticulumIdentityHash = ref("");
 const reticulumIdentityCreated = ref<boolean | null>(null);
 const reticulumIdentityPath = ref("");
+const reticulumConfigFormat = ref<SetupStatus["reticulum_config_format"]>("ini");
 const saving = ref(false);
 const validationActive = ref<Record<FieldName, boolean>>({
   hubName: false,
@@ -333,6 +334,23 @@ const validateCurrentStep = () => {
 };
 
 const reticulumConfigText = computed(() => {
+  if (reticulumConfigFormat.value === "toml") {
+    return [
+      "[reticulum]", "enable_transport = true", "share_instance = true", "",
+      ...selectedTcpEndpoints.value.flatMap((endpoint) => {
+        const parsed = endpointHostPort(endpoint);
+        return parsed ? [
+          "[[interfaces]]",
+          `name = ${JSON.stringify(tcpInterfaceName(endpoint))}`,
+          'type = "tcp_client"',
+          "enabled = true",
+          `host = ${JSON.stringify(parsed.host)}`,
+          `port = ${parsed.port}`,
+          ""
+        ] : [];
+      })
+    ].join("\n");
+  }
   const config = createEmptyReticulumConfig();
   config.sectionOrder = ["reticulum", "logging", "interfaces"];
   config.sections.reticulum = [
@@ -396,6 +414,7 @@ const submitCurrentStep = () => {
 onMounted(async () => {
   try {
     const status = await fetchSetupStatus();
+    reticulumConfigFormat.value = status.reticulum_config_format ?? "ini";
     reticulumIdentityHash.value = status.reticulum_identity_hash ?? "";
     reticulumIdentityCreated.value = status.reticulum_identity_created ?? null;
     reticulumIdentityPath.value = status.reticulum_identity_path ?? "";

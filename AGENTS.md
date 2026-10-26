@@ -14,7 +14,7 @@ Do not restore the legacy Python server or Electron packaging as UI cleanup.
 - LXMF/Reticulum adapter crate: `crates/r3akt-transport-rns`
 - TAK service boundary: `crates/r3akt-tak-connector`
 - Rust edition: 2024
-- Minimum Rust version: 1.88 (required by the paired LXMF-rs 0.14.0 dependency)
+- Minimum Rust version: 1.88 (required by the paired LXMF-rs 0.15.0 dependency)
 - License: EPL-2.0
 
 Cargo resolves the LXMF-rs crates (`lxmf-wire`, `lxmf-sdk`,

@@ -2048,7 +2048,7 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route(
             "/Reticulum/Config/Validate",
-            get(method_not_allowed).post(validate_config_text),
+            get(method_not_allowed).post(validate_reticulum_config_text),
         )
         .route(
             "/Reticulum/Config/Rollback",
@@ -17691,6 +17691,38 @@ async fn validate_config_text(body: String) -> Json<Value> {
     }))
 }
 
+fn reticulum_config_format(path: Option<&PathBuf>) -> &'static str {
+    if path
+        .and_then(|path| path.extension())
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"))
+    {
+        "toml"
+    } else {
+        "ini"
+    }
+}
+
+fn validate_reticulum_config(path: Option<&PathBuf>, body: &str) -> Vec<String> {
+    if reticulum_config_format(path) == "toml" {
+        toml::from_str::<toml::Table>(body)
+            .err()
+            .map(|error| format!("Expected reticulumd TOML configuration: {error}"))
+            .into_iter()
+            .collect()
+    } else {
+        validate_ini_text(body)
+    }
+}
+
+async fn validate_reticulum_config_text(
+    State(state): State<AppState>,
+    body: String,
+) -> Json<Value> {
+    let errors = validate_reticulum_config(state.reticulum_config_path.as_deref(), &body);
+    Json(json!({"valid": errors.is_empty(), "errors": errors}))
+}
+
 fn validate_ini_text(config_text: &str) -> Vec<String> {
     let mut errors = Vec::new();
     let mut seen_section = false;
@@ -17750,7 +17782,10 @@ fn apply_config_file(
     kind: ConfigFileKind,
 ) -> Result<Json<Value>, ApiError> {
     let path = path.ok_or_else(|| ApiError::BadRequest(config_path_missing_message(kind)))?;
-    let errors = validate_ini_text(&body);
+    let errors = match kind {
+        ConfigFileKind::Hub => validate_ini_text(&body),
+        ConfigFileKind::Reticulum => validate_reticulum_config(Some(&path), &body),
+    };
     if !errors.is_empty() {
         let details = errors
             .iter()
@@ -17894,6 +17929,10 @@ fn rollback_config_file(
     let content = std::fs::read_to_string(&backup_path)
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     if matches!(kind, ConfigFileKind::Reticulum) {
+        let errors = validate_reticulum_config(Some(&path), &content);
+        if !errors.is_empty() {
+            return Err(ApiError::BadRequest(errors.join("; ")));
+        }
         ensure_parent_dir(&path)?;
     }
     std::fs::write(path.as_ref(), content)

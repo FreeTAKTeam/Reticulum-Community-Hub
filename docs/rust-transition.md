@@ -58,7 +58,7 @@ and at least one topic/chat/checklist/mission flow.
 GitHub PR quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88 for the
 quality gates and the locked workspace minimum-version check, matching the
-paired LXMF-rs 0.14.0 dependency. It exposes separate required checks for formatting, clippy with
+paired LXMF-rs 0.15.0 dependency. It exposes separate required checks for formatting, clippy with
 `-D warnings`, MSRV and denied-warning rustdoc, locked workspace tests, UI
 lint/type-check/tests/build, release server/TAK-service builds, and
 `cargo audit`.
@@ -222,16 +222,17 @@ Release blockers cleared in the latest parity pass:
   six `/internal/delivery-*` mutation callbacks have been removed without
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
-- Production library dependencies use LXMF `0.14.0` from immutable revision
-  `9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
-  (`reticulumd-test-0.14.0-issue663.2`); a clean server build does not require a
-  sibling checkout. CI and release packages use that same revision, including
-  bounded indexed propagation refill and the unchanged announce-cache fast path
-  for #663 alongside the existing #655/#657 response and recovery protections.
-  The paired dependency requires Rust 1.88 or newer. The matching
-  ZMQ-capable `reticulumd` is bundled and described by
+- Production library dependencies use LXMF `0.15.0` from immutable revision
+  `392fc1b928af2c30ef4290f78f173d37aa9ef15e`
+  (`reticulumd-test-0.15.0-rch663-678.1`); a clean server build does not
+  require a sibling checkout. CI and release packages use that same revision,
+  including the #678 announce-cache cleanup and #663 resource/ZeroMQ
+  follow-through. The paired dependency requires Rust 1.88 or newer.
+  The matching ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
-  the scheduled compatibility workflow.
+  the scheduled compatibility workflow. Preview.26 targets only the complete
+  Linux AMD64 server package for DigitalOcean evaluation; source and package
+  checks do not establish deployed delivery or a multi-hour memory plateau.
 - Multi-recipient dispatch now uses `sdk_send_batch_v2` over ZeroMQ so a topic
   fanout enters `reticulumd` as one bounded batch request instead of one RPC
   call per recipient.

@@ -3,11 +3,12 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, checksum-recorded LXMF `0.14.0` `reticulumd` binary with ZeroMQ
+  binary, checksum-recorded LXMF `0.15.0` `reticulumd` binary with ZeroMQ
   support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
-  server archives.
+  server archives. Linux AMD64 also produces a Debian `.deb` installer and
+  checksum from the same full server payload.
 - Desktop packages: Tauri bundles from `apps/rch-desktop` with `reticulumd`,
   the Rust server, and TAK service sidecars. Current CI builds Windows x64 NSIS and Linux x64
   AppImage artifacts.
@@ -21,38 +22,119 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-windows-x64-v3.0.0-preview.25.zip`; the same version, Git ref,
+`rch-rust-full-linux-amd64-v3.0.0-preview.26.tar.gz`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs label artifacts with the `release_version` input, or with
 the branch name when that input is blank.
 
 For a Linux AMD64 server testing candidate, set `linux_amd64_only=true` on a
 manual run or include `<!-- rch-release: linux-amd64-only -->` in the published
-release body. This builds the full Linux AMD64 archive and its checksum, with
-the pinned daemon, UI, and TAK service; desktop and other platform jobs are
-skipped. Published releases own asset builds; pushing a tag alone no longer
-starts a duplicate package build. Normal releases retain the full matrix.
+release body. This builds the full Linux AMD64 archive, Debian installer and
+their checksums, with the pinned daemon, UI, and TAK service; desktop and other
+platform jobs are skipped. Published releases own asset builds; pushing a tag
+alone no longer starts a duplicate package build. Normal releases retain the
+full matrix. Versioned releases such as `v3.0.0-preview.26` produce
+`rch-server_3.0.0~preview.26-1_amd64.deb`; a manual branch label without a
+release version produces only the archive.
 
 The release workflow owns all five server packages and both desktop packages.
-The next full-matrix candidate is
-[`v3.0.0-preview.25`](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases/tag/v3.0.0-preview.25).
-Its release notes list the packages, upgrade steps, and remaining acceptance
-limits. Notes for earlier previews are kept under [`docs/`](../docs/).
+The current testing candidate is
+[`v3.0.0-preview.26`](../docs/release-notes-v3.0.0-preview.26.md), scoped to the
+complete Linux AMD64 server archive and Debian installer for DigitalOcean
+evaluation. Its release body must include the Linux-only marker above. This candidate does not publish
+desktop or other-platform packages. Preview.25 remains the earlier full-matrix
+package record; earlier notes are kept under [`docs/`](../docs/).
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
-LXMF 0.14.0 `reticulumd` path when that checkout is intentionally dirty; hosted
+LXMF 0.15.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages always build the pinned clean LXMF commit
-`9c8bc7b52c4ed5eeb94716247b900864d812fcb6`
-(`reticulumd-test-0.14.0-issue663.2`, LXMF `0.14.0`, paired ZeroMQ polling, daemon resource-lifecycle, and broker-only identity-bridge fixes for #663, alongside RCH durable broker and inbox/outbox lifecycle fixes for #276). The Rust library dependencies resolve the matching immutable LXMF revision without
+`392fc1b928af2c30ef4290f78f173d37aa9ef15e`
+(`reticulumd-test-0.15.0-rch663-678.1`, SDK `0.15.0`). This source includes
+the #678 announce-cache cleanup and #663 resource/ZeroMQ follow-through.
+The Rust library dependencies resolve the matching immutable revision without
 requiring a sibling checkout. A local daemon build still uses the documented
 sibling layout.
+
+The server package workflow selects Tokio 1.53.3 before its locked daemon
+build. `release-manifest.json` records the configured requirement as
+`lxmf.required_daemon_tokio_version`, alongside the exact LXMF source commit
+and daemon checksum. The workflow build log verifies dependency selection;
+assembly of a supplied binary does not inspect its embedded Tokio version.
+This candidate does not qualify a desktop sidecar build.
+
+The Linux AMD64 server workflow builds all three binaries in a Debian 12
+(Bookworm) container with Rust 1.88. `scripts/build-debian-package.sh` derives
+runtime library dependencies from those binaries using `dpkg-shlibdeps`.
+The installer targets Debian 12 or later and compatible Ubuntu AMD64 hosts
+that satisfy its declared dependencies. Other architectures and desktop
+packages retain their separate build environments.
+
+The upstream standalone daemon archive uses static musl; RCH rebuilds that
+source and packages a different binary. Verify checksums, embedded RCH/LXMF
+source identities, the daemon checksum and actual runtime dependencies before
+recording package acceptance. Earlier Linux package requirements do not
+establish the new candidate's compatibility.
 
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.99.1 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
 `cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
-0.14.0 dependency.
+0.15.0 dependency.
+
+## Debian AMD64 installation
+
+Download `rch-server_3.0.0~preview.26-1_amd64.deb` and its `.sha256` file from
+the same release into one directory. Verify before installing:
+
+```bash
+sha256sum -c rch-server_3.0.0~preview.26-1_amd64.deb.sha256
+sudo apt install ./rch-server_3.0.0~preview.26-1_amd64.deb
+```
+
+The package installs binaries, UI and the release manifest under `/opt/rch`.
+It creates the `rch` system account and state/log directories `/var/lib/rch`
+and `/var/log/rch`. Package-managed configuration files are
+`/etc/rch/config.ini`, `/etc/rch/rch-server.env` and `/etc/rch/reticulumd.toml`.
+Vendor service units live under `/usr/lib/systemd/system`; use systemd
+overrides for operator changes.
+
+Installation does not enable or start services. Set a unique `RTH_API_KEY` in
+`rch-server.env`, review the hub identity and state paths in `config.ini`, and
+configure the actual Reticulum interfaces in `reticulumd.toml`. Its defaults
+have no interfaces and disable discovery. Then start explicitly:
+
+```bash
+sudoedit /etc/rch/rch-server.env
+sudo -u rch -- vi /etc/rch/config.ini /etc/rch/reticulumd.toml
+sudo systemctl enable --now rch-server
+```
+
+The mutable configuration files belong to `rch` for authenticated setup and
+atomic updates. The sticky configuration directory protects the root-owned
+environment file from replacement by the service account. Edit mutable files
+as `rch`. First-run setup emits the daemon's TOML format; the legacy INI
+Reticulum editor does not edit TOML. After configuration changes, run
+`sudo systemctl restart reticulumd rch-server`.
+
+`rch-server.service` requires and starts `reticulumd.service`. The UI/API bind
+to `127.0.0.1:8000`, ZeroMQ uses loopback ports 9100/9101, and daemon RPC uses
+the private `/run/rch/reticulumd.sock`. Hub and transport identities live at
+`/var/lib/rch/identity` and `/var/lib/rch/reticulum-identity`. Check authenticated
+`/Status` and `/diagnostics/runtime`, both service journals, and an actual
+recipient receipt before claiming transport readiness. The packaged TAK
+service is available but is not started automatically.
+
+Before upgrading an existing deployment, stop both services and back up its
+complete configuration, identities, databases and attachment directories
+consistently. Preserve the existing credentials, interfaces, state paths,
+service overrides and ownership. Review any dpkg configuration-file prompt;
+keep or merge operator settings rather than replacing them blindly. Package
+upgrade stops the services and leaves restarting them to the operator.
+Removing the package preserves `/etc/rch`, state, logs and the system account.
+Purging also removes dpkg-managed configuration files; state, logs and the
+account remain. Keep the previous package and pre-upgrade backups for rollback;
+an older binary must not be run against a migrated database.
 
 ## Python Store Migration
 
