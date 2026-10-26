@@ -93,7 +93,7 @@ The simplest route is to use a package from
 [GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases).
 On a supported Debian or Ubuntu AMD64 host, download the `.deb` and its
 `.sha256` file, verify the checksum, then install it with
-`sudo apt install ./rch-server_3.0.0~preview.26-1_amd64.deb`. Configure
+`sudo apt install ./rch-server_3.0.0.preview.26-1_amd64.deb`. Configure
 `/etc/rch` before explicitly enabling services; installation does not start
 them. See [the packaging instructions](packaging/README.md#debian-amd64-installation)
 for configuration, upgrade preservation and startup. Server archives and
