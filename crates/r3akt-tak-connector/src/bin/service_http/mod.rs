@@ -60,6 +60,21 @@ impl RchNorthboundClient {
         )
     }
 
+    pub(super) fn patch_json(&self, path: &str, body: &Value) -> Result<Option<Value>, Error> {
+        let mut request = self.agent.patch(self.base.url_for(path));
+        if let Some(key) = &self.api_key {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send(body.to_string().as_bytes())?;
+        if response.status() == ureq::http::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Self::read_json(response).map(Some)
+    }
+
     fn read_json(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, Error> {
         if !response.status().is_success() {
             return Err(format!(

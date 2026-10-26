@@ -1,42 +1,6 @@
 use super::*;
-pub(super) fn outgoing(
-    unit: &RchCommandTransaction<'_>,
-    _event: &InboxEvent,
-    index: usize,
-    destination: &str,
-    content: &str,
-    fields: Value,
-    created: i64,
-) -> Result<OutboundMessageRecord, ApiError> {
-    if index >= 256 {
-        return Err(ApiError::ServiceUnavailable(
-            "durable fanout recipient bound reached; input retained".into(),
-        ));
-    }
-    let operation = sha256_lower_hex(
-        format!(
-            "{}:{index}:{destination}",
-            unit.inbox_event_key().map_err(storage)?
-        )
-        .as_bytes(),
-    );
-    let record = OutboundMessageRecord {
-        message_id: operation.clone(),
-        topic_id: None,
-        destination: Some(destination.into()),
-        sender: "r3akt-rch-server".into(),
-        content: content.into(),
-        delivery_mode: DeliveryMode::Targeted,
-        delivery_method: "durable_broker".into(),
-        delivery_policy_reason: "inbox_application".into(),
-        delivery_state: "broker_pending".into(),
-        delivery_metadata: json!({"direction":"outbound","lxmf_fields":fields}),
-        created_ts_ms: created,
-        attachments: Vec::new(),
-    };
-    unit.stage_outbound_intent(&DurableOutboundIntent {operation_id:operation.clone(),message:CoreMessageRecord::from(record.clone()),request:json!({"identity":"","operation_id":operation,"destination":destination,"title":"RCH","content":content,"fields":fields,"options":{"method":"direct","try_propagation_on_fail":true}})}).map_err(storage)?;
-    Ok(record)
-}
+mod outgoing;
+pub(super) use outgoing::outgoing;
 
 fn command_alias(command: &r3akt_protocol::Command) -> r3akt_protocol::Command {
     let mut result = command.clone();
@@ -70,6 +34,37 @@ fn command_alias(command: &r3akt_protocol::Command) -> r3akt_protocol::Command {
 }
 
 pub(super) fn apply_envelope(
+    unit: &mut RchCommandTransaction<'_>,
+    event: &InboxEvent,
+    envelope: &ProtocolEnvelope,
+    bootstrap: bool,
+    published: &mut Vec<OutboundMessageRecord>,
+    telemetry: &mut Vec<TelemetryRecord>,
+    allowlist: Option<&HashSet<String>>,
+) -> Result<(), ApiError> {
+    let published_count = published.len();
+    let telemetry_count = telemetry.len();
+    let result = unit
+        .apply_inbox_envelope(|unit| {
+            apply_envelope_payload(
+                unit, event, envelope, bootstrap, published, telemetry, allowlist,
+            )
+        })
+        .map_err(storage)?;
+    if result.is_err() {
+        published.truncate(published_count);
+        telemetry.truncate(telemetry_count);
+    }
+    match result {
+        Err(ApiError::BadRequest(reason)) => {
+            unit.diagnose_rejection(&reason);
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+fn apply_envelope_payload(
     unit: &mut RchCommandTransaction<'_>,
     event: &InboxEvent,
     envelope: &ProtocolEnvelope,
@@ -116,7 +111,6 @@ pub(super) fn apply_envelope(
             published.push(outgoing(
                 unit,
                 event,
-                published.len(),
                 envelope.source.as_str(),
                 &plain_lxmf_help_reply(),
                 json!({}),
@@ -201,26 +195,29 @@ pub(super) fn apply_envelope(
                     .collect::<Vec<_>>();
                 destinations.sort();
                 destinations.dedup();
-                match super::outbound::stage_business_message(unit, message, destinations) {
-                    Ok(message) => published.push(message),
-                    Err(ApiError::BadRequest(reason)) => {
-                        unit.diagnose_rejection(&reason);
-                        responses = vec![r3akt_rch_core::MissionSyncResponse::results(
-                            r3akt_profile_rch::CommandResultEnvelope {
-                                command_id: mission.command_id.clone(),
-                                status: r3akt_profile_rch::CommandResultStatus::Rejected,
-                                detail: None,
-                                reason_code: Some("invalid_payload".into()),
-                                reason: Some(reason),
-                                required_capabilities: vec![],
-                                accepted_at: None,
-                                by_identity: None,
-                                correlation_id: mission.correlation_id.clone(),
-                                result: Value::Null,
-                            },
-                        )];
-                    }
-                    Err(error) => return Err(error),
+                if destinations.is_empty() {
+                    let reason = "no authorized delivery recipients".to_string();
+                    unit.diagnose_rejection(&reason);
+                    responses = vec![r3akt_rch_core::MissionSyncResponse::results(
+                        r3akt_profile_rch::CommandResultEnvelope {
+                            command_id: mission.command_id.clone(),
+                            status: r3akt_profile_rch::CommandResultStatus::Rejected,
+                            detail: None,
+                            reason_code: Some("invalid_payload".into()),
+                            reason: Some(reason),
+                            required_capabilities: vec![],
+                            accepted_at: None,
+                            by_identity: None,
+                            correlation_id: mission.correlation_id.clone(),
+                            result: Value::Null,
+                        },
+                    )];
+                } else {
+                    published.push(super::outbound::stage_business_message(
+                        unit,
+                        message,
+                        destinations,
+                    )?);
                 }
             }
         }
@@ -258,7 +255,6 @@ pub(super) fn apply_envelope(
                 published.push(outgoing(
                     unit,
                     event,
-                    published.len(),
                     envelope.source.as_str(),
                     &response.content,
                     fields.clone(),
@@ -317,7 +313,6 @@ pub(super) fn apply_envelope(
                     published.push(outgoing(
                         unit,
                         event,
-                        published.len(),
                         destination,
                         &content,
                         fields.clone(),
@@ -424,8 +419,8 @@ pub(super) fn apply_envelope(
                         .saturating_mul(destinations.len())
                         > 32 * 1024 * 1024
                 {
-                    return Err(ApiError::ServiceUnavailable(
-                        "fanout byte/count budget exceeded; input retained".into(),
+                    return Err(ApiError::BadRequest(
+                        "fanout byte/count budget exceeded".into(),
                     ));
                 }
                 for destination in &destinations {
@@ -440,7 +435,6 @@ pub(super) fn apply_envelope(
                     published.push(outgoing(
                         unit,
                         event,
-                        published.len(),
                         destination,
                         &format!("{sender} > {body}"),
                         fields,

@@ -39,15 +39,7 @@ pub(super) fn publish(
     let source = envelope.source.as_str();
     let created = envelope.timestamp.timestamp_millis();
     let (reply, accepted) = reply_text(command_name, responses);
-    published.push(outgoing(
-        unit,
-        event,
-        published.len(),
-        source,
-        &reply,
-        json!({}),
-        created,
-    )?);
+    published.push(outgoing(unit, event, source, &reply, json!({}), created)?);
     if command_name != "mission.join" || !accepted {
         return Ok(());
     }
@@ -59,7 +51,6 @@ pub(super) fn publish(
         published.push(outgoing(
             unit,
             event,
-            published.len(),
             source,
             &format!("[replay:{topic}]\n{}", inbound.content),
             json!({}),
@@ -179,12 +170,10 @@ pub(super) fn reply(
     content: &str,
     published: &mut Vec<OutboundMessageRecord>,
 ) -> Result<(), ApiError> {
-    let index = published.len();
     let created = envelope.timestamp.timestamp_millis();
     published.push(outgoing(
         unit,
         event,
-        index,
         envelope.source.as_str(),
         content,
         json!({}),

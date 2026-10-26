@@ -597,7 +597,7 @@ fn migrate_subscribers(
             "rch_subscribers",
             ("node_id", node_id.clone()),
             ("topic_id", text(row, "topic_id")?),
-            json!({
+            json!({"subscriber_id": text(row, "id")?,
                 "node_id": node_id,
                 "topic_id": text(row, "topic_id")?,
                 "first_seen_ts_ms": created,

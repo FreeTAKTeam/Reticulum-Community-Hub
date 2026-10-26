@@ -662,16 +662,8 @@ pub struct TopicRecord {
     pub last_activity_ts_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubscriberRecord {
-    pub node_id: String,
-    pub topic_id: String,
-    pub first_seen_ts_ms: i64,
-    pub last_seen_ts_ms: i64,
-    #[serde(default)]
-    pub reject_tests: Option<i64>,
-    pub metadata: Value,
-}
+mod subscriber;
+pub use subscriber::SubscriberRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageRecord {
@@ -8873,6 +8865,7 @@ impl RchCore {
                 record.metadata = metadata.clone();
             })
             .or_insert_with(|| SubscriberRecord {
+                subscriber_id: None,
                 node_id: subscriber_id,
                 topic_id: topic_id.to_string(),
                 first_seen_ts_ms: now,

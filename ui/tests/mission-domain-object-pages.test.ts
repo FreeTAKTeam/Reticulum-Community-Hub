@@ -168,11 +168,11 @@ const setupAssetApiMocks = () => {
   delMock.mockResolvedValue(undefined);
 };
 
-const setupLogApiMocks = () => {
+const setupLogApiMocks = (entry = logAlpha) => {
   getMock.mockImplementation((path: string) => {
     if (path === "/api/r3akt/missions") return Promise.resolve([missionAlpha]);
-    if (path === "/api/r3akt/log-entries?mission_uid=mission-alpha") return Promise.resolve([logAlpha]);
-    if (path === "/api/r3akt/log-entries") return Promise.resolve([logAlpha]);
+    if (path === "/api/r3akt/log-entries?mission_uid=mission-alpha") return Promise.resolve([entry]);
+    if (path === "/api/r3akt/log-entries") return Promise.resolve([entry]);
     return Promise.reject(new Error(`Unexpected GET ${path}`));
   });
   postMock.mockResolvedValue(logAlpha);
@@ -295,6 +295,44 @@ describe("mission domain object pages", () => {
         mission_uid: "mission-alpha",
         content: "Updated status log"
       }),
+      { timeoutMs: 30000 }
+    );
+  });
+
+  it.each([
+    "MECP/1/M01 S01 north gate",
+    "MECP/1/M01 S01",
+    "MECP/1/M02 north gate",
+    "MECP/1/Z01 north gate"
+  ])("preserves MECP content the single-event editor cannot represent: %s", async (content) => {
+    setupLogApiMocks({ ...logAlpha, content });
+    page = await mountPage(LogEntryObjectLegacyPage, "/missions/logs?mission_uid=mission-alpha");
+    await clickButton("Edit");
+
+    expect(selectByLabel("Event").value).toBe("");
+    expect(inputByLabel("Text").value).toBe(content);
+    await fillField("Keywords", "reviewed");
+    await clickButton("Update Entry");
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/api/r3akt/log-entries",
+      expect.objectContaining({ entry_uid: "log-alpha", content, keywords: ["reviewed"] }),
+      { timeoutMs: 30000 }
+    );
+  });
+
+  it("restores supported single-event MECP content for editing", async () => {
+    setupLogApiMocks({ ...logAlpha, content: "MECP/1/M01 north gate" });
+    page = await mountPage(LogEntryObjectLegacyPage, "/missions/logs?mission_uid=mission-alpha");
+    await clickButton("Edit");
+
+    expect(selectByLabel("Event").value).toBe("M01");
+    expect(inputByLabel("Details").value).toBe("north gate");
+    await clickButton("Update Entry");
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/api/r3akt/log-entries",
+      expect.objectContaining({ content: "MECP/1/M01 north gate" }),
       { timeoutMs: 30000 }
     );
   });
