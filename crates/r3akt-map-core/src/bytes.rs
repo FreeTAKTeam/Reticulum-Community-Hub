@@ -32,15 +32,15 @@ fn decode_attachment_text(text: &str) -> Vec<u8> {
     let encoded = trimmed
         .strip_prefix("base64:")
         .or_else(|| trimmed.split_once("base64,").map(|(_, encoded)| encoded));
-    if let Some(encoded) = encoded {
-        if let Ok(bytes) = decode_base64_attachment(encoded) {
-            return bytes;
-        }
+    if let Some(encoded) = encoded
+        && let Ok(bytes) = decode_base64_attachment(encoded)
+    {
+        return bytes;
     }
-    if should_decode_base64_attachment(trimmed) {
-        if let Ok(bytes) = decode_base64_attachment(trimmed) {
-            return bytes;
-        }
+    if should_decode_base64_attachment(trimmed)
+        && let Ok(bytes) = decode_base64_attachment(trimmed)
+    {
+        return bytes;
     }
     trimmed.as_bytes().to_vec()
 }

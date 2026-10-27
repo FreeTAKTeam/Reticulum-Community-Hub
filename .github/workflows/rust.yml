@@ -33,7 +33,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
           components: rustfmt, clippy
 
       - name: Run release readiness gates

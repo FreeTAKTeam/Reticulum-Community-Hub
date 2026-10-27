@@ -69,18 +69,16 @@ impl RchCore {
         if command.command_type.starts_with("checklist.") {
             if let Some(checklist) = optional_text(&command.args, &["checklist_uid"])
                 .and_then(|uid| self.checklists.get(&uid))
-            {
-                if hint
+                && hint
                     .as_ref()
                     .is_some_and(|hint| checklist.mission_uid.as_ref() != Some(hint))
-                {
-                    return Some("mission hint differs from stored checklist scope".into());
-                }
+            {
+                return Some("mission hint differs from stored checklist scope".into());
             }
-        } else if let Some(targets) = self.stored_command_missions(command) {
-            if hint.is_some_and(|hint| !targets.contains(&hint)) {
-                return Some("mission hint differs from stored target scope".into());
-            }
+        } else if let Some(targets) = self.stored_command_missions(command)
+            && hint.is_some_and(|hint| !targets.contains(&hint))
+        {
+            return Some("mission hint differs from stored target scope".into());
         }
         None
     }

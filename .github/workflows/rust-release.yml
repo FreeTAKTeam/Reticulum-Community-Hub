@@ -20,7 +20,7 @@ permissions:
 
 env:
   LXMF_REF: 6782e899ff3feebf221397517dca8525a5c70661
-  RUSTUP_TOOLCHAIN: "1.88"
+  RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
   server-package:

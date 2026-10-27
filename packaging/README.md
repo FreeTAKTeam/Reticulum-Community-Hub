@@ -77,7 +77,7 @@ recording package acceptance. Earlier Linux package requirements do not
 establish the new candidate's compatibility.
 
 Pull request quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.88 formatting, clippy,
+`.github/workflows/rust-pr-quality.yml`. It runs Rust 1.99.1 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
 `cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
 0.15.0 dependency.

@@ -483,20 +483,19 @@ pub fn decode_mecp_message(input: &str) -> Result<DecodedMecpMessage, RchProfile
             extras.pax = Some(value);
             continue;
         }
-        if let Some((latitude, longitude)) = token.split_once(',') {
-            if let (Ok(latitude), Ok(longitude)) =
+        if let Some((latitude, longitude)) = token.split_once(',')
+            && let (Ok(latitude), Ok(longitude)) =
                 (latitude.parse::<f64>(), longitude.parse::<f64>())
-            {
-                if (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude) {
-                    extras.coordinates = Some(MecpCoordinates {
-                        latitude,
-                        longitude,
-                    });
-                } else {
-                    warnings.push(format!("Coordinates outside valid range: \"{token}\"."));
-                }
-                continue;
+        {
+            if (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude) {
+                extras.coordinates = Some(MecpCoordinates {
+                    latitude,
+                    longitude,
+                });
+            } else {
+                warnings.push(format!("Coordinates outside valid range: \"{token}\"."));
             }
+            continue;
         }
         if !eta_consumed && codes.iter().any(|code| code == "R03") {
             let lower = token.to_ascii_lowercase();

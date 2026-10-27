@@ -344,38 +344,32 @@ impl ReadSet<'_> {
                     Some(requirement.skill_uid.as_str())
                 );
             }
-            if kind == "mission.registry.team_member_skill.upsert" {
-                if let (Some(identity), Some(skill)) = (
+            if kind == "mission.registry.team_member_skill.upsert"
+                && let (Some(identity), Some(skill)) = (
                     text(args, &["team_member_rns_identity"]),
                     text(args, &["skill_uid"]),
-                ) {
-                    if r.queried.insert((
-                        "member-skill-pair".into(),
-                        identity.clone(),
-                        Some(skill.clone()),
-                    )) {
-                        let records=r.query("SELECT payload FROM rch_team_member_skills WHERE team_member_rns_identity=?1 AND skill_uid=?2",&[&identity,&skill])?;
-                        for record in records {
-                            if !r.snapshot.team_member_skills.contains(&record) {
-                                r.snapshot.team_member_skills.push(record);
-                            }
-                        }
+                )
+                && r.queried.insert((
+                    "member-skill-pair".into(),
+                    identity.clone(),
+                    Some(skill.clone()),
+                ))
+            {
+                let records=r.query("SELECT payload FROM rch_team_member_skills WHERE team_member_rns_identity=?1 AND skill_uid=?2",&[&identity,&skill])?;
+                for record in records {
+                    if !r.snapshot.team_member_skills.contains(&record) {
+                        r.snapshot.team_member_skills.push(record);
                     }
                 }
             }
-            if kind == "mission.registry.task_skill_requirement.upsert" {
-                if let (Some(task), Some(skill)) =
+            if kind == "mission.registry.task_skill_requirement.upsert"
+                && let (Some(task), Some(skill)) =
                     (text(args, &["task_uid"]), text(args, &["skill_uid"]))
-                {
-                    if r.queried.insert((
-                        "requirement-pair".into(),
-                        task.clone(),
-                        Some(skill.clone()),
-                    )) {
-                        let records=r.query("SELECT payload FROM rch_task_skill_requirements WHERE task_uid=?1 AND skill_uid=?2",&[&task,&skill])?;
-                        r.snapshot.task_skill_requirements.extend(records);
-                    }
-                }
+                && r.queried
+                    .insert(("requirement-pair".into(), task.clone(), Some(skill.clone())))
+            {
+                let records=r.query("SELECT payload FROM rch_task_skill_requirements WHERE task_uid=?1 AND skill_uid=?2",&[&task,&skill])?;
+                r.snapshot.task_skill_requirements.extend(records);
             }
             for eam in r.snapshot.eam_snapshots.clone() {
                 target_teams.insert(eam.team_uid.clone());

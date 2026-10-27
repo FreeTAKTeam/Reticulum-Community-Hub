@@ -3662,10 +3662,10 @@ impl RchCore {
         });
         let mut granted_operations = HashSet::new();
         let mut denied_operations = HashSet::new();
-        if let Some(identity) = normalize_hash(Some(identity)) {
-            if let Some(capabilities) = self.identity_capabilities.get(&identity) {
-                granted_operations.extend(capabilities.iter().cloned());
-            }
+        if let Some(identity) = normalize_hash(Some(identity))
+            && let Some(capabilities) = self.identity_capabilities.get(&identity)
+        {
+            granted_operations.extend(capabilities.iter().cloned());
         }
         for record in self.matching_operation_rights(&subject_refs, mission_uid) {
             if record.granted {
@@ -3758,21 +3758,19 @@ impl RchCore {
         if let Some(topic_id) = optional_text(&command.args, &["topic_id", "id"]) {
             mission_uids.extend(self.mission_uids_for_topic(&topic_id));
         }
-        if command.command_type.starts_with("mission.registry.team.")
-            || command.command_type.starts_with("mission.registry.eam.")
+        if (command.command_type.starts_with("mission.registry.team.")
+            || command.command_type.starts_with("mission.registry.eam."))
+            && let Some(team_uid) = optional_text(&command.args, &["team_uid", "uid"])
         {
-            if let Some(team_uid) = optional_text(&command.args, &["team_uid", "uid"]) {
-                mission_uids.extend(self.team_mission_ids(&team_uid));
-            }
+            mission_uids.extend(self.team_mission_ids(&team_uid));
         }
-        if command
+        if (command
             .command_type
             .starts_with("mission.registry.team_member.")
-            || command.command_type.starts_with("mission.registry.eam.")
+            || command.command_type.starts_with("mission.registry.eam."))
+            && let Some(member_uid) = optional_text(&command.args, &["team_member_uid", "uid"])
         {
-            if let Some(member_uid) = optional_text(&command.args, &["team_member_uid", "uid"]) {
-                mission_uids.extend(self.mission_uids_for_team_member(&member_uid));
-            }
+            mission_uids.extend(self.mission_uids_for_team_member(&member_uid));
         }
         let mut mission_uids: Vec<_> = mission_uids.into_iter().collect();
         mission_uids.sort();
@@ -3820,10 +3818,10 @@ impl RchCore {
             mission_uids.extend(self.mission_uids_for_team_member(team_member_uid));
         }
         for (assignment_uid, linked_asset_uid) in &self.assignment_asset_links {
-            if linked_asset_uid == asset_uid {
-                if let Some(assignment) = self.assignments.get(assignment_uid) {
-                    mission_uids.push(assignment.mission_uid.clone());
-                }
+            if linked_asset_uid == asset_uid
+                && let Some(assignment) = self.assignments.get(assignment_uid)
+            {
+                mission_uids.push(assignment.mission_uid.clone());
             }
         }
         for assignment in self.assignments.values() {
@@ -4372,20 +4370,19 @@ impl RchCore {
                 reason,
             ))];
         }
-        if let Some(required_capability) = required_capability(command.command_type.as_str()) {
-            if self.authorization_required
-                && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-                && !self.has_mission_access_operation(command, required_capability)
-            {
-                return vec![MissionSyncResponse::results(
-                    Self::rejected_result_with_capabilities(
-                        command,
-                        "unauthorized",
-                        format!("Capability '{required_capability}' is required"),
-                        vec![required_capability.to_string()],
-                    ),
-                )];
-            }
+        if let Some(required_capability) = required_capability(command.command_type.as_str())
+            && self.authorization_required
+            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.has_mission_access_operation(command, required_capability)
+        {
+            return vec![MissionSyncResponse::results(
+                Self::rejected_result_with_capabilities(
+                    command,
+                    "unauthorized",
+                    format!("Capability '{required_capability}' is required"),
+                    vec![required_capability.to_string()],
+                ),
+            )];
         }
 
         let mut responses = vec![MissionSyncResponse::results(Self::accepted_result(command))];
@@ -4505,20 +4502,18 @@ impl RchCore {
         }
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
+            && self.authorization_required
+            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.has_checklist_access_operation(command, required_capability)
         {
-            if self.authorization_required
-                && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-                && !self.has_checklist_access_operation(command, required_capability)
-            {
-                return vec![MissionSyncResponse::results(
-                    Self::rejected_result_with_capabilities(
-                        command,
-                        "unauthorized",
-                        format!("Capability '{required_capability}' is required"),
-                        vec![required_capability.to_string()],
-                    ),
-                )];
-            }
+            return vec![MissionSyncResponse::results(
+                Self::rejected_result_with_capabilities(
+                    command,
+                    "unauthorized",
+                    format!("Capability '{required_capability}' is required"),
+                    vec![required_capability.to_string()],
+                ),
+            )];
         }
         match self.apply_checklist_command(command) {
             Ok(event) => {
@@ -6939,12 +6934,12 @@ impl RchCore {
             .values()
             .find(|eam| eam.callsign == callsign && eam.deleted_ts_ms.is_none())
             .map(|eam| eam.eam_uid.clone());
-        if let Some(callsign_uid) = active_callsign_uid.as_deref() {
-            if active_member_uid.as_deref() != Some(callsign_uid) {
-                return Err(RchCoreError::InvalidPayload(format!(
-                    "callsign '{callsign}' is already assigned to another status snapshot"
-                )));
-            }
+        if let Some(callsign_uid) = active_callsign_uid.as_deref()
+            && active_member_uid.as_deref() != Some(callsign_uid)
+        {
+            return Err(RchCoreError::InvalidPayload(format!(
+                "callsign '{callsign}' is already assigned to another status snapshot"
+            )));
         }
         let deleted_uids: HashSet<String> = self
             .eam_snapshots
@@ -6970,12 +6965,12 @@ impl RchCore {
             .values()
             .find(|eam| eam.team_member_uid == team_member_uid && eam.deleted_ts_ms.is_none())
             .map(|eam| eam.eam_uid.clone());
-        if let Some(active_uid) = active_uid {
-            if optional_text(args, &["eam_uid"]).is_some_and(|provided| provided != active_uid) {
-                return Err(RchCoreError::InvalidPayload(format!(
-                    "eam_uid '{eam_uid}' does not match the existing snapshot for team_member_uid '{team_member_uid}'"
-                )));
-            }
+        if let Some(active_uid) = active_uid
+            && optional_text(args, &["eam_uid"]).is_some_and(|provided| provided != active_uid)
+        {
+            return Err(RchCoreError::InvalidPayload(format!(
+                "eam_uid '{eam_uid}' does not match the existing snapshot for team_member_uid '{team_member_uid}'"
+            )));
         }
         let now = utc_now_ms();
         let statuses = EamStatuses::from_args(args)?;
@@ -7030,14 +7025,13 @@ impl RchCore {
         args: &Value,
     ) -> Result<(), RchCoreError> {
         let canonical_color = canonical_team_color_for_uid(team_uid);
-        if let Some(group_name) = optional_text(args, &["group_name"]) {
-            if let Some(canonical_color) = canonical_color {
-                if normalize_team_color(&group_name).ok().as_deref() != Some(canonical_color) {
-                    return Err(RchCoreError::InvalidPayload(format!(
-                        "group_name '{group_name}' does not match canonical team_uid '{team_uid}'"
-                    )));
-                }
-            }
+        if let Some(group_name) = optional_text(args, &["group_name"])
+            && let Some(canonical_color) = canonical_color
+            && normalize_team_color(&group_name).ok().as_deref() != Some(canonical_color)
+        {
+            return Err(RchCoreError::InvalidPayload(format!(
+                "group_name '{group_name}' does not match canonical team_uid '{team_uid}'"
+            )));
         }
 
         if !self.teams.contains_key(team_uid) {
@@ -7283,10 +7277,10 @@ impl RchCore {
             .is_some_and(|object| object.contains_key("team_uid"))
         {
             let team_uid = optional_text_or_empty(args, &["team_uid"]).and_then(none_if_empty);
-            if let Some(team_uid) = &team_uid {
-                if !self.teams.contains_key(team_uid) {
-                    return Err(RchCoreError::TeamNotFound);
-                }
+            if let Some(team_uid) = &team_uid
+                && !self.teams.contains_key(team_uid)
+            {
+                return Err(RchCoreError::TeamNotFound);
             }
             member.team_uid = team_uid;
         }
@@ -7400,10 +7394,10 @@ impl RchCore {
         });
         if let Some(team_member_uid) = optional_text_or_empty(args, &["team_member_uid"]) {
             let team_member_uid = none_if_empty(team_member_uid);
-            if let Some(team_member_uid) = &team_member_uid {
-                if !self.team_members.contains_key(team_member_uid) {
-                    return Err(RchCoreError::TeamMemberNotFound);
-                }
+            if let Some(team_member_uid) = &team_member_uid
+                && !self.team_members.contains_key(team_member_uid)
+            {
+                return Err(RchCoreError::TeamMemberNotFound);
             }
             asset.team_member_uid = team_member_uid;
         }
@@ -7894,10 +7888,10 @@ impl RchCore {
         }
         validate_checklist_columns(&columns)?;
         let mission_uid = optional_text(&command.args, &["mission_uid", "mission_id"]);
-        if let Some(mission_uid) = &mission_uid {
-            if !self.missions.contains_key(mission_uid) {
-                return Err(RchCoreError::MissionNotFound);
-            }
+        if let Some(mission_uid) = &mission_uid
+            && !self.missions.contains_key(mission_uid)
+        {
+            return Err(RchCoreError::MissionNotFound);
         }
         let now = utc_now_ms();
         let uid = optional_text(&command.args, &["checklist_uid", "uid"])
@@ -8157,10 +8151,10 @@ impl RchCore {
         }) {
             let mission_uid = optional_text_or_empty(patch, &["mission_uid", "mission_id"])
                 .and_then(none_if_empty);
-            if let Some(mission_uid) = &mission_uid {
-                if !self.missions.contains_key(mission_uid) {
-                    return Err(RchCoreError::MissionNotFound);
-                }
+            if let Some(mission_uid) = &mission_uid
+                && !self.missions.contains_key(mission_uid)
+            {
+                return Err(RchCoreError::MissionNotFound);
             }
             checklist.mission_uid = mission_uid;
         }
@@ -11862,12 +11856,12 @@ fn apply_optional_mission_status_fields(
         .is_some_and(|object| object.contains_key("mission_priority"))
     {
         mission.mission_priority = optional_i64(args, "mission_priority")?;
-        if let Some(priority) = mission.mission_priority {
-            if !(0..=100).contains(&priority) {
-                return Err(RchCoreError::InvalidPayload(
-                    "mission_priority must be between 0 and 100".to_string(),
-                ));
-            }
+        if let Some(priority) = mission.mission_priority
+            && !(0..=100).contains(&priority)
+        {
+            return Err(RchCoreError::InvalidPayload(
+                "mission_priority must be between 0 and 100".to_string(),
+            ));
         }
     }
     Ok(())
@@ -12177,10 +12171,10 @@ fn derive_task_status(
     completed_ts_ms: Option<i64>,
 ) -> (String, bool) {
     if user_status == "COMPLETE" {
-        if let (Some(due), Some(completed)) = (due_ts_ms, completed_ts_ms) {
-            if completed > due {
-                return ("COMPLETE_LATE".to_string(), true);
-            }
+        if let (Some(due), Some(completed)) = (due_ts_ms, completed_ts_ms)
+            && completed > due
+        {
+            return ("COMPLETE_LATE".to_string(), true);
         }
         return ("COMPLETE".to_string(), false);
     }

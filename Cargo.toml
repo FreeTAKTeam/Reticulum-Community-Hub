@@ -66,5 +66,6 @@ zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runti
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+assert_is_empty = "allow"

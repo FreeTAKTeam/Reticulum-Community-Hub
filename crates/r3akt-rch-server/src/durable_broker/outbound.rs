@@ -239,11 +239,9 @@ pub(super) fn stage_business_message(
         let operation =
             sha256_lower_hex(format!("northbound:{}:{destination}", message.message_id).as_bytes());
         let mut fields = fields.clone();
-        if text_only {
-            if let Some(fields) = fields.as_object_mut() {
-                for key in ["5", "0x05", "attachments", "FIELD_ATTACHMENTS"] {
-                    fields.remove(key);
-                }
+        if text_only && let Some(fields) = fields.as_object_mut() {
+            for key in ["5", "0x05", "attachments", "FIELD_ATTACHMENTS"] {
+                fields.remove(key);
             }
         }
         let intent = DurableOutboundIntent {

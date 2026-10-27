@@ -115,10 +115,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
           components: rustfmt
 
       - name: Check Rust formatting
@@ -146,10 +146,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
           components: clippy
 
       - name: Check locked dependencies
@@ -176,10 +176,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -205,10 +205,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
 
       - name: Check locked dependencies
         working-directory: rch
@@ -238,10 +238,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
@@ -266,10 +266,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.99.1
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.99.1"
 
       - name: Verify existing setup file replacement and rollback on Windows
         working-directory: rch

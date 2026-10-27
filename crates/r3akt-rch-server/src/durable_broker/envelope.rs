@@ -18,17 +18,16 @@ fn command_alias(command: &r3akt_protocol::Command) -> r3akt_protocol::Command {
         _ => name.as_str(),
     }
     .into();
-    if result.name == "mission.nick" {
-        if let Some(nickname) =
+    if result.name == "mission.nick"
+        && let Some(nickname) =
             command_arg_text_with_position(&command.args, &["nickname", "nick", "name"], 0)
-        {
-            result.args["nickname"] = json!(nickname);
-        }
+    {
+        result.args["nickname"] = json!(nickname);
     }
-    if result.name == "topic.subscribe" {
-        if let Some(topic) = command_topic_id(command) {
-            result.args["topic_id"] = json!(topic);
-        }
+    if result.name == "topic.subscribe"
+        && let Some(topic) = command_topic_id(command)
+    {
+        result.args["topic_id"] = json!(topic);
     }
     result
 }
@@ -262,47 +261,47 @@ fn apply_envelope_payload(
                 )?);
             }
             if response.event_field().is_some() && !rejected {
-                if team.is_none() {
-                    if let Some(mission) = mission_uid_from_response_fields(&response) {
-                        unit.prepare_recipients(Some(&mission), None)
-                            .map_err(storage)?;
-                        let snapshot = unit.core_mut().snapshot();
-                        let teams = snapshot
-                            .mission_team_links
-                            .iter()
-                            .filter(|link| link.mission_uid == mission)
-                            .map(|link| link.team_uid.clone())
-                            .collect::<Vec<_>>();
-                        let members = snapshot
-                            .team_members
-                            .iter()
-                            .filter(|member| {
-                                member
-                                    .team_uid
-                                    .as_ref()
-                                    .is_some_and(|team| teams.contains(team))
-                            })
-                            .map(|member| member.uid.clone())
-                            .collect::<HashSet<_>>();
-                        destinations = snapshot
-                            .team_members
-                            .iter()
-                            .filter(|member| members.contains(&member.uid))
-                            .map(|member| member.rns_identity.as_str())
-                            .chain(
-                                snapshot
-                                    .team_member_client_links
-                                    .iter()
-                                    .filter(|link| members.contains(&link.team_member_uid))
-                                    .map(|link| link.client_identity.as_str()),
-                            )
-                            .filter_map(reticulum_destination_hash)
-                            .filter(|d| normalize_identity_key(d) != source)
-                            .collect();
-                        destinations.sort();
-                        destinations.dedup();
-                        destinations.retain(|d| allowed(unit.core_mut(), d, allowlist));
-                    }
+                if team.is_none()
+                    && let Some(mission) = mission_uid_from_response_fields(&response)
+                {
+                    unit.prepare_recipients(Some(&mission), None)
+                        .map_err(storage)?;
+                    let snapshot = unit.core_mut().snapshot();
+                    let teams = snapshot
+                        .mission_team_links
+                        .iter()
+                        .filter(|link| link.mission_uid == mission)
+                        .map(|link| link.team_uid.clone())
+                        .collect::<Vec<_>>();
+                    let members = snapshot
+                        .team_members
+                        .iter()
+                        .filter(|member| {
+                            member
+                                .team_uid
+                                .as_ref()
+                                .is_some_and(|team| teams.contains(team))
+                        })
+                        .map(|member| member.uid.clone())
+                        .collect::<HashSet<_>>();
+                    destinations = snapshot
+                        .team_members
+                        .iter()
+                        .filter(|member| members.contains(&member.uid))
+                        .map(|member| member.rns_identity.as_str())
+                        .chain(
+                            snapshot
+                                .team_member_client_links
+                                .iter()
+                                .filter(|link| members.contains(&link.team_member_uid))
+                                .map(|link| link.client_identity.as_str()),
+                        )
+                        .filter_map(reticulum_destination_hash)
+                        .filter(|d| normalize_identity_key(d) != source)
+                        .collect();
+                    destinations.sort();
+                    destinations.dedup();
+                    destinations.retain(|d| allowed(unit.core_mut(), d, allowlist));
                 }
                 // Team members may use plain chat clients: describe the event.
                 let event_type = response

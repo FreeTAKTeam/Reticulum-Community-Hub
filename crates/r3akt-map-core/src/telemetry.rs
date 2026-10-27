@@ -432,10 +432,11 @@ fn json_number_to_i64(value: &JsonValue) -> Option<i64> {
 }
 
 fn json_number_from_f64(value: f64) -> JsonValue {
-    if value.is_finite() && value.fract() == 0.0 {
-        if let Ok(integer) = format!("{value:.0}").parse::<i64>() {
-            return JsonValue::from(integer);
-        }
+    if value.is_finite()
+        && value.fract() == 0.0
+        && let Ok(integer) = format!("{value:.0}").parse::<i64>()
+    {
+        return JsonValue::from(integer);
     }
     JsonValue::from(value)
 }

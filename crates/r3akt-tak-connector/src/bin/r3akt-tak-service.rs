@@ -81,20 +81,20 @@ fn run_service(config: &ServiceConfig) -> Result<(), Box<dyn std::error::Error>>
     let mut state = BridgeState::default();
     loop {
         let mut failures = Vec::new();
-        if config.mode.enable_rch_to_tak() {
-            if let Err(error) = bridge_rch_to_tak(&client, &mut service, &mut state) {
-                eprintln!(
-                    "RCH to TAK bridge will retry; pending={}: {error}",
-                    service.status().queue.pending
-                );
-                failures.push(error.to_string());
-            }
+        if config.mode.enable_rch_to_tak()
+            && let Err(error) = bridge_rch_to_tak(&client, &mut service, &mut state)
+        {
+            eprintln!(
+                "RCH to TAK bridge will retry; pending={}: {error}",
+                service.status().queue.pending
+            );
+            failures.push(error.to_string());
         }
-        if let Some(receiver) = receiver.as_mut() {
-            if let Err(error) = bridge_tak_to_rch(&client, receiver, &mut state) {
-                eprintln!("TAK to RCH bridge will retry: {error}");
-                failures.push(error.to_string());
-            }
+        if let Some(receiver) = receiver.as_mut()
+            && let Err(error) = bridge_tak_to_rch(&client, receiver, &mut state)
+        {
+            eprintln!("TAK to RCH bridge will retry: {error}");
+            failures.push(error.to_string());
         }
         if config.once {
             if !failures.is_empty() {

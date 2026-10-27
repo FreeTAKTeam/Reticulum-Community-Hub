@@ -76,21 +76,19 @@ impl ReadSet<'_> {
             }
         }
         if kind.starts_with("mission.registry.rights.") {
-            if kind == "mission.registry.rights.bridge.update" {
-                if let (Some(subject), Some(operation)) =
+            if kind == "mission.registry.rights.bridge.update"
+                && let (Some(subject), Some(operation)) =
                     (text(a, &["subject_id"]), text(a, &["operation"]))
-                {
-                    if let Ok(key) = crate::operation_rights::operation_right_key(
-                        text(a, &["subject_type"]).as_deref().unwrap_or("identity"),
-                        &subject,
-                        &operation,
-                        text(a, &["scope_type"]).as_deref().unwrap_or(""),
-                        text(a, &["scope_id"]).as_deref().unwrap_or(""),
-                    ) {
-                        let rights=r.query("SELECT payload FROM rch_subject_operation_rights WHERE subject_type=?1 AND subject_id=?2 AND operation=?3 AND scope_type=?4 AND scope_id=?5",&[&key.0,&key.1,&key.2,&key.3,&key.4])?;
-                        r.snapshot.subject_operation_rights.extend(rights);
-                    }
-                }
+                && let Ok(key) = crate::operation_rights::operation_right_key(
+                    text(a, &["subject_type"]).as_deref().unwrap_or("identity"),
+                    &subject,
+                    &operation,
+                    text(a, &["scope_type"]).as_deref().unwrap_or(""),
+                    text(a, &["scope_id"]).as_deref().unwrap_or(""),
+                )
+            {
+                let rights=r.query("SELECT payload FROM rch_subject_operation_rights WHERE subject_type=?1 AND subject_id=?2 AND operation=?3 AND scope_type=?4 AND scope_id=?5",&[&key.0,&key.1,&key.2,&key.3,&key.4])?;
+                r.snapshot.subject_operation_rights.extend(rights);
             }
             select!(
                 r,

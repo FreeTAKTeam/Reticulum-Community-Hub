@@ -25,13 +25,12 @@ impl AppState {
             .get("X-API-Key")
             .and_then(|value| value.to_str().ok());
         let bearer = bearer_token(headers);
-        if let Some(expected) = &self.api_key {
-            if api_key.is_some_and(|value| secure_string_eq(value, expected))
-                || bearer.is_some_and(|value| secure_string_eq(value, expected))
-            {
-                self.clear_auth_failures("http", client_addr)?;
-                return Ok(true);
-            }
+        if let Some(expected) = &self.api_key
+            && (api_key.is_some_and(|value| secure_string_eq(value, expected))
+                || bearer.is_some_and(|value| secure_string_eq(value, expected)))
+        {
+            self.clear_auth_failures("http", client_addr)?;
+            return Ok(true);
         }
         self.ensure_auth_attempt_allowed("http", client_addr)?;
         let supplied_credential = api_key.or(bearer);
@@ -68,13 +67,12 @@ impl AppState {
         token: Option<&str>,
         client_addr: Option<SocketAddr>,
     ) -> Result<bool, ApiError> {
-        if let Some(expected) = &self.api_key {
-            if api_key.is_some_and(|value| secure_string_eq(value, expected))
-                || token.is_some_and(|value| secure_string_eq(value, expected))
-            {
-                self.clear_auth_failures("websocket", client_addr)?;
-                return Ok(true);
-            }
+        if let Some(expected) = &self.api_key
+            && (api_key.is_some_and(|value| secure_string_eq(value, expected))
+                || token.is_some_and(|value| secure_string_eq(value, expected)))
+        {
+            self.clear_auth_failures("websocket", client_addr)?;
+            return Ok(true);
         }
         self.ensure_auth_attempt_allowed("websocket", client_addr)?;
         let supplied_credential = api_key.or(token);

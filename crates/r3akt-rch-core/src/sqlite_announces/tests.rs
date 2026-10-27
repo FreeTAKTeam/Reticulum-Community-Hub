@@ -289,7 +289,7 @@ fn duplicate_snapshot_keys_fail_without_replacing_the_committed_history() {
     let mut store = RchSqliteStore::in_memory().expect("store");
     let original = record("original", 10);
     store
-        .upsert_identity_announces(&[original.clone()])
+        .upsert_identity_announces(std::slice::from_ref(&original))
         .expect("original");
     let mut snapshot = RchCore::new().snapshot();
     snapshot.identity_announces = vec![record("duplicate", 20), record("duplicate", 30)];

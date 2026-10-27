@@ -29,11 +29,13 @@ pub(super) fn direct_lxmf_telemetry(
 
 fn hex_bytes(text: &str, limit: usize) -> Result<Vec<u8>, &'static str> {
     let text = text.strip_prefix("0x").unwrap_or(text);
-    if text.len() > limit * 2 || text.len() % 2 != 0 {
+    if text.len() > limit * 2 || !text.len().is_multiple_of(2) {
         return Err("malformed LXMF FIELD_TELEMETRY (0x02): invalid or excessive raw frame length");
     }
     text.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let digit = |b: u8| match b {
                 b'0'..=b'9' => Some(b - b'0'),

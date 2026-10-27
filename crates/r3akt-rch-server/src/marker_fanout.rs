@@ -175,13 +175,13 @@ pub(super) fn rem_marker_event_fields(
 fn marker_activity_fields(activity: &str, marker: &MarkerRecord, source: &str) -> Option<Value> {
     let event_type = mission_marker_event_type(activity)?;
     let mut fields = rem_marker_event_fields(event_type, marker, source);
-    if activity != "marker.deleted" {
-        if let (Some(fields), Value::Object(telemetry)) = (
+    if activity != "marker.deleted"
+        && let (Some(fields), Value::Object(telemetry)) = (
             fields.as_object_mut(),
             rem_marker_telemetry_command_fields(activity, marker, source),
-        ) {
-            fields.extend(telemetry);
-        }
+        )
+    {
+        fields.extend(telemetry);
     }
     Some(fields)
 }

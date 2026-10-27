@@ -24,10 +24,10 @@ impl SeenEntries {
             return;
         }
         self.order.push_back(key);
-        if self.order.len() > SEEN_CAPACITY {
-            if let Some(oldest) = self.order.pop_front() {
-                self.keys.remove(&oldest);
-            }
+        if self.order.len() > SEEN_CAPACITY
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.keys.remove(&oldest);
         }
     }
 }
@@ -91,12 +91,12 @@ pub(super) fn bridge_rch_to_tak<S: TakCotSender>(
     let mut admitted = 0;
     while progress.remaining > 0 && admitted < budget {
         let entry = &entries[progress.next];
-        if let Some((snapshot, label, key)) = location_snapshot_from_entry(entry) {
-            if !state.telemetry.contains(&key) {
-                service.queue_location(&snapshot, Utc::now(), label.as_deref())?;
-                state.telemetry.insert(key);
-                admitted += 1;
-            }
+        if let Some((snapshot, label, key)) = location_snapshot_from_entry(entry)
+            && !state.telemetry.contains(&key)
+        {
+            service.queue_location(&snapshot, Utc::now(), label.as_deref())?;
+            state.telemetry.insert(key);
+            admitted += 1;
         }
         progress.next = (progress.next + 1) % entries.len();
         progress.remaining -= 1;

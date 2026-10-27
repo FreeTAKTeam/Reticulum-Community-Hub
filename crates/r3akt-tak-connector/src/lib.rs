@@ -313,10 +313,9 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                     root_depth = Some(depth);
                 } else if root_depth.is_some_and(|root| depth == root + 1)
                     && element.name().as_ref() == b"point"
+                    && let Some(parsed_event) = event.as_mut()
                 {
-                    if let Some(parsed_event) = event.as_mut() {
-                        parsed_event.point = point_from_xml_start(&reader, &element)?;
-                    }
+                    parsed_event.point = point_from_xml_start(&reader, &element)?;
                 }
             }
             Ok(XmlEvent::Empty(element)) => {
@@ -332,10 +331,9 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                     root_depth = Some(element_depth);
                 } else if root_depth.is_some_and(|root| element_depth == root + 1)
                     && element.name().as_ref() == b"point"
+                    && let Some(parsed_event) = event.as_mut()
                 {
-                    if let Some(parsed_event) = event.as_mut() {
-                        parsed_event.point = point_from_xml_start(&reader, &element)?;
-                    }
+                    parsed_event.point = point_from_xml_start(&reader, &element)?;
                 }
             }
             Ok(XmlEvent::End(_)) => {
