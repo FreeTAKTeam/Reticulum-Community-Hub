@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: 6782e899ff3feebf221397517dca8525a5c70661
+  LXMF_REF: eee8b2c64b11424f15619d180c28880f7748ff81
   RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
@@ -110,6 +110,18 @@ jobs:
         if: matrix.platform == 'Linux AMD64'
         working-directory: rch
         run: scripts/build-debian-release.sh ../LXMF-rs dist/debian-build
+
+      - name: Use verified upstream Linux AMD64 daemon
+        if: matrix.platform == 'Linux AMD64'
+        working-directory: rch
+        run: |
+          test "$LXMF_REF" = eee8b2c64b11424f15619d180c28880f7748ff81
+          test "$(jq -r .release_tag config/lxmf-runtime-baseline.json)" = reticulumd-test-0.15.0-linux-eee8b2c6.1
+          archive=reticulumd_0.15.0-linux-eee8b2c6.1_x86_64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/FreeTAKTeam/LXMF-rs/releases/download/reticulumd-test-0.15.0-linux-eee8b2c6.1/$archive"
+          echo "eadb00c607372b71aeb574a17bc733711078e7759022fae2ec608699fbd27e50  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" bin/reticulumd
+          install -m 755 "$RUNNER_TEMP/bin/reticulumd" dist/debian-build/bin/reticulumd
 
       - name: Record LXMF release commit
         id: lxmf
