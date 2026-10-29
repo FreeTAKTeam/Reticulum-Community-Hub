@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: 45b5f5650b375ff418ec849cd9f99bf7f63a106c
+  LXMF_REF: c45a5113807fdf5618b55d4e6ba7f598c3eaafe7
   RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
@@ -115,12 +115,12 @@ jobs:
         if: matrix.platform == 'Linux AMD64'
         working-directory: rch
         run: |
-          test "$LXMF_REF" = 45b5f5650b375ff418ec849cd9f99bf7f63a106c
-          test "$(jq -r .release_tag config/lxmf-runtime-baseline.json)" = v0.16.0
-          archive=lxmf-rs_0.16.0_linux-x86_64.tar.gz
-          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/FreeTAKTeam/LXMF-rs/releases/download/v0.16.0/$archive"
-          echo "5bce62a02fcde924580819f8c5385638fb6a0380985f8ffbc36a10caacf67007  $RUNNER_TEMP/$archive" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" bin/reticulumd
+          test "$LXMF_REF" = c45a5113807fdf5618b55d4e6ba7f598c3eaafe7
+          test "$(jq -r .release_tag config/lxmf-runtime-baseline.json)" = reticulumd-test-0.16.0-linux-c45a5113.1
+          archive=reticulumd_0.16.0-linux-c45a5113.1_x86_64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "https://github.com/FreeTAKTeam/LXMF-rs/releases/download/reticulumd-test-0.16.0-linux-c45a5113.1/$archive"
+          echo "2785ea8379fd2f565df2e16b3d0346a212dd3a284f15b1eecea057a13b4b0ba3  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" --strip-components=1 reticulumd_0.16.0-linux-c45a5113.1_x86_64/bin/reticulumd
           install -m 755 "$RUNNER_TEMP/bin/reticulumd" dist/debian-build/bin/reticulumd
 
       - name: Record LXMF release commit
