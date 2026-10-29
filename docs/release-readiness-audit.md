@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.31 Linux AMD64 testing candidate
+
+Preview.31 pairs LXMF-rs SDK 0.16.0 at `45b5f5650b375ff418ec849cd9f99bf7f63a106c` with the exact daemon from the published LXMF-rs `v0.16.0` Linux x86-64 archive. The archive checksum is verified before packaging. See [the preview.31 notes](release-notes-v3.0.0-preview.31.md). Qualification remains pending until performed.
+
 ## Preview.30 Linux AMD64 testing candidate
 
 Preview.30 pairs LXMF-rs SDK 0.15.0 at `eee8b2c64b11424f15619d180c28880f7748ff81` with the exact upstream Linux x86-64 daemon from `reticulumd-test-0.15.0-linux-eee8b2c6.1`. The archive checksum is verified before packaging. See [the preview.30 notes](release-notes-v3.0.0-preview.30.md) for qualification and remaining limits. Final release and installed-package checks remain pending until performed.

@@ -16,7 +16,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LXMF_REF: eee8b2c64b11424f15619d180c28880f7748ff81
+  LXMF_REF: 45b5f5650b375ff418ec849cd9f99bf7f63a106c
 
 jobs:
   msrv-docs:

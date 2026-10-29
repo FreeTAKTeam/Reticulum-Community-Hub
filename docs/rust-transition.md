@@ -58,7 +58,7 @@ and at least one topic/chat/checklist/mission flow.
 GitHub PR quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88 for the
 quality gates and the locked workspace minimum-version check, matching the
-paired LXMF-rs 0.15.0 dependency. It exposes separate required checks for formatting, clippy with
+paired LXMF-rs 0.16.0 dependency. It exposes separate required checks for formatting, clippy with
 `-D warnings`, MSRV and denied-warning rustdoc, locked workspace tests, UI
 lint/type-check/tests/build, release server/TAK-service builds, and
 `cargo audit`.
@@ -222,9 +222,9 @@ Release blockers cleared in the latest parity pass:
   six `/internal/delivery-*` mutation callbacks have been removed without
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
-- Production library dependencies use LXMF `0.15.0` from immutable revision
-  `eee8b2c64b11424f15619d180c28880f7748ff81`
-  (`reticulumd-test-0.15.0-linux-eee8b2c6.1`); a clean server build does not
+- Production library dependencies use LXMF `0.16.0` from immutable revision
+  `45b5f5650b375ff418ec849cd9f99bf7f63a106c`
+  (`v0.16.0`); a clean server build does not
   require a sibling checkout. CI and release packages use that same revision,
   including the #678 announce-cache cleanup and #663 resource/ZeroMQ
   follow-through. The paired dependency requires Rust 1.88 or newer.
