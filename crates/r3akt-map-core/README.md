@@ -1,7 +1,7 @@
 # r3akt-map-core
 
 Shared R3AKT map objects (point markers and their symbol catalog) and the
-Telemeter telemetry receive contract. RCH consumes this crate; REM should
+Telemeter telemetry send/receive contract. RCH consumes this crate; REM must
 consume the same pinned revision instead of re-implementing either model
 ([RCH #259](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/issues/259)).
 
@@ -32,7 +32,32 @@ and parity tests run against this crate.
 
 In scope: domain types, validation and normalization, the symbol catalog,
 creation/update rules, the RCH marker JSON representation, idempotency rules,
-optional SQLite persistence, and checked Telemeter decoding.
+optional SQLite persistence, checked Telemeter decoding and `telemetry_encode::encode`.
+
+Sideband is the reference implementation. Location sensor 2 contains six
+big-endian binary readings and an epoch-seconds fix timestamp. Latitude and
+longitude are signed millionths of degrees, altitude signed centimetres,
+speed unsigned hundredths of **km/h**, bearing signed hundredths of degrees,
+and accuracy unsigned centimetres. The time sensor does not replace fix time.
+Battery charge is a percentage, not a fraction. The encoder rejects invalid
+coordinates, non-finite readings and overflow instead of silently saturating.
+
+Columba 2.2.6 copies **m/s** into the speed slot. This is a documented client
+compatibility exception, not the standard: callers must explicitly select that
+profile. No unit discriminator exists in Telemeter, so receivers cannot infer
+it from the bytes. Decoding preserves the numeric wire speed.
+
+`tests/fixtures/sideband_pyxis.json` is imported unchanged from Pyxis
+`5181fdd7b589e544b5825fbf1c631c4d79a7039d`, whose reference is Sideband
+`2000d81a44bff57e3b3cb7d45915ba29bbde4e18`. Both directions are checked against
+all five byte vectors. `scripts/check-sideband-pyxis-fixtures.py` executes the
+pinned Sideband pack/unpack methods and Pyxis C++ codec independently. The
+existing Columba 2.2.6 fixture and JVM harness remain regression gates.
+
+RCH's collector still recognizes numeric command `1` in field `0x09`, returning
+a plain field `0x03` list of `[source_bytes, seconds, packed_telemeter, appearance]`.
+REM's `T1` command is not a collector request. Broker regressions exercise these
+distinctions, preserving the original telemetry bytes and source age.
 
 Out of scope, kept in each application's adapters: HTTP request parsing and
 responses (RCH keeps its Python-compatible request schema, such as the
@@ -63,7 +88,7 @@ the most recently updated copy. `MarkerRecord::create_with_id` and
 
 - Default: pure domain and telemetry; no SQLite, no async runtime, no server
   crates.
-- `sqlite`: `rusqlite` (bundled), `rmp-serde` and `r3akt-profile-rch`.
+- `sqlite`: `rusqlite` (bundled) and `r3akt-profile-rch`.
   `sqlite::ensure_schema` creates the RCH-compatible tables for standalone
   databases; RCH creates them through its own migrations.
 
@@ -79,7 +104,7 @@ CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android26-clang \
   cargo build -p r3akt-map-core --features sqlite --target aarch64-linux-android
 ```
 
-Minimum Rust version follows the workspace (`1.85`).
+Minimum Rust version follows the workspace (`1.88`).
 
 ## Consuming from REM
 
