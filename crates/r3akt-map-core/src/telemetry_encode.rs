@@ -57,6 +57,19 @@ pub fn encode(
     location: Option<Location>,
     battery: Option<(f64, bool)>,
 ) -> Result<Vec<u8>, &'static str> {
+    encode_with_information(timestamp_s, location, battery, None)
+}
+
+/// Encode standard sensors plus Sideband's Information sensor (0x0f).
+///
+/// # Errors
+/// Rejects invalid sensor readings or timestamps.
+pub fn encode_with_information(
+    timestamp_s: u64,
+    location: Option<Location>,
+    battery: Option<(f64, bool)>,
+    information: Option<&str>,
+) -> Result<Vec<u8>, &'static str> {
     if timestamp_s >= 253_402_300_800 || location.is_some_and(|l| l.updated_at_s >= 253_402_300_800)
     {
         return Err("invalid telemetry timestamp");
@@ -88,7 +101,9 @@ pub fn encode(
     let mut serializer = rmp_serde::Serializer::new(&mut bytes);
     let mut map = (&mut serializer)
         .serialize_map(Some(
-            1 + usize::from(location.is_some()) + usize::from(battery.is_some()),
+            1 + usize::from(location.is_some())
+                + usize::from(battery.is_some())
+                + usize::from(information.is_some()),
         ))
         .map_err(|_| "telemetry encoding failed")?;
     map.serialize_entry(&1_u8, &timestamp_s)
@@ -99,6 +114,10 @@ pub fn encode(
     }
     if let Some(battery) = battery {
         map.serialize_entry(&4_u8, &battery)
+            .map_err(|_| "telemetry encoding failed")?;
+    }
+    if let Some(information) = information {
+        map.serialize_entry(&15_u8, information)
             .map_err(|_| "telemetry encoding failed")?;
     }
     map.end().map_err(|_| "telemetry encoding failed")?;

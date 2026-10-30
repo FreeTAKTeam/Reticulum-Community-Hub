@@ -1,5 +1,8 @@
 <template>
   <div class="webmap-cosmos" :class="{ 'webmap-cosmos--sidebar-collapsed': markersPanelCollapsed }">
+    <MarkerShareModal v-if="markerShareId" :marker-id="markerShareId"
+      :marker-name="markersStore.markerIndex.get(markerShareId)?.name ?? 'Marker'"
+      @close="markerShareId = null" />
     <section class="webmap-main">
       <div class="webmap-stage">
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
@@ -596,6 +599,7 @@ import type * as GeoJSON from "geojson";
 import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
 import { get, put } from "../api/client";
 import { endpoints } from "../api/endpoints";
+import MarkerShareModal from "../components/MarkerShareModal.vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import BaseInput from "../components/BaseInput.vue";
@@ -627,7 +631,7 @@ import type { MissionRaw } from "../types/missions/raw";
 
 type ScreenPoint = { x: number; y: number };
 type MarkerRadialIcon = "edit" | "move" | "compass" | "assign" | "delete" | "inspect" | "back" | "close";
-type MarkerRadialAction = "rename" | "move" | "compass" | "assign" | "delete" | "inspect";
+type MarkerRadialAction = "share" | "rename" | "move" | "compass" | "assign" | "delete" | "inspect";
 type MarkerRadialMenuNode = {
   id: string;
   label: string;
@@ -650,6 +654,7 @@ type ZoneMissionOption = {
 
 const markerRadialMenus: Record<MarkerRadialMenuProfile, MarkerRadialMenuNode[]> = {
   regular: [
+    { id: "share", label: "Send", icon: "assign", action: "share" },
     { id: "rename", label: "Edit", icon: "edit", action: "rename" },
     { id: "move", label: "Move", icon: "move", action: "move" },
     { id: "compass", label: "Compass", icon: "compass", action: "compass" },
@@ -756,6 +761,7 @@ const markerRenameMarkerId = ref("");
 const markerRenameValue = ref("");
 const markerRenamePosition = ref({ left: 12, top: 12 });
 const markerRenameBusy = ref(false);
+const markerShareId = ref<string | null>(null);
 const markerRadialMenuRef = ref<HTMLDivElement | null>(null);
 const zoneRadialMenuRef = ref<HTMLDivElement | null>(null);
 const hoveredOperatorMarkerId = ref<string | null>(null);
@@ -1239,6 +1245,11 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
   }
   if (item.children?.length) {
     markerRadialMenuPath.value = [...markerRadialMenuPath.value, item.id];
+    return;
+  }
+  if (item.action === "share") {
+    markerShareId.value = markerId;
+    closeMarkerRadialMenu();
     return;
   }
   if (item.action === "inspect") {

@@ -6,7 +6,7 @@
 //! shape RCH relays for team-scoped REM marker commands, so REM applies every
 //! replica through `r3akt_map_core::replica`.
 
-use r3akt_profile_rch::FIELD_EVENT;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
 use super::{
@@ -156,34 +156,24 @@ fn mission_marker_event_type(activity: &str) -> Option<&'static str> {
     }
 }
 
-/// The `FIELD_EVENT` envelope REM receives for a marker replica.
-pub(super) fn rem_marker_event_fields(
-    event_type: &str,
+/// Shared fields, packed once so stream hashes and sensor payloads stay binary.
+fn marker_activity_fields(
+    activity: &str,
     marker: &MarkerRecord,
-    source_identity: &str,
-) -> Value {
-    json!({
-        FIELD_EVENT.to_string(): {
-            "event_type": event_type,
-            "payload": marker.api_value(),
-            "source": { "rns_identity": source_identity },
-        }
-    })
-}
-
-/// Fields for one marker activity, or `None` when it is not replicated.
-fn marker_activity_fields(activity: &str, marker: &MarkerRecord, source: &str) -> Option<Value> {
-    let event_type = mission_marker_event_type(activity)?;
-    let mut fields = rem_marker_event_fields(event_type, marker, source);
-    if activity != "marker.deleted"
-        && let (Some(fields), Value::Object(telemetry)) = (
-            fields.as_object_mut(),
-            rem_marker_telemetry_command_fields(activity, marker, source),
-        )
-    {
-        fields.extend(telemetry);
-    }
-    Some(fields)
+    source: &str,
+) -> Result<Option<Value>, ApiError> {
+    let Some(event_type) = mission_marker_event_type(activity) else {
+        return Ok(None);
+    };
+    let legacy = rem_marker_telemetry_command_fields(activity, marker, source);
+    let commands = (activity != "marker.deleted")
+        .then(|| legacy.get(r3akt_profile_rch::FIELD_COMMANDS.to_string()))
+        .flatten();
+    let packed = r3akt_map_core::marker_wire::encode_fields(event_type, marker, source, commands)
+        .map_err(ApiError::Internal)?;
+    Ok(Some(
+        json!({"_lxmf_fields_msgpack_b64": STANDARD.encode(packed)}),
+    ))
 }
 
 /// Sends a marker change made through the RCH API to REM clients.
@@ -197,7 +187,7 @@ pub(super) fn fanout_marker_activity_to_recipients(
     activity: &str,
     marker: &MarkerRecord,
 ) -> Result<Value, ApiError> {
-    let Some(fields) = marker_activity_fields(activity, marker, rch_source_identity(state)) else {
+    let Some(fields) = marker_activity_fields(activity, marker, rch_source_identity(state))? else {
         return Ok(not_attempted("marker_event_not_deliverable"));
     };
     send_to_rem_recipients(
@@ -219,6 +209,17 @@ mod tests {
 
     use super::{MarkerRecord, marker_activity_fields};
 
+    fn decoded(activity: &str, marker: &MarkerRecord) -> serde_json::Value {
+        use base64::Engine as _;
+        let wrapped = marker_activity_fields(activity, marker, "rch")
+            .unwrap()
+            .unwrap();
+        let packed = super::STANDARD
+            .decode(wrapped["_lxmf_fields_msgpack_b64"].as_str().unwrap())
+            .unwrap();
+        r3akt_map_core::msgpack::to_json(&packed).unwrap()
+    }
+
     fn marker() -> MarkerRecord {
         let draft = r3akt_map_core::MarkerDraft {
             marker_type: "fire".into(),
@@ -235,7 +236,7 @@ mod tests {
     #[test]
     fn marker_activity_carries_a_replica_event_and_legacy_telemetry() {
         let marker = marker();
-        let created = marker_activity_fields("marker.created", &marker, "rch").expect("fields");
+        let created = decoded("marker.created", &marker);
         let event = &created[FIELD_EVENT.to_string()];
         assert_eq!(event["event_type"], "mission.marker.created");
         assert_eq!(event["source"]["rns_identity"], "rch");
@@ -251,12 +252,16 @@ mod tests {
             "legacy telemetry kept"
         );
 
-        let deleted = marker_activity_fields("marker.deleted", &marker, "rch").expect("fields");
+        let deleted = decoded("marker.deleted", &marker);
         assert_eq!(
             deleted[FIELD_EVENT.to_string()]["event_type"],
             "mission.marker.deleted"
         );
         assert!(deleted.get(FIELD_COMMANDS.to_string()).is_none());
-        assert!(marker_activity_fields("marker.renamed", &marker, "rch").is_none());
+        assert!(
+            marker_activity_fields("marker.renamed", &marker, "rch")
+                .unwrap()
+                .is_none()
+        );
     }
 }

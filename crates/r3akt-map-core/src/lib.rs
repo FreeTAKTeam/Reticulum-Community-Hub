@@ -25,6 +25,7 @@
 pub mod bytes;
 pub mod idempotency;
 pub mod marker;
+pub mod marker_wire;
 pub mod msgpack;
 pub mod replica;
 #[cfg(feature = "sqlite")]

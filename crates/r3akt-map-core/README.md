@@ -119,6 +119,25 @@ deliberately. Breaking changes to the stored layout, identifiers, symbol keys
 or JSON representation require an explicit, tested migration in this crate
 and coordinated updates in RCH and REM.
 
+## Shared marker wire format
+
+`marker_wire::encode_fields` is the shared RCH/REM marker encoder. Upserts
+carry a plain `FIELD_TELEMETRY_STREAM` (`0x03`) list with binary object hash,
+source timestamp in seconds, packed Telemeter and icon appearance. The
+object hash is independent of the LXMF sender. The same message retains the
+full R3AKT replica in `FIELD_EVENT` (`0x0D`) and optional legacy commands.
+There is no `FIELD_TELEMETRY` (`0x02`) sender position in a marker message.
+Name and notes are in the Information sensor. The marker model has no
+altitude or movement, so altitude, speed, bearing and accuracy are zero.
+Deletes carry the R3AKT event only: Sideband streams have no delete operation.
+
+`tests/marker_wire.rs` verifies exact Sideband stream bytes, binary field
+types, stable object identity, source age, replica preservation and deletion
+limits. `scripts/check-marker-interop.py` executes the pinned Sideband
+receiver and Columba Kotlin stream decoder against
+`tests/fixtures/marker_stream.json`. This is source-level interoperability,
+not Android or radio validation.
+
 ## Compatibility fixtures and tests
 
 ```sh

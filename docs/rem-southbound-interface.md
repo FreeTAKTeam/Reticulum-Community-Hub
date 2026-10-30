@@ -137,6 +137,34 @@ Receivers rebuild the marker with `r3akt_map_core::replica::from_api_value`
 are no tombstones, so a delete can be undone by an older replica that
 arrives later.
 
+### Explicit delivery to Sideband, Columba and REM
+
+In the Rust server's map, select a marker, choose **Send**, and enter the
+recipient's LXMF delivery address. `POST /api/markers/{object_destination_hash}/share`
+accepts `{"destination":"<32 hex characters>"}` and queues exactly that
+destination through the existing durable outbound queue. API authentication,
+outbound allowlists and identity bans still apply. A `202` response means
+queued, not delivered; Messages tracks the subsequent delivery status.
+Older backends without this endpoint cannot use this action; their other
+marker operations are unchanged.
+
+RCH API marker notifications, explicit shares and REM peer marker sends use
+`r3akt_map_core::marker_wire`. Their upserts add standard numeric LXMF field
+`0x03`, a plain list of `[object_hash_bytes, source_seconds,
+packed_telemeter_bytes, [icon, foreground_bytes, background_bytes]]`.
+Sideband is the reference implementation. This places the object separately
+from the hub/sender's GPS position; field `0x02` is intentionally absent.
+Name and notes are in the Information sensor; map labels are still chosen
+by each receiving application. Sideband's telemetry trust setting must permit
+the sender. RCH and REM still consume the full replica in field `0x0D`.
+
+Automatic recipient selection, TEAM routing, delivery modes and retries are
+unchanged. Explicit sharing does not subscribe a contact to future updates.
+Numeric collector command `1` still returns stored telemetry streams; this
+action is a push and does not add map markers to collector history. Standard
+streams have no marker-delete operation, so removal in Sideband/Columba is
+not implied by R3AKT deletion. Pyxis marker support is out of scope.
+
 ## Migration Note
 
 The old verbose southbound command envelope is intentionally unsupported for REM
