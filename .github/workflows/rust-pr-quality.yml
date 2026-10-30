@@ -57,7 +57,7 @@ jobs:
 
   ui-quality:
     name: UI / ${{ matrix.check }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.check == 'test:e2e' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
