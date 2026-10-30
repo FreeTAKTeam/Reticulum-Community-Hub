@@ -3,7 +3,7 @@
 The Rust packaging line now has two release package shapes:
 
 - Server package: deployable `r3akt-rch-server` binary, `r3akt-tak-service`
-  binary, checksum-recorded LXMF `0.15.0` `reticulumd` binary with ZeroMQ
+  binary, checksum-recorded LXMF `0.16.0` `reticulumd` binary with ZeroMQ
   support, mandatory ZeroMQ southbound configuration, shared UI bundle, service
   helper files, config templates, and checksums. Current release CI builds
   Windows x64, macOS x64, macOS arm64, Linux AMD64, and Linux Raspberry Pi 64
@@ -22,7 +22,7 @@ The server-only alpha gate remains `scripts/release-readiness.ps1
 shape: manual workflow artifacts on `workflow_dispatch` and file attachment
 when a GitHub release is published. Server package names include the resolved
 release version, for example
-`rch-rust-full-linux-amd64-v3.0.0-preview.29.tar.gz`; the same version, Git ref,
+`rch-rust-full-linux-amd64-v3.0.0-preview.33.tar.gz`; the same version, Git ref,
 and commit SHA are written into `release-manifest.json` inside the archive.
 Manual workflow runs label artifacts with the `release_version` input, or with
 the branch name when that input is blank.
@@ -33,13 +33,13 @@ release body. This builds the full Linux AMD64 archive, Debian installer and
 their checksums, with the pinned daemon, UI, and TAK service; desktop and other
 platform jobs are skipped. Published releases own asset builds; pushing a tag
 alone no longer starts a duplicate package build. Normal releases retain the
-full matrix. Versioned releases such as `v3.0.0-preview.29` produce
-`rch-server_3.0.0.preview.29-1_amd64.deb`; a manual branch label without a
+full matrix. Versioned releases such as `v3.0.0-preview.33` produce
+`rch-server_3.0.0.preview.33-1_amd64.deb`; a manual branch label without a
 release version produces only the archive.
 
 The release workflow owns all five server packages and both desktop packages.
 The current testing candidate is
-[`v3.0.0-preview.29`](../docs/release-notes-v3.0.0-preview.29.md), scoped to the
+[`v3.0.0-preview.33`](../docs/release-notes-v3.0.0-preview.33.md), scoped to the
 complete Linux AMD64 server archive and Debian installer for DigitalOcean
 evaluation. Its release body must include the Linux-only marker above. This candidate does not publish
 desktop or other-platform packages. Preview.25 remains the earlier full-matrix
@@ -47,10 +47,10 @@ package record; earlier notes are kept under [`docs/`](../docs/).
 
 Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
-LXMF 0.15.0 `reticulumd` path when that checkout is intentionally dirty; hosted
-packages always build the pinned clean LXMF commit
-`6782e899ff3feebf221397517dca8525a5c70661`
-(`reticulumd-test-0.15.0-rch663-678.3`, SDK `0.15.0`). This source also includes the merged timer-driven persistence, broker deadline
+LXMF 0.16.0 `reticulumd` path when that checkout is intentionally dirty; hosted
+packages use the pinned clean LXMF commit
+`c45a5113807fdf5618b55d4e6ba7f598c3eaafe7`
+(`reticulumd-test-0.16.0-linux-c45a5113.1`, SDK `0.16.0`). This source also includes the merged timer-driven persistence, broker deadline
 recovery, dedicated WAL maintenance, and native packet receipt-binding fixes.
 The Rust library dependencies resolve the matching immutable revision without
 requiring a sibling checkout. A local daemon build still uses the documented
@@ -63,15 +63,16 @@ and daemon checksum. The workflow build log verifies dependency selection;
 assembly of a supplied binary does not inspect its embedded Tokio version.
 This candidate does not qualify a desktop sidecar build.
 
-The Linux AMD64 server workflow builds all three binaries in a Debian 12
-(Bookworm) container with Rust 1.88. `scripts/build-debian-package.sh` derives
+The Linux AMD64 server workflow builds the RCH and TAK binaries in a Debian 12
+(Bookworm) container with Rust 1.88 and packages the checksum-verified upstream
+static musl daemon. `scripts/build-debian-package.sh` derives
 runtime library dependencies from those binaries using `dpkg-shlibdeps`.
 The installer targets Debian 12 or later and compatible Ubuntu AMD64 hosts
 that satisfy its declared dependencies. Other architectures and desktop
 packages retain their separate build environments.
 
-The upstream standalone daemon archive uses static musl; RCH rebuilds that
-source and packages a different binary. Verify checksums, embedded RCH/LXMF
+The Linux AMD64 package includes the exact daemon from the upstream standalone
+archive, verified against its pinned SHA-256 before assembly. Verify checksums, embedded RCH/LXMF
 source identities, the daemon checksum and actual runtime dependencies before
 recording package acceptance. Earlier Linux package requirements do not
 establish the new candidate's compatibility.
@@ -80,16 +81,16 @@ Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.99.1 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
 `cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
-0.15.0 dependency.
+0.16.0 dependency.
 
 ## Debian AMD64 installation
 
-Download `rch-server_3.0.0.preview.29-1_amd64.deb` and its `.sha256` file from
+Download `rch-server_3.0.0.preview.33-1_amd64.deb` and its `.sha256` file from
 the same release into one directory. Verify before installing:
 
 ```bash
-sha256sum -c rch-server_3.0.0.preview.29-1_amd64.deb.sha256
-sudo apt install ./rch-server_3.0.0.preview.29-1_amd64.deb
+sha256sum -c rch-server_3.0.0.preview.33-1_amd64.deb.sha256
+sudo apt install ./rch-server_3.0.0.preview.33-1_amd64.deb
 ```
 
 The package installs binaries, UI and the release manifest under `/opt/rch`.
