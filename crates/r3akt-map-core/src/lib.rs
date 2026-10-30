@@ -14,6 +14,8 @@
 //! - [`idempotency`]: idempotent marker creation keys and payload fingerprints.
 //! - [`telemetry`]: checked decoding and normalization of LXMF `FIELD_TELEMETRY`
 //!   Telemeter payloads (the verified RCH #258 receive contract).
+//! - [`telemetry_encode`]: canonical Sideband Telemeter encoding shared by
+//!   ordinary position and SOS adapters.
 //! - `sqlite` (feature `sqlite`): marker persistence compatible with the RCH
 //!   database layout.
 //!
@@ -23,12 +25,14 @@
 pub mod bytes;
 pub mod idempotency;
 pub mod marker;
+pub mod marker_wire;
 pub mod msgpack;
 pub mod replica;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod symbols;
 pub mod telemetry;
+pub mod telemetry_encode;
 pub mod time;
 
 pub use marker::{MarkerDraft, MarkerError, MarkerRecord, Position};
