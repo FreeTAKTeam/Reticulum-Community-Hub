@@ -9,6 +9,81 @@ fn fixture() -> Value {
     )))
     .unwrap()
 }
+
+#[test]
+fn sideband_pyxis_and_rem_standard_uploads_keep_age_and_only_numeric_one_requests_stream() {
+    use base64::Engine as _;
+    let vectors: Value = serde_json::from_str(include_str!(
+        "../../../../r3akt-map-core/tests/fixtures/sideband_pyxis.json"
+    ))
+    .unwrap();
+    for vector in vectors["vectors"].as_array().unwrap() {
+        let (dir, state) = setup();
+        let hex = vector["packed_hex"].as_str().unwrap();
+        let packed: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&packed);
+        store_message(
+            &state,
+            "standard-upload-with-legacy-t1",
+            1,
+            json!({"2":encoded,"9":[{"t":"T1","a":{"cs":"synthetic"}}]}),
+        );
+        apply(&state);
+        assert!(
+            open(&state)
+                .unwrap()
+                .pending_broker_intent()
+                .unwrap()
+                .is_none(),
+            "T1 must never request collector data"
+        );
+        let records = state.telemetry_records.read().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].telemetry["location"]["last_update_timestamp"].as_f64(),
+            vector["location_timestamp_seconds"].as_f64()
+        );
+        assert_eq!(
+            records[0].telemetry["location"]["speed"],
+            vector["speed_kmh"]
+        );
+        assert_eq!(
+            records[0].telemetry["location"]["altitude"],
+            vector["altitude"]
+        );
+        drop(records);
+        store_message(
+            &state,
+            "numeric-collector-query",
+            2,
+            json!({"9":[{"1":[0,true]}]}),
+        );
+        apply(&state);
+        let intent = open(&state)
+            .unwrap()
+            .pending_broker_intent()
+            .unwrap()
+            .unwrap();
+        let fields = base64::engine::general_purpose::STANDARD
+            .decode(
+                intent.request["fields"]["_lxmf_fields_msgpack_b64"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        let fields = r3akt_map_core::msgpack::to_json(&fields).unwrap();
+        let stream = fields["3"]
+            .as_array()
+            .expect("plain FIELD_TELEMETRY_STREAM array");
+        assert_eq!(stream.len(), 1);
+        assert_eq!(stream[0][1], vector["sensor_timestamp_seconds"]);
+        assert_eq!(stream[0][2], json!(packed));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
 fn setup() -> (PathBuf, AppState) {
     let dir = std::env::temp_dir().join(format!("rch-collector-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

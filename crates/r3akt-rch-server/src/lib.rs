@@ -55,6 +55,7 @@ use marker_position::patch_marker_position;
 mod message_residency;
 pub use message_residency::spawn_message_cache_maintenance;
 mod marker_fanout;
+mod marker_share;
 mod operation_right_persistence;
 mod rem_team_routing;
 mod runtime_exit;
@@ -1880,6 +1881,8 @@ pub enum ApiError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     Unprocessable(String),
     #[error("validation error")]
     PydanticValidation(Value),
@@ -1908,6 +1911,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match &self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Unprocessable(_) | Self::PydanticValidation(_) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
@@ -2099,6 +2103,10 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route("/api/markers", get(list_markers).post(create_marker_route))
         .route("/api/markers/symbols", get(list_marker_symbols_route))
+        .route(
+            "/api/markers/{object_destination_hash}/share",
+            axum::routing::post(marker_share::share),
+        )
         .route(
             "/api/markers/{object_destination_hash}/position",
             get(method_not_allowed).patch(patch_marker_position),
@@ -6623,6 +6631,19 @@ fn openapi_document() -> Value {
             },
             "/api/markers/symbols": {
                 "get": openapi_array_response_operation(Vec::new(), "MarkerSymbol", "Marker symbol list.")
+            },
+            "/api/markers/{object_destination_hash}/share": {
+                "post": {
+                    "summary": "Send one marker to an explicitly selected LXMF destination",
+                    "parameters": [openapi_path_parameter("object_destination_hash")],
+                    "requestBody": {"required": true, "content": {"application/json": {"schema": {
+                        "type": "object", "required": ["destination"], "additionalProperties": false,
+                        "properties": {"destination": {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}}
+                    }}}},
+                    "responses": {"202": {"description": "Queued; not a delivery confirmation"},
+                        "403": {"description": "Destination forbidden by outbound policy"},
+                        "404": {"description": "Marker not found"}, "422": {"description": "Invalid destination"}}
+                }
             },
             "/api/markers/{object_destination_hash}/position": {
                 "patch": openapi_object_response_operation(
@@ -19902,6 +19923,7 @@ mod tests {
     mod durable_inbound;
     mod field_commands;
     mod marker_metadata;
+    mod marker_share;
     mod memory_readers;
     mod operation_rights;
     mod release_durability;
@@ -19947,7 +19969,13 @@ mod tests {
             .map(|payload| {
                 let intent: Value =
                     serde_json::from_str(&payload.expect("intent payload")).expect("intent json");
-                intent["request"].clone()
+                let mut request = intent["request"].clone();
+                if let Some(encoded) = request["fields"]["_lxmf_fields_msgpack_b64"].as_str() {
+                    let packed = BASE64_STANDARD.decode(encoded).expect("packed fields");
+                    request["fields"] =
+                        r3akt_map_core::msgpack::to_json(&packed).expect("wire fields");
+                }
+                request
             })
             .collect()
     }

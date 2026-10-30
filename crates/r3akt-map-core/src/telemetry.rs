@@ -3,7 +3,8 @@
 //! The verified receive contract (RCH #258): field 2 carries `MessagePack` bytes
 //! for a numeric sensor map. Sensor 1 is epoch seconds; location sensor 2 has
 //! seven readings (signed i32 latitude/longitude in millionths of a degree,
-//! signed i32 altitude in centimetres, u32 speed in cm/s, signed i32 bearing in
+//! signed i32 altitude in centimetres, u32 speed in hundredths of km/h (Sideband
+//! and Pyxis; Columba 2.2.6 uses hundredths of m/s), signed i32 bearing in
 //! hundredths of a degree, u16 accuracy in centimetres, numeric last update).
 //! There is no schema/version negotiation; explicit version envelopes are
 //! unsupported. Unknown numeric sensors are preserved as extension data.

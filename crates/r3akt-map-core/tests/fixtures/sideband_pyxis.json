@@ -1,0 +1,79 @@
+{
+  "reference": {
+    "repository": "https://github.com/markqvist/Sideband.git",
+    "commit": "2000d81a44bff57e3b3cb7d45915ba29bbde4e18",
+    "source": "sbapp/sideband/sense.py Telemeter.packed and Location.pack"
+  },
+  "vectors": [
+    {
+      "name": "san_francisco",
+      "sensor_timestamp_seconds": 1700000000,
+      "latitude": 37.7749,
+      "longitude": -122.4194,
+      "altitude": 16.0,
+      "speed_kmh": 12.34,
+      "bearing": 42.0,
+      "accuracy": 3.5,
+      "location_timestamp_seconds": 1700000000,
+      "packed_hex": "8201ce6553f1000297c40402406634c404f8b40738c40400000640c404000004d2c40400001068c402015ece6553f100",
+      "microlxmf_raw_value_hex": "c4308201ce6553f1000297c40402406634c404f8b40738c40400000640c404000004d2c40400001068c402015ece6553f100",
+      "expected_fixed": {"latitude_e6": 37774900, "longitude_e6": -122419400, "altitude_cm": 1600, "speed_centi_kmh": 1234, "bearing_cdeg": 4200, "accuracy_cm": 350}
+    },
+    {
+      "name": "bounds_signed",
+      "sensor_timestamp_seconds": 128,
+      "latitude": -90.0,
+      "longitude": 180.0,
+      "altitude": -123.45,
+      "speed_kmh": 0.0,
+      "bearing": -45.67,
+      "accuracy": 655.35,
+      "location_timestamp_seconds": 127,
+      "packed_hex": "8201cc800297c404faa2b580c4040aba9500c404ffffcfc7c40400000000c404ffffee29c402ffff7f",
+      "microlxmf_raw_value_hex": "c4298201cc800297c404faa2b580c4040aba9500c404ffffcfc7c40400000000c404ffffee29c402ffff7f",
+      "expected_fixed": {"latitude_e6": -90000000, "longitude_e6": 180000000, "altitude_cm": -12345, "speed_centi_kmh": 0, "bearing_cdeg": -4567, "accuracy_cm": 65535}
+    },
+    {
+      "name": "southern",
+      "sensor_timestamp_seconds": 65536,
+      "latitude": -33.8688,
+      "longitude": 151.2093,
+      "altitude": 58.25,
+      "speed_kmh": 88.88,
+      "bearing": 359.99,
+      "accuracy": 0.01,
+      "location_timestamp_seconds": 65535,
+      "packed_hex": "8201ce000100000297c404fdfb3400c40409034554c404000016c1c404000022b8c40400008c9fc4020001cdffff",
+      "microlxmf_raw_value_hex": "c42e8201ce000100000297c404fdfb3400c40409034554c404000016c1c404000022b8c40400008c9fc4020001cdffff",
+      "expected_fixed": {"latitude_e6": -33868800, "longitude_e6": 151209300, "altitude_cm": 5825, "speed_centi_kmh": 8888, "bearing_cdeg": 35999, "accuracy_cm": 1}
+    },
+    {
+      "name": "zero_time_accuracy",
+      "sensor_timestamp_seconds": 0,
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "altitude": 0.0,
+      "speed_kmh": 0.0,
+      "bearing": 0.0,
+      "accuracy": 0.0,
+      "location_timestamp_seconds": 1,
+      "packed_hex": "8201000297c40400000000c40400000000c40400000000c40400000000c40400000000c402000001",
+      "microlxmf_raw_value_hex": "c4288201000297c40400000000c40400000000c40400000000c40400000000c40400000000c402000001",
+      "expected_fixed": {"latitude_e6": 0, "longitude_e6": 0, "altitude_cm": 0, "speed_centi_kmh": 0, "bearing_cdeg": 0, "accuracy_cm": 0}
+    },
+    {
+      "name": "uint64_timestamps",
+      "sensor_timestamp_seconds": 4294967296,
+      "latitude": 1.0,
+      "longitude": -1.0,
+      "altitude": 1.0,
+      "speed_kmh": 1.0,
+      "bearing": 1.0,
+      "accuracy": 1.0,
+      "location_timestamp_seconds": 4294967297,
+      "packed_hex": "8201cf00000001000000000297c404000f4240c404fff0bdc0c40400000064c40400000064c40400000064c4020064cf0000000100000001",
+      "microlxmf_raw_value_hex": "c4388201cf00000001000000000297c404000f4240c404fff0bdc0c40400000064c40400000064c40400000064c4020064cf0000000100000001",
+      "expected_fixed": {"latitude_e6": 1000000, "longitude_e6": -1000000, "altitude_cm": 100, "speed_centi_kmh": 100, "bearing_cdeg": 100, "accuracy_cm": 100}
+    }
+  ]
+}
