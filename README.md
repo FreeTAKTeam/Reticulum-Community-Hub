@@ -58,7 +58,7 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
 The current testing candidate is
-[v3.0.0-preview.32](docs/release-notes-v3.0.0-preview.32.md), a Linux AMD64
+[v3.0.0-preview.33](docs/release-notes-v3.0.0-preview.33.md), a Linux AMD64
 server prerelease for DigitalOcean evaluation. It pairs LXMF-rs SDK 0.16.0
 with [`reticulumd-test-0.16.0-linux-c45a5113.1`](https://github.com/FreeTAKTeam/LXMF-rs/releases/tag/reticulumd-test-0.16.0-linux-c45a5113.1)
 at immutable revision `c45a5113807fdf5618b55d4e6ba7f598c3eaafe7`.
@@ -93,7 +93,7 @@ The simplest route is to use a package from
 [GitHub Releases](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/releases).
 On a supported Debian or Ubuntu AMD64 host, download the `.deb` and its
 `.sha256` file, verify the checksum, then install it with
-`sudo apt install ./rch-server_3.0.0.preview.32-1_amd64.deb`. Configure
+`sudo apt install ./rch-server_3.0.0.preview.33-1_amd64.deb`. Configure
 `/etc/rch` before explicitly enabling services; installation does not start
 them. See [the packaging instructions](packaging/README.md#debian-amd64-installation)
 for configuration, upgrade preservation and startup. Server archives and

@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.33 Linux AMD64 testing candidate
+
+Preview.33 combines Sideband Telemeter marker sharing with the requested LXMF-rs `reticulumd-test-0.16.0-linux-c45a5113.1` test daemon. See [the preview.33 notes](release-notes-v3.0.0-preview.33.md). Release qualification is pending until performed.
+
 ## Preview.32 Linux AMD64 testing candidate
 
 Preview.32 uses LXMF-rs source `c45a5113807fdf5618b55d4e6ba7f598c3eaafe7` and the exact upstream `reticulumd-test-0.16.0-linux-c45a5113.1` daemon. See [the preview.32 notes](release-notes-v3.0.0-preview.32.md). Qualification remains pending until performed.
