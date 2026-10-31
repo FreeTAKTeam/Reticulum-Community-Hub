@@ -20,7 +20,9 @@ fn zmq_announce_sweeps_import_more_than_32_peers_and_replay_after_restart() {
     }
     let fixture = Fixture::open(&daemon_path);
     let path = dir.join("rch.db");
-    let state = fixture.state(&path, &dir.join("identity"));
+    // Use the production handshake budget while other tests saturate SQLite/CPU.
+    let state =
+        fixture.state_with_timeout(&path, &dir.join("identity"), Some(Duration::from_secs(3)));
     let cursor = Mutex::new(None);
     assert!(announce_sync::poll(&state, &cursor).unwrap());
     assert!(announce_sync::poll(&state, &cursor).unwrap());
@@ -46,7 +48,8 @@ fn zmq_announce_sweeps_import_more_than_32_peers_and_replay_after_restart() {
     check();
     plane(&state).unwrap().shutdown().unwrap();
     drop(state);
-    let restarted = fixture.state(&path, &dir.join("identity"));
+    let restarted =
+        fixture.state_with_timeout(&path, &dir.join("identity"), Some(Duration::from_secs(3)));
     let cursor = Mutex::new(None);
     for expected in [true, true, false] {
         assert_eq!(announce_sync::poll(&restarted, &cursor).unwrap(), expected);
