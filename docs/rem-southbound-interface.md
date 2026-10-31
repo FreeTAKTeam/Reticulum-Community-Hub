@@ -127,7 +127,7 @@ RCH to REM: every replica arrives in `FIELD_EVENT` (`0x0D`) as
 `mission.marker.position.updated` or `mission.marker.deleted`. Relayed REM
 commands use RCH's full event envelope (`event_id`, `timestamp`, `topics` in
 addition); receivers read only `event_type` and `payload`. Marker changes
-made through the RCH API also carry the legacy marker-as-telemetry
+made through the RCH API to REM recipients also carry the legacy marker-as-telemetry
 `mission.registry.telemetry.upsert` command for older REM builds; current REM
 applies the event and ignores telemetry whose `object_type` is `marker`.
 
@@ -158,8 +158,18 @@ Name and notes are in the Information sensor; map labels are still chosen
 by each receiving application. Sideband's telemetry trust setting must permit
 the sender. RCH and REM still consume the full replica in field `0x0D`.
 
-Automatic recipient selection, TEAM routing, delivery modes and retries are
-unchanged. Explicit sharing does not subscribe a contact to future updates.
+Marker creation and updates through the RCH API automatically reach current
+non-REM roster clients using the same standard field `0x03` stream and field
+`0x0D` replica as explicit sharing, without REM field `0x09` commands. The
+message body is `Map marker: <name>`. Announced-only peers are not subscribed;
+the existing runtime freshness gate, outbound allowlist, bans and blackholes
+still apply. Paused and text-only clients are skipped. Marker notification
+events report `skipped_reasons` counts and `skipped_recipients` with each
+destination and reason for these policy exclusions.
+Deletes and mission marker link/unlink commands remain REM-only, reported as
+`standard_marker_delete_unsupported` and `rem_command_required` for non-REM
+recipients. Delivery modes, retries and TEAM routing are unchanged. Explicit
+sharing does not subscribe a contact to future updates.
 Numeric collector command `1` still returns stored telemetry streams; this
 action is a push and does not add map markers to collector history. Standard
 streams have no marker-delete operation, so removal in Sideband/Columba is

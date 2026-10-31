@@ -229,11 +229,24 @@ async fn metadata_position_patch_keeps_authorized_rem_replication() {
     let requests = pending_broker_requests(&db);
     assert_eq!(
         requests.len(),
-        1,
-        "generic peers do not receive marker replicas"
+        2,
+        "REM and generic peers receive marker updates"
     );
-    assert_eq!(requests[0]["destination"], rem);
-    let fields = &requests[0]["fields"];
+    let rem_request = requests
+        .iter()
+        .find(|request| request["destination"] == rem)
+        .unwrap();
+    let generic_request = requests
+        .iter()
+        .find(|request| request["destination"] == generic)
+        .unwrap();
+    let fields = &rem_request["fields"];
+    assert_eq!(generic_request["fields"]["3"], fields["3"]);
+    assert!(generic_request["fields"].get("9").is_none());
+    let telemetry =
+        r3akt_map_core::telemetry::decode_field(&generic_request["fields"]["3"][0][2]).unwrap();
+    assert_eq!(telemetry.telemetry["location"]["latitude"], 46.0);
+    assert_eq!(telemetry.telemetry["location"]["longitude"], -64.0);
     let event = &fields[r3akt_profile_rch::FIELD_EVENT.to_string()];
     assert_eq!(event["event_type"], "mission.marker.updated");
     assert_eq!(event["payload"], updated.api_value());
