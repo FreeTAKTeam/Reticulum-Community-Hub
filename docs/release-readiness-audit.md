@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.34 Linux AMD64 testing candidate
+
+Preview.34 pairs RCH with LXMF-rs source `0fa0ca6330fd6f88e41b5bb6c630f56a3636ab19`, including announce-history retention. The Linux daemon is built from this source alongside RCH in Debian 12. Qualification is pending until performed.
+
 ## Preview.33 Linux AMD64 testing candidate
 
 Preview.33 combines Sideband Telemeter marker sharing with the requested LXMF-rs `reticulumd-test-0.16.0-linux-c45a5113.1` test daemon. See [the preview.33 notes](release-notes-v3.0.0-preview.33.md). Release qualification is pending until performed.

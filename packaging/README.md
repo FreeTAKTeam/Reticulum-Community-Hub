@@ -49,8 +49,8 @@ Local desktop builds normally compile `reticulumd` from the sibling
 `LXMF-rs` checkout. Set `RCH_RETICULUMD_BINARY` to an absolute, validated
 LXMF 0.16.0 `reticulumd` path when that checkout is intentionally dirty; hosted
 packages use the pinned clean LXMF commit
-`c45a5113807fdf5618b55d4e6ba7f598c3eaafe7`
-(`reticulumd-test-0.16.0-linux-c45a5113.1`, SDK `0.16.0`). This source also includes the merged timer-driven persistence, broker deadline
+`0fa0ca6330fd6f88e41b5bb6c630f56a3636ab19`
+(`reticulumd-test-0.16.0-linux-0fa0ca63.1`, SDK `0.16.0`). This source also includes the merged timer-driven persistence, broker deadline
 recovery, dedicated WAL maintenance, and native packet receipt-binding fixes.
 The Rust library dependencies resolve the matching immutable revision without
 requiring a sibling checkout. A local daemon build still uses the documented
@@ -64,8 +64,7 @@ assembly of a supplied binary does not inspect its embedded Tokio version.
 This candidate does not qualify a desktop sidecar build.
 
 The Linux AMD64 server workflow builds the RCH and TAK binaries in a Debian 12
-(Bookworm) container with Rust 1.88 and packages the checksum-verified upstream
-static musl daemon. `scripts/build-debian-package.sh` derives
+(Bookworm) container with Rust 1.99.1, including the matching daemon built from the same source. `scripts/build-debian-package.sh` derives
 runtime library dependencies from those binaries using `dpkg-shlibdeps`.
 The installer targets Debian 12 or later and compatible Ubuntu AMD64 hosts
 that satisfy its declared dependencies. Other architectures and desktop
