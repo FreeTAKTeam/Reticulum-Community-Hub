@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 mod tests;
 
+mod sensors;
+
 const SEEN_CAPACITY: usize = 4096;
 
 #[derive(Default)]
@@ -48,6 +50,7 @@ struct CotMarker {
 #[derive(Default)]
 pub(super) struct BridgeState {
     telemetry: SeenEntries,
+    sensors: SeenEntries,
     telemetry_progress: SnapshotProgress,
     chat: SeenEntries,
     cot: SeenEntries,
@@ -119,6 +122,7 @@ pub(super) fn bridge_rch_to_tak<S: TakCotSender>(
             state.chat.insert(key);
         }
     }
+    let sensor_result = sensors::export(client, service, &mut state.sensors);
     // At most one failed network flush per cycle; the existing service retains
     // admitted payloads until delivery succeeds and reports queue backpressure.
     if let Some(error) = previous_failure {
@@ -127,6 +131,7 @@ pub(super) fn bridge_rch_to_tak<S: TakCotSender>(
     if let Some(error) = service.flush_once()?.error {
         return Err(error.into());
     }
+    sensor_result?;
     Ok(())
 }
 
@@ -211,7 +216,11 @@ fn apply_cot_marker(
             )
         } else {
             let idempotency_key = format!("rch-tak-cot:{:x}", Sha256::digest(event_key.as_bytes()));
-            let marker = client.post_json_idempotent("/api/markers", payload, &idempotency_key)?;
+            let mut parent = payload.clone();
+            if let Some(parent) = parent.as_object_mut() {
+                parent.retain(|key, _| !key.starts_with("_r3s_"));
+            }
+            let marker = client.post_json_idempotent("/api/markers", &parent, &idempotency_key)?;
             (
                 CotMarker {
                     id: marker_identifier(&marker)?.to_string(),
@@ -228,7 +237,10 @@ fn apply_cot_marker(
     {
         return Ok(());
     }
+    // Sensor fixes carry source time; apply them before the host-timestamped marker metadata patch.
+    sensors::import(client, &marker.id, payload)?;
     if !created
+        && payload.get("_r3s_sensor").is_none()
         && client
             .patch_json(
                 &format!("/api/markers/{}/position", marker.id),
@@ -339,7 +351,7 @@ fn chat_input_from_message(message: &Value) -> Option<ChatEventInput> {
 
 pub(super) fn marker_payload_from_cot(event: &TakInboundCotEvent) -> Value {
     let symbol = marker_symbol_for_cot_type(event.event_type.as_str());
-    json!({
+    let mut payload = json!({
         "type": symbol,
         "symbol": symbol,
         "name": event.uid,
@@ -351,7 +363,14 @@ pub(super) fn marker_payload_from_cot(event: &TakInboundCotEvent) -> Value {
             marker_uid_token(&event.uid), event.time, event.event_type, event.how,
             event.point.hae, event.point.ce, event.point.le
         )
-    })
+    });
+    if let Some(diagnostic) = &event.sensor_diagnostic {
+        eprintln!("CoT sensor ignored: {diagnostic}");
+    }
+    if let Some(sensor) = &event.sensor {
+        payload["_r3s_sensor"] = json!(sensor);
+    }
+    payload
 }
 
 fn marker_symbol_for_cot_type(event_type: &str) -> &'static str {

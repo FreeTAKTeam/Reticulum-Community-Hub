@@ -33,6 +33,18 @@ impl RchNorthboundClient {
         })
     }
 
+    pub(super) fn get_optional_json(&self, path: &str) -> Result<Option<Value>, Error> {
+        let mut request = self.agent.get(self.base.url_for(path));
+        if let Some(key) = &self.api_key {
+            request = request.header("X-API-Key", key);
+        }
+        let response = request.header("Accept", "application/json").call()?;
+        if response.status() == ureq::http::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Self::read_json(response).map(Some)
+    }
+
     pub(super) fn get_json(&self, path: &str) -> Result<Value, Error> {
         let mut request = self.agent.get(self.base.url_for(path));
         if let Some(key) = &self.api_key {

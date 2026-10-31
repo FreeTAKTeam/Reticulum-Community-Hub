@@ -19,10 +19,12 @@ impl TakCotSender for RetrySender {
         Ok(())
     }
 }
-fn rch_fixture() -> (RchNorthboundClient, thread::JoinHandle<()>) {
-    let (url, server) = crate::tests::spawn_rch_server(4, |request| {
+fn rch_fixture(requests: usize) -> (RchNorthboundClient, thread::JoinHandle<()>) {
+    let (url, server) = crate::tests::spawn_rch_server(requests, |request| {
         if request.starts_with("GET /Telemetry") {
             json!({"entries":[{"peer_destination":"peer-fixture","timestamp":1_714_000_001,"telemetry":{"location":{"latitude":45,"longitude":-63}}}]}).to_string()
+        } else if request.starts_with("GET /Sensors") {
+            json!({"items":[],"ttlMs":300_000}).to_string()
         } else {
             assert!(request.starts_with("GET /Chat/Messages"));
             json!([{"Direction":"outbound","Content":"queued fixture","MessageID":"chat-fixture","CreatedAt":"2026-05-11T00:00:00Z"}]).to_string()
@@ -36,7 +38,7 @@ fn rch_fixture() -> (RchNorthboundClient, thread::JoinHandle<()>) {
 
 #[test]
 fn admitted_outbound_work_survives_temporary_sender_failure_without_duplication() {
-    let (client, server) = rch_fixture();
+    let (client, server) = rch_fixture(6);
     let sender = RetrySender {
         fail: Arc::new(AtomicBool::new(true)),
         sent: Arc::new(Mutex::new(Vec::new())),
@@ -59,7 +61,7 @@ fn admitted_outbound_work_survives_temporary_sender_failure_without_duplication(
 
 #[test]
 fn queue_backpressure_does_not_mark_unadmitted_chat_as_delivered() {
-    let (client, server) = rch_fixture();
+    let (client, server) = rch_fixture(5);
     let sender = RetrySender {
         fail: Arc::new(AtomicBool::new(false)),
         sent: Arc::new(Mutex::new(Vec::new())),

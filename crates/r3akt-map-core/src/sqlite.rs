@@ -67,6 +67,13 @@ pub fn ensure_schema(connection: &Connection) -> Result<(), StoreError> {
 /// # Errors
 /// `SQLite` or encoding failures.
 pub fn upsert(connection: &Connection, marker: &MarkerRecord) -> Result<(), StoreError> {
+    let transaction = if connection.is_autocommit() {
+        Some(connection.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let connection = transaction.as_deref().unwrap_or(connection);
+    crate::sensor_marker::updated(connection, marker)?;
     connection.execute(
         "INSERT OR REPLACE INTO rch_markers (object_destination_hash, payload, local_id)
          VALUES (?1, ?2, ?3)",
@@ -76,6 +83,9 @@ pub fn upsert(connection: &Connection, marker: &MarkerRecord) -> Result<(), Stor
             marker.local_id
         ],
     )?;
+    if let Some(transaction) = transaction {
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -84,6 +94,7 @@ pub fn upsert(connection: &Connection, marker: &MarkerRecord) -> Result<(), Stor
 /// # Errors
 /// `SQLite` (including uniqueness) or encoding failures.
 pub fn insert(connection: &Connection, marker: &MarkerRecord) -> Result<(), StoreError> {
+    crate::sensor_marker::available(connection, &marker.object_destination_hash)?;
     connection.execute(
         "INSERT INTO rch_markers (object_destination_hash, payload, local_id) VALUES (?1, ?2, ?3)",
         params![
@@ -100,10 +111,20 @@ pub fn insert(connection: &Connection, marker: &MarkerRecord) -> Result<(), Stor
 /// # Errors
 /// `SQLite` failures.
 pub fn delete(connection: &Connection, object_destination_hash: &str) -> Result<(), StoreError> {
+    let transaction = if connection.is_autocommit() {
+        Some(connection.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let connection = transaction.as_deref().unwrap_or(connection);
+    crate::sensor_marker::deleted(connection, object_destination_hash)?;
     connection.execute(
         "DELETE FROM rch_markers WHERE object_destination_hash = ?1",
         params![object_destination_hash],
     )?;
+    if let Some(transaction) = transaction {
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -152,6 +173,7 @@ pub fn update(
         return Ok(None);
     };
     update(&mut record);
+    crate::sensor_marker::updated(&transaction, &record)?;
     transaction.execute(
         "UPDATE rch_markers SET payload = ?1, local_id = ?3 WHERE object_destination_hash = ?2",
         params![encode(&record)?, object_destination_hash, record.local_id],

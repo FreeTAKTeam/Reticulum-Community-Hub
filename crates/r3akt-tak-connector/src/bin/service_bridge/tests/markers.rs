@@ -6,6 +6,8 @@ fn cot_marker_payload(uid: &str, lat: f64) -> Value {
 
 fn cot_marker_event(uid: &str, lat: f64) -> TakInboundCotEvent {
     TakInboundCotEvent {
+        sensor: None,
+        sensor_diagnostic: None,
         version: "2.0".to_string(),
         uid: uid.to_string(),
         event_type: "a-f-G-U-C".to_string(),

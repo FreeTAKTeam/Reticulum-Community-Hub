@@ -1,3 +1,5 @@
+mod sensor_telemetry;
+pub(crate) use sensor_telemetry::initialize;
 mod broker_application;
 mod broker_delivery;
 
@@ -436,3 +438,8 @@ impl RchCommandTransaction<'_> {
         Ok(messages)
     }
 }
+
+#[cfg(test)]
+mod sensor_tests;
+
+mod sensor_relay_metadata;

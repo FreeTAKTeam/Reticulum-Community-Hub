@@ -11,6 +11,10 @@ pub(crate) fn outgoing(
     fields: Value,
     created: i64,
 ) -> Result<OutboundMessageRecord, ApiError> {
+    let mut fields = fields;
+    let sensor_policy = fields
+        .as_object_mut()
+        .and_then(|f| f.remove("_r3s_relay_policy"));
     let index = unit.staged_outbound_intent_count();
     let operation = sha256_lower_hex(
         format!(
@@ -29,7 +33,7 @@ pub(crate) fn outgoing(
         delivery_method: "durable_broker".into(),
         delivery_policy_reason: "inbox_application".into(),
         delivery_state: "broker_pending".into(),
-        delivery_metadata: json!({"direction":"outbound","lxmf_fields":fields}),
+        delivery_metadata: json!({"direction":"outbound","lxmf_fields":fields,"r3s_policy":sensor_policy}),
         created_ts_ms: created,
         attachments: Vec::new(),
     };

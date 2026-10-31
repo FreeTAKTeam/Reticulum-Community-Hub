@@ -1,0 +1,1572 @@
+{
+  "antimeridian": {
+    "label": "Dateline camera",
+    "originId": "cccccccccccccccccccccccccccccccc",
+    "originKind": "uav",
+    "position": {
+      "accuracyM": null,
+      "altM": null,
+      "altitudeDatum": "unknown",
+      "courseDeg": 90.0,
+      "fixAtMs": 1793440000000,
+      "lat": 45.0,
+      "lon": 179.999,
+      "speedMps": 15.0
+    },
+    "sensors": [
+      {
+        "display": {
+          "geojson": {
+            "features": [
+              {
+                "geometry": {
+                  "coordinates": [
+                    179.999,
+                    45.0
+                  ],
+                  "type": "Point"
+                },
+                "properties": {
+                  "azimuthDeg": 0.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-1",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      [
+                        [
+                          -180.0,
+                          45.01554581265774
+                        ],
+                        [
+                          -179.99907954689206,
+                          45.015517395541366
+                        ],
+                        [
+                          -179.9971737214443,
+                          45.01533997689787
+                        ],
+                        [
+                          -180.0,
+                          45.00400911137928
+                        ],
+                        [
+                          -180.0,
+                          45.01554581265774
+                        ]
+                      ]
+                    ],
+                    [
+                      [
+                        [
+                          179.999,
+                          45.0
+                        ],
+                        [
+                          179.9951737214443,
+                          45.01533997689787
+                        ],
+                        [
+                          179.99707954689202,
+                          45.015517395541366
+                        ],
+                        [
+                          179.999,
+                          45.01557668562252
+                        ],
+                        [
+                          180.0,
+                          45.01554581265774
+                        ],
+                        [
+                          180.0,
+                          45.00400911137928
+                        ],
+                        [
+                          179.999,
+                          45.0
+                        ]
+                      ]
+                    ]
+                  ],
+                  "type": "MultiPolygon"
+                },
+                "properties": {
+                  "azimuthDeg": 0.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-1",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      179.999,
+                      45.0
+                    ],
+                    [
+                      179.999,
+                      45.01557668562252
+                    ]
+                  ],
+                  "type": "LineString"
+                },
+                "properties": {
+                  "azimuthDeg": 0.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-1",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              }
+            ],
+            "type": "FeatureCollection"
+          },
+          "originId": "cccccccccccccccccccccccccccccccc",
+          "positionStale": false,
+          "rangeUnknown": false,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-1",
+          "stale": false,
+          "unsynchronized": false
+        },
+        "manifest": null,
+        "sourceExpiresAtMs": null,
+        "state": {
+          "azimuthDeg": 0.0,
+          "elevationDeg": -30.0,
+          "horizontalFovDeg": 20.0,
+          "imageNorthDeg": 180.0,
+          "rangeKind": "display-limit",
+          "rollDeg": 12.0,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-1",
+          "slantRangeM": 2000.0,
+          "verticalFovDeg": 10.0
+        }
+      },
+      {
+        "display": {
+          "geojson": {
+            "features": [
+              {
+                "geometry": {
+                  "coordinates": [
+                    179.999,
+                    45.0
+                  ],
+                  "type": "Point"
+                },
+                "properties": {
+                  "azimuthDeg": 90.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-2",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      [
+                        [
+                          -180.0,
+                          45.00012458146074
+                        ],
+                        [
+                          -179.97930488260215,
+                          45.002702809416306
+                        ],
+                        [
+                          -179.9790545465634,
+                          45.00135549624893
+                        ],
+                        [
+                          -179.97897124047853,
+                          44.999997882626516
+                        ],
+                        [
+                          -179.97905558651388,
+                          44.998640301171754
+                        ],
+                        [
+                          -179.97930693090476,
+                          44.99729308352994
+                        ],
+                        [
+                          -180.0,
+                          44.999875217450416
+                        ],
+                        [
+                          -180.0,
+                          45.00012458146074
+                        ]
+                      ]
+                    ],
+                    [
+                      [
+                        [
+                          179.999,
+                          45.0
+                        ],
+                        [
+                          180.0,
+                          45.00012458146074
+                        ],
+                        [
+                          180.0,
+                          44.999875217450416
+                        ],
+                        [
+                          179.999,
+                          45.0
+                        ]
+                      ]
+                    ]
+                  ],
+                  "type": "MultiPolygon"
+                },
+                "properties": {
+                  "azimuthDeg": 90.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-2",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      [
+                        179.999,
+                        45.0
+                      ],
+                      [
+                        180.0,
+                        44.9999999038814
+                      ]
+                    ],
+                    [
+                      [
+                        -180.0,
+                        44.9999999038814
+                      ],
+                      [
+                        -179.97897124047853,
+                        44.999997882626516
+                      ]
+                    ]
+                  ],
+                  "type": "MultiLineString"
+                },
+                "properties": {
+                  "azimuthDeg": 90.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-2",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              }
+            ],
+            "type": "FeatureCollection"
+          },
+          "originId": "cccccccccccccccccccccccccccccccc",
+          "positionStale": false,
+          "rangeUnknown": false,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-2",
+          "stale": false,
+          "unsynchronized": false
+        },
+        "manifest": null,
+        "sourceExpiresAtMs": null,
+        "state": {
+          "azimuthDeg": 90.0,
+          "elevationDeg": -30.0,
+          "horizontalFovDeg": 20.0,
+          "imageNorthDeg": 180.0,
+          "rangeKind": "display-limit",
+          "rollDeg": 12.0,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-2",
+          "slantRangeM": 2000.0,
+          "verticalFovDeg": 10.0
+        }
+      },
+      {
+        "display": {
+          "geojson": {
+            "features": [
+              {
+                "geometry": {
+                  "coordinates": [
+                    179.999,
+                    45.0
+                  ],
+                  "type": "Point"
+                },
+                "properties": {
+                  "azimuthDeg": 180.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-3",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      [
+                        [
+                          -180.0,
+                          44.99598870790255
+                        ],
+                        [
+                          -179.99717576974737,
+                          44.98465989540886
+                        ],
+                        [
+                          -179.99908058684275,
+                          44.98448257229097
+                        ],
+                        [
+                          -180.0,
+                          44.98445418731031
+                        ],
+                        [
+                          -180.0,
+                          44.99598870790255
+                        ]
+                      ]
+                    ],
+                    [
+                      [
+                        [
+                          179.999,
+                          45.0
+                        ],
+                        [
+                          180.0,
+                          44.99598870790255
+                        ],
+                        [
+                          180.0,
+                          44.98445418731031
+                        ],
+                        [
+                          179.999,
+                          44.98442331437747
+                        ],
+                        [
+                          179.9970805868427,
+                          44.98448257229097
+                        ],
+                        [
+                          179.99517576974733,
+                          44.98465989540886
+                        ],
+                        [
+                          179.999,
+                          45.0
+                        ]
+                      ]
+                    ]
+                  ],
+                  "type": "MultiPolygon"
+                },
+                "properties": {
+                  "azimuthDeg": 180.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-3",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      179.999,
+                      45.0
+                    ],
+                    [
+                      179.999,
+                      44.98442331437747
+                    ]
+                  ],
+                  "type": "LineString"
+                },
+                "properties": {
+                  "azimuthDeg": 180.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-3",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              }
+            ],
+            "type": "FeatureCollection"
+          },
+          "originId": "cccccccccccccccccccccccccccccccc",
+          "positionStale": false,
+          "rangeUnknown": false,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-3",
+          "stale": false,
+          "unsynchronized": false
+        },
+        "manifest": null,
+        "sourceExpiresAtMs": null,
+        "state": {
+          "azimuthDeg": 180.0,
+          "elevationDeg": -30.0,
+          "horizontalFovDeg": 20.0,
+          "imageNorthDeg": 180.0,
+          "rangeKind": "display-limit",
+          "rollDeg": 12.0,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-3",
+          "slantRangeM": 2000.0,
+          "verticalFovDeg": 10.0
+        }
+      },
+      {
+        "display": {
+          "geojson": {
+            "features": [
+              {
+                "geometry": {
+                  "coordinates": [
+                    179.999,
+                    45.0
+                  ],
+                  "type": "Point"
+                },
+                "properties": {
+                  "azimuthDeg": 270.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-4",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      [
+                        [
+                          179.999,
+                          45.0
+                        ],
+                        [
+                          179.97730693090472,
+                          44.99729308352994
+                        ],
+                        [
+                          179.97705558651387,
+                          44.998640301171754
+                        ],
+                        [
+                          179.97697124047852,
+                          44.999997882626516
+                        ],
+                        [
+                          179.97705454656338,
+                          45.00135549624893
+                        ],
+                        [
+                          179.9773048826021,
+                          45.002702809416306
+                        ],
+                        [
+                          179.999,
+                          45.0
+                        ]
+                      ]
+                    ]
+                  ],
+                  "type": "MultiPolygon"
+                },
+                "properties": {
+                  "azimuthDeg": 270.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-4",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              },
+              {
+                "geometry": {
+                  "coordinates": [
+                    [
+                      179.999,
+                      45.0
+                    ],
+                    [
+                      179.97697124047852,
+                      44.999997882626516
+                    ]
+                  ],
+                  "type": "LineString"
+                },
+                "properties": {
+                  "azimuthDeg": 270.0,
+                  "displayOnly": true,
+                  "headingVisible": true,
+                  "originId": "cccccccccccccccccccccccccccccccc",
+                  "rangeKind": "display-limit",
+                  "sensorId": "camera-4",
+                  "stale": false,
+                  "unsynchronized": false
+                },
+                "type": "Feature"
+              }
+            ],
+            "type": "FeatureCollection"
+          },
+          "originId": "cccccccccccccccccccccccccccccccc",
+          "positionStale": false,
+          "rangeUnknown": false,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-4",
+          "stale": false,
+          "unsynchronized": false
+        },
+        "manifest": null,
+        "sourceExpiresAtMs": null,
+        "state": {
+          "azimuthDeg": 270.0,
+          "elevationDeg": -30.0,
+          "horizontalFovDeg": 20.0,
+          "imageNorthDeg": 180.0,
+          "rangeKind": "display-limit",
+          "rollDeg": 12.0,
+          "sampleAtMs": 1793440000000,
+          "sensorId": "camera-4",
+          "slantRangeM": 2000.0,
+          "verticalFovDeg": 10.0
+        }
+      }
+    ],
+    "writerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "fresh": {
+    "items": [
+      {
+        "label": "Controller A",
+        "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "originKind": "device",
+        "position": {
+          "accuracyM": null,
+          "altM": null,
+          "altitudeDatum": "unknown",
+          "courseDeg": 90.0,
+          "fixAtMs": 1793440000000,
+          "lat": 45.0,
+          "lon": -63.006,
+          "speedMps": 15.0
+        },
+        "sensors": [
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.006,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          [
+                            [
+                              -63.006,
+                              45.0
+                            ],
+                            [
+                              -63.009826278555686,
+                              45.01533997689787
+                            ],
+                            [
+                              -63.00792045310797,
+                              45.015517395541366
+                            ],
+                            [
+                              -63.006,
+                              45.01557668562252
+                            ],
+                            [
+                              -63.00407954689202,
+                              45.015517395541366
+                            ],
+                            [
+                              -63.00217372144431,
+                              45.01533997689787
+                            ],
+                            [
+                              -63.006,
+                              45.0
+                            ]
+                          ]
+                        ]
+                      ],
+                      "type": "MultiPolygon"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          -63.006,
+                          45.0
+                        ],
+                        [
+                          -63.006,
+                          45.01557668562252
+                        ]
+                      ],
+                      "type": "LineString"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "positionStale": false,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "stale": false,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 0.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          }
+        ],
+        "writerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "label": "Drone B",
+        "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "originKind": "uav",
+        "position": {
+          "accuracyM": null,
+          "altM": null,
+          "altitudeDatum": "unknown",
+          "courseDeg": 90.0,
+          "fixAtMs": 1793440000000,
+          "lat": 45.0,
+          "lon": -63.0,
+          "speedMps": 15.0
+        },
+        "sensors": [
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          [
+                            [
+                              -63.0,
+                              45.0
+                            ],
+                            [
+                              -63.00382627855569,
+                              45.01533997689787
+                            ],
+                            [
+                              -63.00192045310797,
+                              45.015517395541366
+                            ],
+                            [
+                              -63.0,
+                              45.01557668562252
+                            ],
+                            [
+                              -62.99807954689203,
+                              45.015517395541366
+                            ],
+                            [
+                              -62.99617372144431,
+                              45.01533997689787
+                            ],
+                            [
+                              -63.0,
+                              45.0
+                            ]
+                          ]
+                        ]
+                      ],
+                      "type": "MultiPolygon"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          -63.0,
+                          45.0
+                        ],
+                        [
+                          -63.0,
+                          45.01557668562252
+                        ]
+                      ],
+                      "type": "LineString"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": false,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "stale": false,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 0.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 90.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-2",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          [
+                            [
+                              -63.0,
+                              45.0
+                            ],
+                            [
+                              -62.97830488260212,
+                              45.002702809416306
+                            ],
+                            [
+                              -62.97805454656339,
+                              45.00135549624893
+                            ],
+                            [
+                              -62.977971240478524,
+                              44.999997882626516
+                            ],
+                            [
+                              -62.97805558651388,
+                              44.998640301171754
+                            ],
+                            [
+                              -62.978306930904736,
+                              44.99729308352994
+                            ],
+                            [
+                              -63.0,
+                              45.0
+                            ]
+                          ]
+                        ]
+                      ],
+                      "type": "MultiPolygon"
+                    },
+                    "properties": {
+                      "azimuthDeg": 90.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-2",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          -63.0,
+                          45.0
+                        ],
+                        [
+                          -62.977971240478524,
+                          44.999997882626516
+                        ]
+                      ],
+                      "type": "LineString"
+                    },
+                    "properties": {
+                      "azimuthDeg": 90.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-2",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": false,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-2",
+              "stale": false,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 90.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-2",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 180.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-3",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          [
+                            [
+                              -63.0,
+                              45.0
+                            ],
+                            [
+                              -62.99617576974735,
+                              44.98465989540886
+                            ],
+                            [
+                              -62.99808058684275,
+                              44.98448257229097
+                            ],
+                            [
+                              -63.0,
+                              44.98442331437747
+                            ],
+                            [
+                              -63.00191941315725,
+                              44.98448257229097
+                            ],
+                            [
+                              -63.00382423025265,
+                              44.98465989540886
+                            ],
+                            [
+                              -63.0,
+                              45.0
+                            ]
+                          ]
+                        ]
+                      ],
+                      "type": "MultiPolygon"
+                    },
+                    "properties": {
+                      "azimuthDeg": 180.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-3",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          -63.0,
+                          45.0
+                        ],
+                        [
+                          -63.0,
+                          44.98442331437747
+                        ]
+                      ],
+                      "type": "LineString"
+                    },
+                    "properties": {
+                      "azimuthDeg": 180.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-3",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": false,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-3",
+              "stale": false,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 180.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-3",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 270.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-4",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          [
+                            [
+                              -63.0,
+                              45.0
+                            ],
+                            [
+                              -63.021693069095264,
+                              44.99729308352994
+                            ],
+                            [
+                              -63.02194441348612,
+                              44.998640301171754
+                            ],
+                            [
+                              -63.022028759521476,
+                              44.999997882626516
+                            ],
+                            [
+                              -63.02194545343661,
+                              45.00135549624893
+                            ],
+                            [
+                              -63.02169511739788,
+                              45.002702809416306
+                            ],
+                            [
+                              -63.0,
+                              45.0
+                            ]
+                          ]
+                        ]
+                      ],
+                      "type": "MultiPolygon"
+                    },
+                    "properties": {
+                      "azimuthDeg": 270.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-4",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  },
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        [
+                          -63.0,
+                          45.0
+                        ],
+                        [
+                          -63.022028759521476,
+                          44.999997882626516
+                        ]
+                      ],
+                      "type": "LineString"
+                    },
+                    "properties": {
+                      "azimuthDeg": 270.0,
+                      "displayOnly": true,
+                      "headingVisible": true,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-4",
+                      "stale": false,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": false,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-4",
+              "stale": false,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 270.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-4",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          }
+        ],
+        "writerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "observedAtMs": 1793440000000,
+    "ttlMs": 300000
+  },
+  "stale": {
+    "items": [
+      {
+        "label": "Controller A",
+        "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "originKind": "device",
+        "position": {
+          "accuracyM": null,
+          "altM": null,
+          "altitudeDatum": "unknown",
+          "courseDeg": 90.0,
+          "fixAtMs": 1793440000000,
+          "lat": 45.0,
+          "lon": -63.006,
+          "speedMps": 15.0
+        },
+        "sensors": [
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.006,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": false,
+                      "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": true,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "positionStale": true,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "stale": true,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 0.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          }
+        ],
+        "writerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "label": "Drone B",
+        "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "originKind": "uav",
+        "position": {
+          "accuracyM": null,
+          "altM": null,
+          "altitudeDatum": "unknown",
+          "courseDeg": 90.0,
+          "fixAtMs": 1793440000000,
+          "lat": 45.0,
+          "lon": -63.0,
+          "speedMps": 15.0
+        },
+        "sensors": [
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 0.0,
+                      "displayOnly": true,
+                      "headingVisible": false,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-1",
+                      "stale": true,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": true,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "stale": true,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 0.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-1",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 90.0,
+                      "displayOnly": true,
+                      "headingVisible": false,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-2",
+                      "stale": true,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": true,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-2",
+              "stale": true,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 90.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-2",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 180.0,
+                      "displayOnly": true,
+                      "headingVisible": false,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-3",
+                      "stale": true,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": true,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-3",
+              "stale": true,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 180.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-3",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          },
+          {
+            "display": {
+              "geojson": {
+                "features": [
+                  {
+                    "geometry": {
+                      "coordinates": [
+                        -63.0,
+                        45.0
+                      ],
+                      "type": "Point"
+                    },
+                    "properties": {
+                      "azimuthDeg": 270.0,
+                      "displayOnly": true,
+                      "headingVisible": false,
+                      "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "rangeKind": "display-limit",
+                      "sensorId": "camera-4",
+                      "stale": true,
+                      "unsynchronized": false
+                    },
+                    "type": "Feature"
+                  }
+                ],
+                "type": "FeatureCollection"
+              },
+              "originId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "positionStale": true,
+              "rangeUnknown": false,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-4",
+              "stale": true,
+              "unsynchronized": false
+            },
+            "manifest": null,
+            "sourceExpiresAtMs": null,
+            "state": {
+              "azimuthDeg": 270.0,
+              "elevationDeg": -30.0,
+              "horizontalFovDeg": 20.0,
+              "imageNorthDeg": 180.0,
+              "rangeKind": "display-limit",
+              "rollDeg": 12.0,
+              "sampleAtMs": 1793440000000,
+              "sensorId": "camera-4",
+              "slantRangeM": 2000.0,
+              "verticalFovDeg": 10.0
+            }
+          }
+        ],
+        "writerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "observedAtMs": 1793440300001,
+    "ttlMs": 300000
+  }
+}

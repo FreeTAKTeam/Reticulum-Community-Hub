@@ -47,6 +47,14 @@ pub(super) fn direct_lxmf_message_payloads(
     let source = optional_message_string(message, &["source", "source_hash", "source_id"])
         .unwrap_or("unknown");
     let mut decoded = DecodedLxmfMessage::default();
+    if let Some(fields) = fields {
+        decode_origin_sensors(
+            JsonValue::Object(fields.clone()),
+            source,
+            local_source,
+            &mut decoded,
+        );
+    }
     // Telemetry is processed first, so a same-message collector query sees it.
     match direct_lxmf_telemetry(fields, message) {
         Ok(Some(telemetry)) => {
@@ -121,4 +129,30 @@ pub(super) fn direct_lxmf_message_payloads(
         }
     }
     decoded
+}
+
+fn decode_origin_sensors(
+    value: JsonValue,
+    source: &str,
+    local_source: &str,
+    decoded: &mut DecodedLxmfMessage,
+) {
+    match r3akt_map_core::sensor_frame::decode_json(&value, source) {
+        Ok(frame)
+            if !frame.events.is_empty()
+                || !frame.samples.is_empty()
+                || !frame.expiries.is_empty() =>
+        {
+            decoded.envelopes.push(ProtocolEnvelope::new(
+                NodeId::new(source),
+                Destination::Node(NodeId::new(local_source)),
+                Topic::new("origin-sensors"),
+                Payload::OriginSensorTelemetry { fields: value },
+            ));
+        }
+        Ok(_) => {}
+        Err(reason) => decoded
+            .telemetry_diagnostics
+            .push(format!("malformed R3S fields: {reason}")),
+    }
 }

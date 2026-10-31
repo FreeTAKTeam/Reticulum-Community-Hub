@@ -62,6 +62,7 @@ impl RchCommandTransaction<'_> {
             self.transaction.execute("UPDATE rch_broker_dispatch SET receipt_status=?1,state=CASE WHEN ?2 THEN 'terminal' ELSE state END WHERE operation_id=?3",params![status,terminal(status),operation])?;
         }
         let mut message = self.aggregate_broker_message(&parent)?;
+        self.confirm_delivered_sensor_metadata(&message)?;
         message.delivery_metadata["last_broker_receipt"] =
             serde_json::json!(raw_status.chars().take(512).collect::<String>());
         self.stage_message(&message)?;

@@ -11,7 +11,7 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test && playwright test --config playwright.sensor.config.ts"
   },
   "dependencies": {
     "@mdi/svg": "^7.4.47",

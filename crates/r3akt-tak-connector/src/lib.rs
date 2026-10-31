@@ -10,7 +10,12 @@
 )]
 
 mod cot_time;
+mod sensor_cot;
+mod sensor_video;
+pub use sensor_cot::{CotSensorObservation, SensorCotSnapshot};
+mod inbound_cot;
 mod inbound_frames;
+use inbound_cot::parse_inbound_cot_event;
 mod socket_io;
 mod socket_receiver;
 pub use socket_receiver::TakSocketReceiver;
@@ -149,6 +154,8 @@ pub struct TakConnectionConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakInboundCotEvent {
+    pub sensor: Option<CotSensorObservation>,
+    pub sensor_diagnostic: Option<String>,
     pub version: String,
     pub uid: String,
     pub event_type: String,
@@ -293,74 +300,13 @@ fn cot_detail_xml(xml: &str) -> Option<String> {
     }
 }
 
-fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
-    let mut reader = Reader::from_str(raw);
-    reader.config_mut().trim_text(true);
-    let mut event: Option<TakInboundCotEvent> = None;
-    let mut root_depth: Option<usize> = None;
-    let mut depth = 0usize;
-    let mut closed = false;
-
-    loop {
-        match reader.read_event() {
-            Ok(XmlEvent::Start(element)) => {
-                if closed {
-                    return None;
-                }
-                depth = depth.saturating_add(1);
-                if event.is_none() {
-                    event = Some(event_from_xml_start(&reader, &element)?);
-                    root_depth = Some(depth);
-                } else if root_depth.is_some_and(|root| depth == root + 1)
-                    && element.name().as_ref() == b"point"
-                    && let Some(parsed_event) = event.as_mut()
-                {
-                    parsed_event.point = point_from_xml_start(&reader, &element)?;
-                }
-            }
-            Ok(XmlEvent::Empty(element)) => {
-                if closed {
-                    return None;
-                }
-                if depth == 0 {
-                    closed = true;
-                }
-                let element_depth = depth.saturating_add(1);
-                if event.is_none() {
-                    event = Some(event_from_xml_start(&reader, &element)?);
-                    root_depth = Some(element_depth);
-                } else if root_depth.is_some_and(|root| element_depth == root + 1)
-                    && element.name().as_ref() == b"point"
-                    && let Some(parsed_event) = event.as_mut()
-                {
-                    parsed_event.point = point_from_xml_start(&reader, &element)?;
-                }
-            }
-            Ok(XmlEvent::End(_)) => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    closed = true;
-                }
-            }
-            Ok(XmlEvent::DocType(_)) | Err(_) => return None,
-            Ok(XmlEvent::Text(text))
-                if depth == 0 && !text.as_ref().iter().all(u8::is_ascii_whitespace) =>
-            {
-                return None;
-            }
-            Ok(XmlEvent::Eof) => break,
-            Ok(_) => {}
-        }
-    }
-
-    if closed && depth == 0 { event } else { None }
-}
-
 fn event_from_xml_start(
     reader: &Reader<&[u8]>,
     element: &BytesStart<'_>,
 ) -> Option<TakInboundCotEvent> {
     Some(TakInboundCotEvent {
+        sensor: None,
+        sensor_diagnostic: None,
         version: xml_attr(reader, element, b"version")
             .ok()?
             .unwrap_or_default(),
@@ -1312,6 +1258,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml.as_bytes(), true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: "2.0".to_string(),
                 uid: "alpha".to_string(),
                 event_type: "a-f-G-U-C".to_string(),
@@ -1338,6 +1286,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml, true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: String::new(),
                 uid: "alpha".to_string(),
                 event_type: String::new(),
@@ -1358,6 +1308,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml, true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: String::new(),
                 uid: "root".to_string(),
                 event_type: String::new(),

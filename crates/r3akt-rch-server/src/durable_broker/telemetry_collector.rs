@@ -144,6 +144,24 @@ pub(super) fn reply(
             skipped += 1;
             continue;
         };
+        if packed.len().saturating_add(bytes) > 1024 * 1024 {
+            return failure_reply(
+                unit,
+                event,
+                envelope,
+                published,
+                "unavailable",
+                "Telemetry collector response exceeds 1 MiB.",
+                topic,
+            );
+        }
+        // R3S components use the separately authorized collector lane below.
+        let packed = if let Ok(packed) = r3akt_map_core::msgpack::without_sensor(&packed, 128) {
+            packed
+        } else {
+            skipped += 1;
+            continue;
+        };
         bytes = bytes.saturating_add(packed.len());
         if bytes > 1024 * 1024 {
             return failure_reply(
@@ -162,6 +180,25 @@ pub(super) fn reply(
             Binary(packed),
             None,
         ));
+    }
+    let ordinary_count = published.len();
+    let optional = unit
+        .apply_inbox_envelope(|unit| {
+            super::sensor_telemetry::collector(
+                unit,
+                event,
+                envelope,
+                since,
+                destinations.as_ref(),
+                topic,
+                published,
+                allowlist,
+            )
+        })
+        .map_err(storage)?;
+    if let Err(error) = optional {
+        published.truncate(ordinary_count);
+        eprintln!("optional sensor collector response unavailable: {error}");
     }
     let count = stream.len();
     // Encode the fields map once: field 3 remains an array, with binary peer

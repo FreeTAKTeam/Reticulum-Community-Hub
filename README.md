@@ -234,3 +234,5 @@ For substantial protocol or architecture changes, open an issue first so the wir
 ## License
 
 RCH is licensed under the [Eclipse Public License 2.0](LICENSE).
+
+The Rust implementation also provides the optional [R3S/1 origin sensor telemetry contract](docs/r3s-telemetry.md), including native map projections and the TAK sensor adapter. Its provisional SID and remaining delivery/hardware release gates are documented there.
