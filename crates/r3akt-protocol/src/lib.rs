@@ -217,6 +217,10 @@ pub enum Payload {
     Heartbeat(Heartbeat),
     HealthTelemetry(HealthTelemetry),
     TelemetrySample(TelemetrySample),
+    /// Authenticated relay source stays in the envelope; object origins stay inside checked LXMF fields.
+    OriginSensorTelemetry {
+        fields: Value,
+    },
     TopicMessage(TopicMessage),
     Command(Command),
     AckAccepted(Ack),
@@ -349,7 +353,8 @@ impl ProtocolEnvelope {
             Payload::NodeHello(_)
             | Payload::Heartbeat(_)
             | Payload::HealthTelemetry(_)
-            | Payload::TelemetrySample(_) => None,
+            | Payload::TelemetrySample(_)
+            | Payload::OriginSensorTelemetry { .. } => None,
         }
     }
 }

@@ -463,3 +463,5 @@ mod telemetry_collector;
 
 #[cfg(test)]
 mod telemetry_compatibility_tests;
+
+mod sensor_telemetry;

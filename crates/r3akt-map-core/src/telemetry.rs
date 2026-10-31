@@ -74,7 +74,7 @@ pub fn parse_payload(value: &JsonValue) -> Option<JsonValue> {
     if bytes.is_empty() {
         return None;
     }
-    msgpack::to_json(&bytes)
+    msgpack::telemetry_to_json(&bytes)
 }
 
 fn timestamp(value: &JsonValue) -> Result<f64, &'static str> {

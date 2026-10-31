@@ -7,6 +7,7 @@
       <div class="webmap-stage">
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
+        <SensorGeometryLayer :map="mapInstance" />
 
         <div class="webmap-marker-overlay-layer">
           <div v-if="markerReticleStyle" class="webmap-marker-reticle" :style="markerReticleStyle" aria-hidden="true">
@@ -589,6 +590,7 @@
 </template>
 
 <script setup lang="ts">
+import SensorGeometryLayer from "../components/map/SensorGeometryLayer.vue";
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";

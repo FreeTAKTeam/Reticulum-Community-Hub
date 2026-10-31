@@ -17,6 +17,8 @@ vi.mock("../utils/mdi-icons", () => ({ loadMdiSvg: vi.fn().mockResolvedValue(nul
 vi.mock("../components/OnlineHelpLauncher.vue", () => ({ default: { template: "<span />" } }));
 vi.mock("maplibre-gl", () => ({ setWorkerUrl: vi.fn(), Map: class {
   on() {} off() {} resize() {} setLayoutProperty() {}
+  isStyleLoaded() { return false; }
+  getLayer() { return undefined; } getSource() { return undefined; }
   getCanvas() { return document.createElement("canvas"); }
   getCenter() { return { lat: 0, lng: 0 }; }
   getZoom() { return 1; }

@@ -29,13 +29,33 @@ pub(super) fn dispatch_with_store(
         .request
         .get("destination")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::Internal("intent lacks destination".into()))?;
-    if !outbound_identity_allowed(state, destination, destination) {
+        .ok_or_else(|| ApiError::Internal("intent lacks destination".into()))?
+        .to_string();
+    if !outbound_identity_allowed(state, &destination, &destination) {
         reject_dispatch(
             state,
             store,
             &intent.operation_id,
             "current destination authorization rejected this intent",
+        )?;
+        return Ok(true);
+    }
+    if !super::sensor_telemetry::dispatch_allowed(
+        store,
+        &destination,
+        intent.request.get("fields").unwrap_or(&Value::Null),
+        intent
+            .message
+            .delivery_metadata
+            .get("r3s_policy")
+            .unwrap_or(&Value::Null),
+        state.outbound_identity_allowlist.as_deref(),
+    )? {
+        reject_dispatch(
+            state,
+            store,
+            &intent.operation_id,
+            "sensor source, team or snapshot is no longer current",
         )?;
         return Ok(true);
     }

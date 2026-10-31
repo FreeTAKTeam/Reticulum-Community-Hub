@@ -131,6 +131,17 @@ fn apply_envelope_payload(
             return Ok(());
         }
         unit.prepare_command(&mission).map_err(storage)?;
+        if command.name.starts_with("mission.marker.")
+            && let Some(id) = mission
+                .args
+                .get("object_destination_hash")
+                .and_then(Value::as_str)
+            && !unit
+                .sensor_marker_write_allowed(id, envelope.source.as_str())
+                .map_err(storage)?
+        {
+            return Err(ApiError::BadRequest("sensor origin writer denied".into()));
+        }
         let checkpoint = unit.core_mut().snapshot();
         let checklist = is_supported_checklist_command(&command.name);
         let mut responses = if checklist {
@@ -226,6 +237,20 @@ fn apply_envelope_payload(
                 .and_then(Value::as_str)
                 == Some("rejected")
         });
+        if !rejected
+            && command.name == "mission.marker.create"
+            && let Some(id) = mission
+                .args
+                .get("object_destination_hash")
+                .and_then(Value::as_str)
+            && !checkpoint
+                .markers
+                .iter()
+                .any(|m| m.object_destination_hash == id)
+        {
+            unit.record_sensor_marker_writer(id, envelope.source.as_str())
+                .map_err(storage)?;
+        }
         if rejected {
             unit.restore_domain(checkpoint).map_err(storage)?;
             unit.diagnose_rejection("domain command rejected; see persisted response intent");
@@ -440,6 +465,25 @@ fn apply_envelope_payload(
                         envelope.timestamp.timestamp_millis(),
                     )?);
                 }
+            }
+        }
+        Payload::OriginSensorTelemetry { fields } => {
+            let changed = unit
+                .stage_sensor_frame(
+                    envelope.source.as_str(),
+                    fields,
+                    u64::try_from(event.created_at.saturating_mul(1000)).unwrap_or(0),
+                )
+                .map_err(|e| match e {
+                    r3akt_rch_core::RchCoreError::InvalidPayload(reason) => {
+                        ApiError::BadRequest(reason)
+                    }
+                    e => storage(e),
+                })?;
+            if !changed.is_empty() {
+                super::sensor_telemetry::relay(
+                    unit, event, envelope, fields, &changed, published, allowlist,
+                )?;
             }
         }
         Payload::TelemetrySample(t) => {

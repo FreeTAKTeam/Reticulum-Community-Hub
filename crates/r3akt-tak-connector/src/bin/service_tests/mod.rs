@@ -48,6 +48,8 @@ fn telemetry_entry_maps_to_location_snapshot() {
 #[test]
 fn parsed_cot_maps_to_marker_payload() {
     let event = TakInboundCotEvent {
+        sensor: None,
+        sensor_diagnostic: None,
         version: "2.0".to_string(),
         uid: "tak-peer".to_string(),
         event_type: "a-f-G-U-C".to_string(),
@@ -75,7 +77,7 @@ fn parsed_cot_maps_to_marker_payload() {
 #[test]
 fn service_bridges_rch_telemetry_and_chat_to_tak_cot_socket() {
     let (tak_url, tak_rx, tak_handle) = spawn_tak_capture_server(2);
-    let (rch_url, rch_handle) = spawn_rch_server(3, |request| {
+    let (rch_url, rch_handle) = spawn_rch_server(4, |request| {
         assert!(request.to_ascii_lowercase().contains("x-api-key: secret"));
         if request.starts_with("GET /Status ") {
             json!({"status":"ok"}).to_string()
@@ -98,6 +100,8 @@ fn service_bridges_rch_telemetry_and_chat_to_tak_cot_socket() {
                 }]
             })
             .to_string()
+        } else if request.starts_with("GET /Sensors ") {
+            json!({"items":[],"ttlMs":300_000}).to_string()
         } else if request.starts_with("GET /Chat/Messages?limit=100 ") {
             json!([{
                 "Direction": "outbound",

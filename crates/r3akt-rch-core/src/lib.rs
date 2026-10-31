@@ -448,6 +448,9 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "rch_audit_events",
     "rch_system_events",
     "rch_telemetry_records",
+    "r3s_sensor_origins",
+    "r3s_marker_writers",
+    "r3s_relay_metadata",
     "rch_markers",
     "rch_zones",
     "rch_missions",
@@ -1459,6 +1462,7 @@ impl RchSqliteStore {
         let store = Self { connection };
         if profile != RchSqliteConnectionProfile::ReadOnly {
             store.migrate()?;
+            sqlite_commands::initialize(&store.connection)?;
         }
         Ok(store)
     }
@@ -3638,6 +3642,16 @@ impl RchCore {
     }
 
     #[must_use]
+    pub fn authorize_command_operation(
+        &self,
+        command: &MissionCommandEnvelope,
+        operation: &str,
+    ) -> bool {
+        self.authorize_identity_operation(&command.source.rns_identity, operation, None)
+            || self.has_mission_access_operation(command, operation)
+    }
+
+    #[must_use]
     pub fn authorize_identity_operation(
         &self,
         identity: &str,
@@ -4657,6 +4671,7 @@ impl RchCore {
             Payload::NodeHello(_)
             | Payload::Heartbeat(_)
             | Payload::HealthTelemetry(_)
+            | Payload::OriginSensorTelemetry { .. }
             | Payload::TelemetrySample(_)
             | Payload::AckAccepted(_)
             | Payload::AckRejected(_)
@@ -10714,6 +10729,18 @@ fn save_registry_delta_tables(
             ]
         },
     )?;
+    for marker in &before.markers {
+        if !after
+            .markers
+            .iter()
+            .any(|m| m.object_destination_hash == marker.object_destination_hash)
+        {
+            r3akt_map_core::sensor_marker::deleted(transaction, &marker.object_destination_hash)?;
+        }
+    }
+    for marker in &after.markers {
+        r3akt_map_core::sensor_marker::updated(transaction, marker)?;
+    }
     save_payload_delta(
         transaction,
         "rch_markers",

@@ -28,6 +28,12 @@ pub mod marker;
 pub mod marker_wire;
 pub mod msgpack;
 pub mod replica;
+pub mod sensor;
+pub mod sensor_geometry;
+#[cfg(feature = "sqlite")]
+pub mod sensor_store;
+pub mod sensor_stream;
+pub mod sensor_wire;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod symbols;
@@ -37,3 +43,10 @@ pub mod time;
 
 pub use marker::{MarkerDraft, MarkerError, MarkerRecord, Position};
 pub use symbols::{MarkerSymbol, SymbolSet};
+
+pub mod sensor_frame;
+
+#[cfg(feature = "sqlite")]
+pub mod sensor_marker;
+
+pub mod sensor_expiry;

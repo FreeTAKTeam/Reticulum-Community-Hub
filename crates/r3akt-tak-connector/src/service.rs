@@ -102,6 +102,20 @@ impl<S: TakCotSender> TakService<S> {
         self.record_admission(result)
     }
 
+    /// Admit the selected origin sensor through the existing bounded `CoT` queue.
+    pub fn queue_sensor(
+        &mut self,
+        snapshot: &super::SensorCotSnapshot,
+    ) -> Result<(), TakConnectorError> {
+        self.ensure_running()?;
+        let xml = self.connector.build_sensor_xml(snapshot)?;
+        let result = self.queue.push(super::CotPayload {
+            kind: super::CotPayloadKind::Location,
+            xml,
+        });
+        self.record_admission(result)
+    }
+
     /// Admit chat into the existing retry queue without attempting I/O.
     pub fn queue_chat(&mut self, input: &ChatEventInput) -> Result<(), TakConnectorError> {
         self.ensure_running()?;

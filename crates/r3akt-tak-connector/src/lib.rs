@@ -10,6 +10,9 @@
 )]
 
 mod cot_time;
+mod sensor_cot;
+mod sensor_video;
+pub use sensor_cot::{CotSensorObservation, SensorCotSnapshot};
 mod inbound_frames;
 mod socket_io;
 mod socket_receiver;
@@ -149,6 +152,8 @@ pub struct TakConnectionConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakInboundCotEvent {
+    pub sensor: Option<CotSensorObservation>,
+    pub sensor_diagnostic: Option<String>,
     pub version: String,
     pub uid: String,
     pub event_type: String,
@@ -300,6 +305,7 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
     let mut root_depth: Option<usize> = None;
     let mut depth = 0usize;
     let mut closed = false;
+    let mut point_present = false;
 
     loop {
         match reader.read_event() {
@@ -316,6 +322,7 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                     && let Some(parsed_event) = event.as_mut()
                 {
                     parsed_event.point = point_from_xml_start(&reader, &element)?;
+                    point_present = true;
                 }
             }
             Ok(XmlEvent::Empty(element)) => {
@@ -334,6 +341,7 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
                     && let Some(parsed_event) = event.as_mut()
                 {
                     parsed_event.point = point_from_xml_start(&reader, &element)?;
+                    point_present = true;
                 }
             }
             Ok(XmlEvent::End(_)) => {
@@ -353,7 +361,19 @@ fn parse_inbound_cot_event(raw: &str) -> Option<TakInboundCotEvent> {
         }
     }
 
-    if closed && depth == 0 { event } else { None }
+    if closed && depth == 0 {
+        if let Some(event) = event.as_mut() {
+            match sensor_cot::parse(raw, &event.time, &event.stale) {
+                Ok(sensor) if point_present => event.sensor = sensor,
+                Ok(Some(_)) => event.sensor_diagnostic = Some("sensor origin point missing".into()),
+                Ok(None) => {}
+                Err(reason) => event.sensor_diagnostic = Some(reason),
+            }
+        }
+        event
+    } else {
+        None
+    }
 }
 
 fn event_from_xml_start(
@@ -361,6 +381,8 @@ fn event_from_xml_start(
     element: &BytesStart<'_>,
 ) -> Option<TakInboundCotEvent> {
     Some(TakInboundCotEvent {
+        sensor: None,
+        sensor_diagnostic: None,
         version: xml_attr(reader, element, b"version")
             .ok()?
             .unwrap_or_default(),
@@ -1312,6 +1334,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml.as_bytes(), true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: "2.0".to_string(),
                 uid: "alpha".to_string(),
                 event_type: "a-f-G-U-C".to_string(),
@@ -1338,6 +1362,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml, true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: String::new(),
                 uid: "alpha".to_string(),
                 event_type: String::new(),
@@ -1358,6 +1384,8 @@ fN59G+INtr0cPXmM6zCYs+c=
         assert_eq!(
             parse_inbound_cot_payload(xml, true),
             TakInboundCotResult::Parsed(Box::new(TakInboundCotEvent {
+                sensor: None,
+                sensor_diagnostic: None,
                 version: String::new(),
                 uid: "root".to_string(),
                 event_type: String::new(),

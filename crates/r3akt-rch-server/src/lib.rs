@@ -46,6 +46,7 @@ mod command_persistence;
 mod first_run_setup;
 mod identity_directory;
 mod identity_directory_config;
+mod sensor_api;
 use identity_directory::IdentityListQuery;
 pub use identity_directory_config::IdentityDirectoryConfig;
 mod marker_idempotency;
@@ -2011,6 +2012,7 @@ fn create_app_router(state: AppState) -> Router {
         .route("/api/v1/auth/validate", get(validate_auth))
         .route("/Events", get(list_events))
         .route("/Telemetry", get(list_telemetry))
+        .route("/Sensors", get(sensor_api::list).post(sensor_api::update))
         .route("/Message", get(method_not_allowed).post(send_message))
         .route("/Command/DumpRouting", get(dump_routing))
         .route(
@@ -6359,6 +6361,7 @@ fn openapi_document() -> Value {
                     "Telemetry snapshots."
                 )
             },
+            "/Sensors": sensor_api::openapi(),
             "/Message": {
                 "post": openapi_json_request_response_operation(
                     Vec::new(),
