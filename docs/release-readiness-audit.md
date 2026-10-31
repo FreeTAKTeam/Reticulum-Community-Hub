@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.35 consolidated Linux AMD64 release
+
+Preview.35 packages all RCH changes merged through `b3931fc3896423c99f1e9b6f848906266065bda6` with LXMF-rs SDK and daemon source `888355c580932f886cfbf9f7076758b065a69879`. See [the preview.35 notes](release-notes-v3.0.0-preview.35.md). Package and runtime qualification is pending until performed; real-peer, sustained-load, deployment, and systemd PID 1 acceptance remain separate gates.
+
 ## Preview.33 Linux AMD64 testing candidate
 
 Preview.33 combines Sideband Telemeter marker sharing with the requested LXMF-rs `reticulumd-test-0.16.0-linux-c45a5113.1` test daemon. See [the preview.33 notes](release-notes-v3.0.0-preview.33.md). Release qualification is pending until performed.

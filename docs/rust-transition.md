@@ -231,8 +231,8 @@ Release blockers cleared in the latest parity pass:
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
 - Production library dependencies use LXMF `0.16.0` from immutable revision
-  `c45a5113807fdf5618b55d4e6ba7f598c3eaafe7`
-  (`reticulumd-test-0.16.0-linux-c45a5113.1`); a clean server build does not
+  `888355c580932f886cfbf9f7076758b065a69879`
+  (`reticulumd-test-0.16.0-linux-888355c5.1`); a clean server build does not
   require a sibling checkout. CI and release packages use that same revision,
   including the #678 announce-cache cleanup and #663 resource/ZeroMQ
   follow-through. The paired dependency requires Rust 1.88 or newer.
