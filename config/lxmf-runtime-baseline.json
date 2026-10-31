@@ -1,6 +1,6 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "reticulumd-test-0.16.0-linux-0fa0ca63.1",
+  "release_tag": null,
   "sdk_version": "0.16.0",
   "daemon_tokio_version": "1.53.3",
   "daemon_package": "reticulumd",
@@ -25,5 +25,6 @@
     "sdk_identity_import_v2",
     "sdk_identity_activate_v2",
     "sdk_identity_announce_v2"
-  ]
+  ],
+  "source_commit": "27d418fa8b6ed17a1204b163114326f8aa6aed70"
 }

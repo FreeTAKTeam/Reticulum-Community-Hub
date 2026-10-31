@@ -12,10 +12,10 @@ use std::collections::HashMap;
 
 use super::{
     ApiError, AppState, MarkerRecord, OUTBOUND_RETRY_MAX_ATTEMPTS, REM_COMMAND_PLACEHOLDER_BODY,
-    command_fanout_recipients_for_state, compact_rem_command_id, compact_rem_identifier_string,
-    iso8601_from_unix_ms, normalize_identity_key, outbound_identity_allowed,
-    record_outbound_message_with_metadata, rem_command_transport_fields,
-    rem_marker_telemetry_command_fields, unix_now_ms,
+    compact_rem_command_id, compact_rem_identifier_string, iso8601_from_unix_ms,
+    normalize_identity_key, outbound_identity_allowed, record_outbound_message_with_metadata,
+    rem_command_transport_fields, rem_marker_telemetry_command_fields, roster_fanout_recipients,
+    unix_now_ms,
 };
 
 fn not_attempted(reason: &str) -> Value {
@@ -45,7 +45,7 @@ fn send_to_recipients(
     generic: Option<(&Value, &str)>,
     non_rem_skip_reason: &str,
 ) -> Result<Value, ApiError> {
-    let recipients = command_fanout_recipients_for_state(state)?;
+    let recipients = roster_fanout_recipients(state, false)?;
     if recipients.is_empty() {
         return Ok(not_attempted("no_rem_or_generic_recipients"));
     }

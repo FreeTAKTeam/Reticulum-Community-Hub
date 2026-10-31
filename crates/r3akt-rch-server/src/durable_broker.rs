@@ -2,6 +2,7 @@
 use super::*;
 use r3akt_rch_core::{DurableOutboundIntent, InboxBatch, InboxEvent, RchCommandTransaction};
 use r3akt_transport_rns::durable_broker as broker;
+mod announce_sync;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -127,6 +128,7 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
             let consumer = consumer.clone();
             owners.spawn(async move {
                 let mut failures = 0u32;
+                let announce_cursor = Arc::new(std::sync::Mutex::new(None));
                 loop {
                     if state.runtime_exit.is_requested() {
                         break;
@@ -143,10 +145,11 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                     if !runtime_shutdown_requested(&state) && !persistence_locked {
                         let task_state = state.clone();
                         let task_consumer = consumer.clone();
+                        let task_cursor = announce_cursor.clone();
                         // Keep the completion owner: an external timeout must not detach a database write.
                         let result = tokio::task::spawn_blocking(move || {
                             if lane == 3 {
-                                return announces(&task_state).map(|()| false);
+                                return announce_sync::poll(&task_state, &task_cursor);
                             }
                             let _quiescence = task_state
                                 .broker_work_gate
@@ -327,31 +330,6 @@ fn intake_with_store(
         })
         .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
     record_reticulumd_inbound_worker_event_poll(state, 0, 0, 0, None, None, None);
-    Ok(())
-}
-
-fn announces(state: &AppState) -> Result<(), ApiError> {
-    let _quiescence = state
-        .broker_work_gate
-        .read()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    ensure_kill_switch_persistence_unlocked(state)?;
-    let result = plane(state)?
-        .broker_announces()
-        .map_err(|e| ApiError::ServiceUnavailable(e.to_string()))?;
-    let records: Vec<ReticulumdAnnounceRecord> = serde_json::from_value(
-        result
-            .get("announces")
-            .cloned()
-            .ok_or_else(|| ApiError::Internal("SDK projection lacks announces".into()))?,
-    )
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if records.len() > 32 {
-        return Err(ApiError::ServiceUnavailable(
-            "SDK announce projection exceeds count bound".into(),
-        ));
-    }
-    import_reticulumd_announce_batch(state, &records, false)?;
     Ok(())
 }
 

@@ -1,5 +1,13 @@
 # RCH Rust Transition
 
+Marker fanout includes eligible offline roster clients and uses durable direct
+submission with propagation fallback. Announce age does not remove marker
+recipients; pause, text-only, ban/blackhole and outbound allowlist policies still
+apply. Daemon discovery is reconciled through bounded latest-per-peer ZeroMQ
+pages, replayed after restart and swept again after completion. This requires a
+daemon supporting `latest_per_peer_v1`; an older daemon reports a lane error
+instead of silently falling back to the lossy latest-32 announce window.
+
 `main` is the Rust edition of Reticulum Community Hub. The Python
 implementation at release `2.9.6` is preserved on `rch-python` for long-term
 maintenance.

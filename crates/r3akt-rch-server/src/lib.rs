@@ -11724,6 +11724,15 @@ fn reticulum_destination_hash(value: &str) -> Option<String> {
 }
 
 fn command_fanout_recipients_for_state(state: &AppState) -> Result<Vec<ClientRecord>, ApiError> {
+    roster_fanout_recipients(state, true)
+}
+
+// Roster membership defines eligibility; announce freshness is a routing hint.
+// Marker delivery includes offline members so the SDK can retain and propagate it.
+fn roster_fanout_recipients(
+    state: &AppState,
+    require_runtime_announce: bool,
+) -> Result<Vec<ClientRecord>, ApiError> {
     let client_records = state
         .clients
         .read()
@@ -11747,7 +11756,8 @@ fn command_fanout_recipients_for_state(state: &AppState) -> Result<Vec<ClientRec
         if !recipient_identities.insert(destination.clone()) {
             continue;
         }
-        if runtime_freshness_cutoff_ms.is_some()
+        if require_runtime_announce
+            && runtime_freshness_cutoff_ms.is_some()
             && !annotations
                 .get(destination.as_str())
                 .is_some_and(|annotation| {
