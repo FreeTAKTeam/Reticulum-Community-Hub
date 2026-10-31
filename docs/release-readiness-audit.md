@@ -301,3 +301,10 @@ readiness is claimed. Public download checksums, all server source manifests
 and fresh downloaded Linux inbound persistence are publication acceptance;
 native desktop interaction and the original production trigger remain separate
 unproven acceptance. This does not change the stable-release gates above.
+# Offline marker and announce reconciliation candidate
+
+This candidate pairs offline roster marker fanout with LXMF latest-per-peer
+ZeroMQ announce paging. Release qualification must include the server-only gate,
+the paired daemon build, and post-deployment S8 propagation/retrieval evidence.
+Transport custody and recipient acknowledgement must be reported separately.
+

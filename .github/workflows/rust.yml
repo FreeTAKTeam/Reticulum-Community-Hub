@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  LXMF_REF: c45a5113807fdf5618b55d4e6ba7f598c3eaafe7
+  LXMF_REF: 27d418fa8b6ed17a1204b163114326f8aa6aed70
 
 jobs:
   rust:

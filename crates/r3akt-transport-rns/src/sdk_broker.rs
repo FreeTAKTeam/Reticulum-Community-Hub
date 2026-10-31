@@ -53,9 +53,18 @@ pub(super) fn broker_identity(session: &ZmqSdkActorSession) -> Result<String, Tr
 }
 impl ZmqDataPlane {
     pub fn broker_announces(&self) -> Result<JsonValue, TransportError> {
+        self.broker_announce_page(None)
+    }
+    /// Reconcile latest-per-peer state in bounded keyset pages.
+    pub fn broker_announce_page(
+        &self,
+        after_peer: Option<String>,
+    ) -> Result<JsonValue, TransportError> {
         match self.request(ZmqSdkActorPayload::BrokerAnnounces(
             durable_broker::AnnounceProjectionRequest {
                 identity: String::new(),
+                latest_per_peer: true,
+                after_peer,
             },
         ))? {
             ZmqSdkActorResponse::Control(value) => Ok(value),

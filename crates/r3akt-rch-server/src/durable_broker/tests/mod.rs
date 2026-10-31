@@ -7,6 +7,7 @@ use rns_rpc::{MessageRecord, MessagesStore};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use zeromq::{PullSocket, Socket, SocketRecv};
 
+mod announces;
 mod envelope_isolation;
 mod replies;
 
@@ -141,6 +142,14 @@ impl Fixture {
         }
     }
     fn state(&self, path: &FsPath, identity_path: &FsPath) -> AppState {
+        self.state_with_timeout(path, identity_path, None)
+    }
+    fn state_with_timeout(
+        &self,
+        path: &FsPath,
+        identity_path: &FsPath,
+        timeout: Option<Duration>,
+    ) -> AppState {
         let mut state = AppState::from_sqlite_path(path)
             .unwrap()
             .with_lxmf_zmq_sdk_identity(
@@ -151,6 +160,16 @@ impl Fixture {
                 "RCH",
             )
             .unwrap();
+        if let Some(timeout) = timeout {
+            state.lxmf_zmq_data_plane = Some(Arc::new(
+                ZmqDataPlane::new_with_timeout(
+                    self.endpoint.clone(),
+                    self.response.clone(),
+                    timeout,
+                )
+                .unwrap(),
+            ));
+        }
         state.enable_durable_consumer().unwrap();
         state.register_lxmf_zmq_service_identity().unwrap();
         state
