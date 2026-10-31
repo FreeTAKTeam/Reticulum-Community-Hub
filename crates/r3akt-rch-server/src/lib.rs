@@ -19925,6 +19925,7 @@ mod tests {
     mod directory_pagination;
     mod durable_inbound;
     mod field_commands;
+    mod marker_delivery;
     mod marker_metadata;
     mod marker_share;
     mod memory_readers;
@@ -26859,7 +26860,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn marker_create_sends_rem_telemetry_command_and_generic_markdown() {
+    async fn marker_create_sends_rem_commands_and_generic_marker_stream() {
         let db_path =
             std::env::temp_dir().join(format!("r3akt-rch-marker-fanout-{}.db", Uuid::new_v4()));
         let mut store = RchSqliteStore::open(&db_path).expect("sqlite");
@@ -26953,16 +26954,24 @@ mod tests {
         assert_eq!(command["args"]["category"], "hostile");
         assert_eq!(command["args"]["notes"], "red force");
 
-        assert!(!requests.iter().any(|request| {
-            request["destination"]
-                .as_str()
-                .is_some_and(|destination| destination == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        }));
+        assert_eq!(requests.len(), 2);
+        let generic = requests
+            .iter()
+            .find(|request| request["destination"] == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .expect("generic marker stream");
+        assert_eq!(generic["content"], "Map marker: Hostile");
+        assert!(generic["fields"].get("9").is_none());
+        assert!(generic["fields"].get("2").is_none());
+        assert_eq!(generic["fields"]["3"], rem["fields"]["3"]);
+        let telemetry =
+            r3akt_map_core::telemetry::decode_field(&generic["fields"]["3"][0][2]).unwrap();
+        assert_eq!(telemetry.telemetry["location"]["latitude"], 45.5017);
+        assert_eq!(telemetry.telemetry["location"]["longitude"], -73.5673);
         let snapshot = store
             .load_snapshot()
             .expect("load snapshot")
             .expect("snapshot");
-        assert!(!snapshot.messages.iter().any(|message| {
+        assert!(snapshot.messages.iter().any(|message| {
             message.destination.as_deref() == Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         }));
 
