@@ -1,4 +1,4 @@
-//! Southbound marker notifications for REM clients.
+//! Southbound marker notifications for REM and standard LXMF clients.
 //!
 //! Mission marker link changes go out as reduced REM commands. Marker
 //! changes made through the RCH API go out as `mission.marker.*` events whose
@@ -8,11 +8,13 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 use super::{
     ApiError, AppState, MarkerRecord, OUTBOUND_RETRY_MAX_ATTEMPTS, REM_COMMAND_PLACEHOLDER_BODY,
     command_fanout_recipients_for_state, compact_rem_command_id, compact_rem_identifier_string,
-    iso8601_from_unix_ms, record_outbound_message_with_metadata, rem_command_transport_fields,
+    iso8601_from_unix_ms, normalize_identity_key, outbound_identity_allowed,
+    record_outbound_message_with_metadata, rem_command_transport_fields,
     rem_marker_telemetry_command_fields, unix_now_ms,
 };
 
@@ -33,13 +35,15 @@ fn rch_source_identity(state: &AppState) -> &str {
         .map_or("r3akt-rch-server", |value| value.as_str())
 }
 
-/// Queues `fields` for every REM-capable recipient. `metadata` is extended
-/// with the delivery policy and the fields themselves.
-fn send_to_rem_recipients(
+/// Keep REM commands on REM recipients; optionally send standard marker streams
+/// to other current clients through the same durable delivery queue.
+fn send_to_recipients(
     state: &AppState,
     fields: &Value,
     mut metadata: Value,
     reliable: bool,
+    generic: Option<(&Value, &str)>,
+    non_rem_skip_reason: &str,
 ) -> Result<Value, ApiError> {
     let recipients = command_fanout_recipients_for_state(state)?;
     if recipients.is_empty() {
@@ -55,21 +59,60 @@ fn send_to_rem_recipients(
         object.insert("max_attempts".into(), json!(attempts));
         object.insert("lxmf_fields".into(), fields.clone());
     }
+    // The annotation-based recipient list does not retain roster preferences.
+    let preferences: HashMap<_, _> = state
+        .clients
+        .read()
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .values()
+        .filter_map(|client| {
+            normalize_identity_key(&client.identity)
+                .map(|identity| (identity, (client.paused, client.text_only)))
+        })
+        .collect();
     let (mut sent, mut failed, mut skipped) = (0usize, 0usize, 0usize);
     let mut errors = Vec::new();
+    let mut skipped_reasons = HashMap::<&str, usize>::new();
+    let mut skipped_recipients = Vec::new();
     for recipient in recipients {
-        if !recipient.is_rem_capable {
+        let (paused, text_only) = preferences
+            .get(&recipient.identity)
+            .copied()
+            .unwrap_or((false, false));
+        let reason = if paused {
+            Some("paused")
+        } else if text_only {
+            Some("text_only")
+        } else if !outbound_identity_allowed(state, &recipient.identity, &recipient.identity) {
+            Some("outbound_policy")
+        } else if !recipient.is_rem_capable && generic.is_none() {
+            Some(non_rem_skip_reason)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
             skipped += 1;
+            *skipped_reasons.entry(reason).or_default() += 1;
+            skipped_recipients.push(json!({"destination": recipient.identity, "reason": reason}));
             continue;
         }
+        let mut delivery_metadata = metadata.clone();
+        let content = if let Some((fields, content)) = generic.filter(|_| !recipient.is_rem_capable)
+        {
+            delivery_metadata["lxmf_fields"] = fields.clone();
+            delivery_metadata["fanout_channel"] = json!("marker_telemetry");
+            content
+        } else {
+            REM_COMMAND_PLACEHOLDER_BODY
+        };
         match record_outbound_message_with_metadata(
             state,
-            REM_COMMAND_PLACEHOLDER_BODY,
+            content,
             None,
             Some(recipient.identity),
             Vec::new(),
             false,
-            metadata.clone(),
+            delivery_metadata,
         ) {
             Ok(_) => sent += 1,
             Err(error) => {
@@ -84,6 +127,8 @@ fn send_to_rem_recipients(
         "sent": sent,
         "failed": failed,
         "skipped": skipped,
+        "skipped_reasons": skipped_reasons,
+        "skipped_recipients": skipped_recipients,
         "errors": errors,
     }))
 }
@@ -106,7 +151,7 @@ pub(super) fn fanout_mission_marker_link_to_recipients(
         marker_id,
         rch_source_identity(state),
     );
-    send_to_rem_recipients(
+    send_to_recipients(
         state,
         &fields,
         json!({
@@ -117,6 +162,8 @@ pub(super) fn fanout_mission_marker_link_to_recipients(
             "marker_id": marker_id,
         }),
         true,
+        None,
+        "rem_command_required",
     )
 }
 
@@ -161,12 +208,13 @@ fn marker_activity_fields(
     activity: &str,
     marker: &MarkerRecord,
     source: &str,
+    include_commands: bool,
 ) -> Result<Option<Value>, ApiError> {
     let Some(event_type) = mission_marker_event_type(activity) else {
         return Ok(None);
     };
     let legacy = rem_marker_telemetry_command_fields(activity, marker, source);
-    let commands = (activity != "marker.deleted")
+    let commands = (include_commands && activity != "marker.deleted")
         .then(|| legacy.get(r3akt_profile_rch::FIELD_COMMANDS.to_string()))
         .flatten();
     let packed = r3akt_map_core::marker_wire::encode_fields(event_type, marker, source, commands)
@@ -176,21 +224,30 @@ fn marker_activity_fields(
     ))
 }
 
-/// Sends a marker change made through the RCH API to REM clients.
+/// Sends marker creates and updates to current REM and standard LXMF clients.
 ///
 /// Creates and updates keep the legacy marker-as-telemetry command for older
 /// REM builds and add the replica event; deletes carry only the event. New
 /// REM builds apply the event and ignore telemetry whose object type is
-/// `marker`, so markers stay separate from user telemetry.
+/// `marker`, so markers stay separate from user telemetry. Non-REM recipients
+/// receive the standard field 3 stream without REM commands. Deletes remain
+/// REM-only because the standard stream cannot represent a tombstone.
 pub(super) fn fanout_marker_activity_to_recipients(
     state: &AppState,
     activity: &str,
     marker: &MarkerRecord,
 ) -> Result<Value, ApiError> {
-    let Some(fields) = marker_activity_fields(activity, marker, rch_source_identity(state))? else {
+    let source = rch_source_identity(state);
+    let Some(fields) = marker_activity_fields(activity, marker, source, true)? else {
         return Ok(not_attempted("marker_event_not_deliverable"));
     };
-    send_to_rem_recipients(
+    let generic_fields = if activity == "marker.deleted" {
+        None
+    } else {
+        marker_activity_fields(activity, marker, source, false)?
+    };
+    let content = format!("Map marker: {}", marker.name);
+    send_to_recipients(
         state,
         &fields,
         json!({
@@ -200,6 +257,10 @@ pub(super) fn fanout_marker_activity_to_recipients(
             "object_destination_hash": marker.object_destination_hash,
         }),
         true,
+        generic_fields
+            .as_ref()
+            .map(|fields| (fields, content.as_str())),
+        "standard_marker_delete_unsupported",
     )
 }
 
@@ -211,7 +272,7 @@ mod tests {
 
     fn decoded(activity: &str, marker: &MarkerRecord) -> serde_json::Value {
         use base64::Engine as _;
-        let wrapped = marker_activity_fields(activity, marker, "rch")
+        let wrapped = marker_activity_fields(activity, marker, "rch", true)
             .unwrap()
             .unwrap();
         let packed = super::STANDARD
@@ -259,7 +320,7 @@ mod tests {
         );
         assert!(deleted.get(FIELD_COMMANDS.to_string()).is_none());
         assert!(
-            marker_activity_fields("marker.renamed", &marker, "rch")
+            marker_activity_fields("marker.renamed", &marker, "rch", true)
                 .unwrap()
                 .is_none()
         );
