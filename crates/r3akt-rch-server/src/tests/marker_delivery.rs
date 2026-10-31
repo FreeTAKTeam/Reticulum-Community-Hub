@@ -67,8 +67,12 @@ fn automatic_marker_delivery_honors_roster_preferences_and_identity_policy() {
         (blackholed, false),
         (denied, false),
     ]);
-    let state = state
+    let mut state = state
         .with_outbound_identity_allowlist([REM, GENERIC, paused, text_only, banned, blackholed]);
+    // A runtime restart must not remove offline roster members or bypass policy.
+    state.reticulumd_rpc_endpoint = Some(Arc::new("unused-test-endpoint".into()));
+    state.runtime_control.write().unwrap().last_start_ts_ms =
+        Some(unix_now_ms() + REM_PEER_RUNTIME_START_GRACE_MS + 60_000);
     {
         let mut clients = state.clients.write().unwrap();
         clients.get_mut(paused).unwrap().paused = true;
@@ -97,6 +101,11 @@ fn automatic_marker_delivery_honors_roster_preferences_and_identity_policy() {
     );
     let requests = pending_broker_requests(&directory.join("state.db"));
     assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["options"]["try_propagation_on_fail"] == true)
+    );
     assert!(
         requests
             .iter()
@@ -182,7 +191,7 @@ fn marker_deletes_and_mission_links_remain_rem_only_with_explicit_skip_reasons()
 }
 
 #[test]
-fn automatic_markers_do_not_expand_to_announced_only_or_stale_peers() {
+fn offline_roster_markers_are_durable_with_propagation_but_announced_only_peers_are_excluded() {
     let (mut state, directory, marker) = fixture(&[(REM, true), (GENERIC, false)]);
     state.clients.write().unwrap().remove(REM);
     // The remaining roster peer announced before the current runtime window.
@@ -192,15 +201,12 @@ fn automatic_markers_do_not_expand_to_announced_only_or_stale_peers() {
     let result =
         marker_fanout::fanout_marker_activity_to_recipients(&state, "marker.created", &marker)
             .unwrap();
-    assert_eq!(result["sent"], 0);
-    assert!(pending_broker_requests(&directory.join("state.db")).is_empty());
-    state.reticulumd_rpc_endpoint = None;
-    let result =
-        marker_fanout::fanout_marker_activity_to_recipients(&state, "marker.created", &marker)
-            .unwrap();
     assert_eq!(result["sent"], 1);
     let requests = pending_broker_requests(&directory.join("state.db"));
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["destination"], GENERIC);
+    assert_eq!(requests[0]["options"]["method"], "direct");
+    assert_eq!(requests[0]["options"]["try_propagation_on_fail"], true);
+    drop(state);
     std::fs::remove_dir_all(directory).unwrap();
 }

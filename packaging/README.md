@@ -189,3 +189,11 @@ If no legacy store is found, it asks for the Python store directory or
 - Rust alpha previews: `v3.0.0-alpha.N` or `v3.0.0-preview.N` from
   `main`, with server package artifacts and optional desktop artifacts.
 - Rust stable: `v3.0.0` after all Rust server and desktop gates pass.
+# Offline marker delivery and announce reconciliation
+
+The paired daemon is built from the immutable LXMF source revision in
+`config/lxmf-runtime-baseline.json` and the workflows. Packages must retain that
+matching daemon: older binaries cannot serve `latest_per_peer_v1` announce pages.
+Linux AMD64 uses the same Rust 1.99.1 Debian build as the qualified deployment;
+the previous pinned-daemon download override no longer applies.
+

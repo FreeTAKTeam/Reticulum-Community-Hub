@@ -7,6 +7,7 @@ use rns_rpc::{MessageRecord, MessagesStore};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use zeromq::{PullSocket, Socket, SocketRecv};
 
+mod announces;
 mod envelope_isolation;
 mod replies;
 
