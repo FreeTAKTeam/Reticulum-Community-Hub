@@ -94,6 +94,7 @@ fn single(mut requests: Vec<Value>) -> Value {
     requests.remove(0)
 }
 
+mod broadcast_history;
 mod chat;
 mod commands;
 mod media;

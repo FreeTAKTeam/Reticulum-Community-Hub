@@ -197,6 +197,46 @@ async fn message_stream_receives_reticulumd_inbound_topic_messages() {
     assert_eq!(receive_payload["data"]["entry"]["Content"], "Inbound WS");
     assert_eq!(receive_payload["data"]["entry"]["Source"], "peer-ws");
     assert_eq!(receive_payload["data"]["entry"]["TopicID"], "ops");
+    assert_eq!(receive_payload["data"]["entry"]["Scope"], "topic");
+    socket
+        .send(Message::Text(
+            json!({"type":"message.subscribe","data":{"topic_id":"direct","follow":true}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("subscribe broadcast history");
+    let subscribed = socket.next().await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(subscribed.to_text().unwrap()).unwrap()["type"],
+        "message.subscribed"
+    );
+    for (source, content, fields) in [
+        (
+            "columba-pixel",
+            "Columba ordinary chat",
+            json!({"172": {"app": "Columba"}}),
+        ),
+        ("ratspeak-windows", "Ratspeak ordinary chat", json!({})),
+    ] {
+        apply_daemon_messages(
+            &state,
+            json!([{
+                "id": format!("raw-{source}"), "source": source, "content": content, "fields": fields
+            }]),
+        );
+        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("broadcast receive timeout")
+            .unwrap()
+            .unwrap();
+        let payload: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        assert_eq!(payload["type"], "message.receive");
+        let entry = &payload["data"]["entry"];
+        assert_eq!(entry["Scope"], "broadcast");
+        assert_eq!(entry["Source"], source);
+        assert_eq!(entry["Content"], content);
+    }
     drop(socket);
     server.abort();
     std::fs::remove_file(db_path).expect("cleanup db");
@@ -646,6 +686,7 @@ async fn reticulumd_inbound_worker_records_topic_envelope_event() {
         .expect("body")
         .to_bytes();
     let chat_payload: serde_json::Value = serde_json::from_slice(&chat_body).expect("json");
+    assert_eq!(chat_payload[0]["Scope"], "topic");
     assert_eq!(chat_payload[0]["Direction"], "inbound");
     assert_eq!(chat_payload[0]["State"], "received");
     assert_eq!(chat_payload[0]["Source"], "peer-alpha");

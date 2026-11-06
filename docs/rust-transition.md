@@ -280,6 +280,15 @@ receive normalization without extracting the stage-B library.
 
 ## Bounded message residency and command transactions
 
+Chat conversation scope is projected independently of transport delivery mode.
+Inbound `reticulumd` chat without a node destination appears in Broadcast when
+its topic is the default `direct`, or in the named conversation for an explicit
+topic. Node-addressed private messages and targeted outbound relay copies retain
+DM scope, so relays do not duplicate the original sender's Broadcast entry.
+REST history and WebSocket updates use the same projection. This also corrects
+existing `Targeted` inbound history after refresh or restart without rewriting
+stored messages, scheduling sends, or changing recipient authorization.
+
 Issues #252 and #255 use SQLite schema 6. Startup selects recent messages within
 500 records, 32 MiB of estimated retained storage, and 30 minutes of persisted
 activity. Publication refreshes a bounded runtime activity map; an owned worker

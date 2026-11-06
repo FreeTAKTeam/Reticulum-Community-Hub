@@ -42,7 +42,9 @@ mod attachment_persistence;
 mod auth;
 mod auth_throttle;
 mod browser_security;
+mod chat_scope;
 mod command_persistence;
+use chat_scope::message_scope;
 mod first_run_setup;
 mod hub_name;
 mod identity_directory;
@@ -13761,14 +13763,6 @@ fn message_direction(message: &OutboundMessageRecord) -> &str {
         .and_then(Value::as_str)
         .filter(|value| *value == "inbound")
         .unwrap_or("outbound")
-}
-
-fn message_scope(message: &OutboundMessageRecord) -> &'static str {
-    match message.delivery_mode {
-        DeliveryMode::Targeted => "dm",
-        DeliveryMode::Fanout => "topic",
-        DeliveryMode::Broadcast => "broadcast",
-    }
 }
 
 fn system_event_payload(event: SystemEventRecord) -> Value {

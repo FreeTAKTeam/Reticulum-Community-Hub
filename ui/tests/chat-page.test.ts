@@ -1,14 +1,16 @@
 import { createPinia, setActivePinia } from "pinia";
 import { createApp, nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WsHandler } from "../src/api/ws";
 import ChatPage from "../src/pages/ChatPage.vue";
 import { useChatStore } from "../src/stores/chat";
 
-const { getMock, connect, close, send } = vi.hoisted(() => ({
-  getMock: vi.fn(), connect: vi.fn(), close: vi.fn(), send: vi.fn()
+const { getMock, connect, close, send, streamHandlers } = vi.hoisted(() => ({
+  getMock: vi.fn(), connect: vi.fn(), close: vi.fn(), send: vi.fn(), streamHandlers: [] as WsHandler[]
 }));
 vi.mock("../src/api/client", () => ({ get: getMock, post: vi.fn(), getBlob: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class {
+  constructor(_path: string, handler: WsHandler) { streamHandlers.push(handler); }
   connect = connect; close = close; send = send;
 } }));
 
@@ -86,4 +88,53 @@ it("enriches visible canonical/destination labels without treating discovery as 
   banned = true; [...root.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Refresh")?.click(); await settle(); await settle();
   expect(root.querySelectorAll(".presence-dot.online")).toHaveLength(0);
   app.unmount(); root.remove();
+});
+
+
+describe("server-projected hub broadcasts", () => {
+  it("renders history and live inbound broadcasts once with their sender, preserves channel filters, and reloads history", async () => {
+    const source = "columba-pixel";
+    const hub = "hub-destination";
+    const history = [
+      { ...received, MessageID: "columba", Content: "Columba hub chat", Source: source, Destination: null, TopicID: "direct", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } },
+      { ...received, MessageID: "private", Content: "Private reply", Scope: "dm", Source: source, Destination: hub },
+      { ...received, MessageID: "relay-1", Content: "Columba hub chat", Scope: "dm", Direction: "outbound", Source: null, Destination: "relay-peer-1", TopicID: null },
+      { ...received, MessageID: "relay-2", Content: "Columba hub chat", Scope: "dm", Direction: "outbound", Source: null, Destination: "relay-peer-2", TopicID: null },
+      { ...received, MessageID: "topic", Content: "Topic chat", Scope: "topic", Source: source, Destination: null, TopicID: "field", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } }
+    ];
+    getMock.mockImplementation((path: string) => {
+      if (path.startsWith("/Chat/Messages")) { return Promise.resolve(history); }
+      if (path.startsWith("/Client")) { return Promise.resolve([{ identity: source, display_name: "Pixel" }]); }
+      if (path === "/Topic") { return Promise.resolve([{ TopicID: "field", TopicName: "Field channel" }]); }
+      return Promise.resolve([]);
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const mount = () => { const app = createApp(ChatPage).use(createPinia()); app.mount(root); return app; };
+    const app = mount();
+    await settle();
+    const bodies = () => [...root.querySelectorAll(".message-body")].map((entry) => entry.textContent);
+    const click = async (selector: string, text: string) => {
+      const button = [...root.querySelectorAll<HTMLButtonElement>(selector)].find((entry) => entry.textContent?.includes(text));
+      expect(button).toBeDefined(); button!.click(); await settle();
+    };
+    expect(bodies()).toEqual(["Columba hub chat"]);
+    expect(root.querySelector(".message-source")?.textContent).toBe("Pixel");
+    const live = { ...received, MessageID: "ratspeak", Content: "Ratspeak hub chat", Source: "ratspeak-windows", Destination: null, TopicID: "direct", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } };
+    const emit = (entry: typeof live) => streamHandlers.at(-1)!({ type: "message.receive", ts: "2026-11-06T12:00:00Z", data: { entry } });
+    emit(live); emit(live); await settle();
+    expect(bodies()).toEqual(["Columba hub chat", "Ratspeak hub chat"]);
+    expect([...root.querySelectorAll(".message-source")].map((entry) => entry.textContent)).toEqual(["Pixel", "ratspeak-windows"]);
+    await click(".directory-item", "Pixel");
+    expect(bodies()).toEqual(["Private reply"]);
+    await click(".panel-tab", "Topics");
+    await click(".directory-item", "Field channel");
+    expect(bodies()).toEqual(["Topic chat"]);
+    await click(".directory-item", "Broadcast");
+    history.unshift(live);
+    app.unmount();
+    const reloaded = mount(); await settle();
+    expect(bodies()).toEqual(["Columba hub chat", "Ratspeak hub chat"]);
+    expect(root.querySelectorAll(".message-card")).toHaveLength(2);
+    reloaded.unmount(); root.remove();
+  });
 });
