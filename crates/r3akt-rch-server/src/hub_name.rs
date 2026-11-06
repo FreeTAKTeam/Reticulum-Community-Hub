@@ -1,7 +1,8 @@
 use super::{
-    ApiError, AppState, ConfigFileKind, HUB_NAME_SETTING, RchSqliteStore, backup_config_file,
-    config_text_section_raw_value, config_text_section_value, normalize_optional_text,
-    read_config_file, setup_files, upsert_ini_setting, validate_ini_text, with_core_store_write,
+    ApiError, AppState, ConfigFileKind, HUB_NAME_SETTING, Json, RchSqliteStore, State, Value,
+    app_info_payload, backup_config_file, config_text_section_raw_value, config_text_section_value,
+    json, normalize_optional_text, read_config_file, record_system_event, setup_files,
+    topic_diagnostics, upsert_ini_setting, validate_ini_text, with_core_store_write,
 };
 
 pub(super) fn validate(name: &str) -> Result<(), ApiError> {
@@ -127,6 +128,24 @@ impl AppState {
         let _guard = self.setup_lock.lock().map_err(|error| error.to_string())?;
         reconcile(self).map_err(|error| error.to_string())
     }
+}
+
+pub(super) async fn reload_config(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let _guard = state.setup_lock.lock().map_err(|error| ApiError::Internal(error.to_string()))?;
+        let name = reconcile(&state)?;
+        topic_diagnostics::update_identity_announce(&state, name)?;
+        let payload = app_info_payload(&state)?;
+        record_system_event(
+            &state,
+            "config_reloaded",
+            "Configuration reloaded",
+            json!({ "config_path": state.config_path.as_deref().map(|path| path.display().to_string()) }),
+        )?;
+        Ok(Json(payload))
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("config reload worker failed: {error}")))?
 }
 
 #[cfg(test)]

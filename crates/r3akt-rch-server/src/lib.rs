@@ -2022,7 +2022,7 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route(
             "/Command/ReloadConfig",
-            get(method_not_allowed).post(reload_config),
+            get(method_not_allowed).post(hub_name::reload_config),
         )
         .route("/Control/Status", get(control_status))
         .route("/Control/Stop", get(method_not_allowed).post(control_stop))
@@ -17170,24 +17170,6 @@ async fn flush_telemetry(State(state): State<AppState>) -> Result<Json<Value>, A
         json!({ "deleted": deleted }),
     )?;
     Ok(Json(json!({ "deleted": deleted })))
-}
-
-async fn reload_config(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    tokio::task::spawn_blocking(move || {
-        let _guard = state.setup_lock.lock().map_err(|error| ApiError::Internal(error.to_string()))?;
-        let name = hub_name::reconcile(&state)?;
-        topic_diagnostics::update_identity_announce(&state, name)?;
-        let payload = app_info_payload(&state)?;
-        record_system_event(
-            &state,
-            "config_reloaded",
-            "Configuration reloaded",
-            json!({ "config_path": state.config_path.as_deref().map(|path| path.display().to_string()) }),
-        )?;
-        Ok(Json(payload))
-    })
-    .await
-    .map_err(|error| ApiError::Internal(format!("config reload worker failed: {error}")))?
 }
 
 async fn control_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
