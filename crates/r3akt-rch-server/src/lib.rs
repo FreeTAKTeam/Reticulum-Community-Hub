@@ -44,6 +44,7 @@ mod auth_throttle;
 mod browser_security;
 mod command_persistence;
 mod first_run_setup;
+mod hub_name;
 mod identity_directory;
 mod identity_directory_config;
 mod sensor_api;
@@ -2021,7 +2022,7 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route(
             "/Command/ReloadConfig",
-            get(method_not_allowed).post(reload_config),
+            get(method_not_allowed).post(hub_name::reload_config),
         )
         .route("/Control/Status", get(control_status))
         .route("/Control/Stop", get(method_not_allowed).post(control_stop))
@@ -7780,6 +7781,7 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "duplicate_normalized_subscription_count": topic_diagnostics["duplicate_normalized_subscription_count"].clone(),
         "missing_subscriber_identity_count": topic_diagnostics["missing_subscriber_identity_count"].clone(),
         "identity_announce_update_supported": topic_diagnostics["identity_announce_update_supported"].clone(),
+        "identity_announce_update_pending": topic_diagnostics["identity_announce_update_pending"].clone(),
         "last_identity_announce_update_error": topic_diagnostics["last_identity_announce_update_error"].clone(),
         "topics": topic_diagnostics,
         "services": runtime_services_payload(&state),
@@ -9080,7 +9082,7 @@ async fn app_info(
     State(state): State<AppState>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
-    let mut payload = app_info_payload(&state);
+    let mut payload = app_info_payload(&state)?;
     if !state.validate_http_headers(request.headers(), request_client_addr(&request))? {
         for field in [
             "reticulum_config_path",
@@ -9096,7 +9098,7 @@ async fn app_info(
     Ok(Json(payload))
 }
 
-fn app_info_payload(state: &AppState) -> Value {
+fn app_info_payload(state: &AppState) -> Result<Value, ApiError> {
     let database_path = state
         .sqlite_path
         .as_ref()
@@ -9127,16 +9129,10 @@ fn app_info_payload(state: &AppState) -> Value {
         .reticulumd_source
         .as_deref()
         .and_then(|value| normalize_reticulum_destination_for_app_info(value));
-    let hub_display_name = resolve_hub_display_name_for_app_info(
-        state
-            .config_path
-            .as_ref()
-            .and_then(|path| config_section_value(path.as_ref(), "hub", &["display_name"])),
-        reticulum_destination.as_deref(),
-    );
+    let hub_display_name = hub_name::resolve(state)?;
     let has_reticulum_runtime =
         state.lxmf_zmq_data_plane.is_some() || state.reticulumd_rpc_endpoint.is_some();
-    json!({
+    Ok(json!({
         "identity_directory": {
             "supported": state.sqlite_path.is_some(),
             "page_size": state.identity_directory_config.page_size,
@@ -9169,19 +9165,7 @@ fn app_info_payload(state: &AppState) -> Value {
             "files": file_storage_path,
             "images": image_storage_path
         }
-    })
-}
-
-fn resolve_hub_display_name_for_app_info(
-    configured: Option<String>,
-    reticulum_destination: Option<&str>,
-) -> String {
-    normalize_optional_text(configured).unwrap_or_else(|| {
-        format!(
-            "RCH_northbound_{}",
-            reticulum_destination.unwrap_or("unknown")
-        )
-    })
+    }))
 }
 
 fn normalize_reticulum_destination_for_app_info(value: &str) -> Option<String> {
@@ -9208,27 +9192,38 @@ fn config_section_value(path: &FsPath, section: &str, keys: &[&str]) -> Option<S
 }
 
 fn config_text_section_value(content: &str, section: &str, keys: &[&str]) -> Option<String> {
+    normalize_optional_text(config_text_section_raw_value(content, section, keys))
+}
+
+fn config_text_section_raw_value(content: &str, section: &str, keys: &[&str]) -> Option<String> {
     let mut in_section = false;
     for line in content.lines() {
-        let line = line.trim();
+        let line = line.trim().trim_start_matches('\u{feff}');
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            in_section = line[1..line.len() - 1].eq_ignore_ascii_case(section);
+            in_section = line[1..line.len() - 1].trim().eq_ignore_ascii_case(section);
             continue;
         }
         if !in_section {
             continue;
         }
-        let Some((candidate_key, value)) = line.split_once('=') else {
+        let Some((candidate_key, value)) = line.split_once(['=', ':']) else {
             continue;
         };
         if keys
             .iter()
             .any(|key| candidate_key.trim().eq_ignore_ascii_case(key))
         {
-            return normalize_optional_text(Some(value.trim().to_string()));
+            return Some(
+                value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim()
+                    .to_string(),
+            );
         }
     }
     None
@@ -17177,17 +17172,6 @@ async fn flush_telemetry(State(state): State<AppState>) -> Result<Json<Value>, A
     Ok(Json(json!({ "deleted": deleted })))
 }
 
-async fn reload_config(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let payload = app_info_payload(&state);
-    let _ = record_system_event(
-        &state,
-        "config_reloaded",
-        "Configuration reloaded",
-        json!({ "config_path": state.config_path.as_deref().map(|path| path.display().to_string()) }),
-    )?;
-    Ok(Json(payload))
-}
-
 async fn control_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(control_status_payload(&state)?))
 }
@@ -17762,7 +17746,7 @@ fn validate_ini_text(config_text: &str) -> Vec<String> {
     let mut seen_section = false;
 
     for (index, line) in config_text.lines().enumerate() {
-        let trimmed = line.trim();
+        let trimmed = line.trim().trim_start_matches('\u{feff}');
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             continue;
         }
@@ -17880,7 +17864,7 @@ fn upsert_ini_setting(
     let mut section_end = lines.len();
 
     for (index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
+        let trimmed = line.trim().trim_start_matches('\u{feff}');
         if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.starts_with("[[") {
             let name = trimmed
                 .trim_start_matches('[')
@@ -17901,7 +17885,7 @@ fn upsert_ini_setting(
     if let Some(start) = section_start {
         for line in lines.iter_mut().take(section_end).skip(start + 1) {
             let trimmed = line.trim();
-            let equals_index = trimmed.find('=').or_else(|| trimmed.find(':'));
+            let equals_index = trimmed.find(['=', ':']);
             if let Some(index) = equals_index {
                 let existing_key = trimmed[..index].trim().to_ascii_lowercase();
                 if existing_key == normalized_key {
@@ -17926,7 +17910,34 @@ async fn rollback_config_text(
     State(state): State<AppState>,
     payload: Option<Json<ConfigRollbackPayload>>,
 ) -> Result<Json<Value>, ApiError> {
-    rollback_config_file(state.config_path.clone(), ConfigFileKind::Hub, payload)
+    tokio::task::spawn_blocking(move || {
+        let _guard = state
+            .setup_lock
+            .lock()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let path = state.config_path.as_ref().ok_or_else(|| {
+            ApiError::BadRequest(config_path_missing_message(ConfigFileKind::Hub))
+        })?;
+        let backup = payload
+            .and_then(|Json(payload)| payload.backup_path)
+            .map(PathBuf::from)
+            .or_else(|| latest_backup_file(path, ConfigFileKind::Hub));
+        let Some(backup) = backup.filter(|path| path.exists()) else {
+            return Ok(Json(
+                json!({"rolled_back": false, "error": "No backup available"}),
+            ));
+        };
+        let body = std::fs::read_to_string(&backup)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let name = hub_name::configured(&body).map_or_else(|| hub_name::resolve(&state), Ok)?;
+        hub_name::save(&state, &body, &name)?;
+        topic_diagnostics::update_identity_announce(&state, name)?;
+        Ok(Json(
+            json!({"rolled_back": true, "backup_path": backup.display().to_string()}),
+        ))
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("config rollback worker failed: {error}")))?
 }
 
 async fn rollback_reticulum_config_text(
@@ -33284,12 +33295,13 @@ mod tests {
             .to_bytes();
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["applied"], true);
+        assert_eq!(payload["identity_announce_update_pending"], true);
         assert_eq!(payload["config_path"], config_path.display().to_string());
         let backup_path = payload["backup_path"].as_str().expect("backup path");
         assert!(std::path::Path::new(backup_path).exists());
         assert_eq!(
             std::fs::read_to_string(&config_path).expect("config content"),
-            "[general]\nname = new\n"
+            "[general]\nname = new\n\n[hub]\nname = RCH\ndisplay_name = RCH\n"
         );
 
         let invalid_response = app
@@ -33306,6 +33318,11 @@ mod tests {
             .await
             .expect("invalid response");
         assert_eq!(invalid_response.status(), StatusCode::BAD_REQUEST);
+
+        assert_eq!(
+            std::fs::read_to_string(backup_path).expect("backup unchanged by invalid save"),
+            "[general]\nname = old\n"
+        );
 
         let rollback_response = app
             .clone()
@@ -33334,7 +33351,7 @@ mod tests {
         assert_eq!(payload["rolled_back"], true);
         assert_eq!(
             std::fs::read_to_string(&config_path).expect("rolled back config"),
-            "[general]\nname = old\n"
+            "[general]\nname = old\n\n[hub]\nname = RCH\ndisplay_name = RCH\n"
         );
 
         let reticulum_response = app
@@ -34124,6 +34141,8 @@ mod tests {
         assert_eq!(payload["setup_required"], false);
         assert_eq!(payload["pin_enrolled"], true);
         assert_eq!(payload["hub_name"], "Field Hub North");
+        assert_eq!(payload["identity_announce_update_pending"], true);
+        assert!(payload["last_identity_announce_update_error"].is_null());
         assert_eq!(
             payload["reticulum_identity_hash"].as_str(),
             Some(identity_hash.as_str())
@@ -35448,8 +35467,8 @@ mod tests {
         assert_eq!(payload["is_connected_to_shared_instance"], false);
         assert!(payload["reticulum_config_path"].as_str().is_some());
         assert!(payload["database_path"].as_str().is_some());
-        assert_eq!(payload["hub_display_name"], "RCH_northbound_unknown");
-        assert_eq!(payload["display_name"], "RCH_northbound_unknown");
+        assert_eq!(payload["hub_display_name"], "RCH");
+        assert_eq!(payload["display_name"], "RCH");
         assert!(payload["reticulum_destination"].is_null());
         assert!(payload["storage_paths"]["database"].as_str().is_some());
         assert!(

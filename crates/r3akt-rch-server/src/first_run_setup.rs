@@ -7,7 +7,7 @@ use super::{
     is_local_client_addr, iso8601_from_unix_ms, json, load_kill_switch_pin,
     load_stored_remote_password, read_config_file, request_client_addr, reticulum_config_format,
     setup_files, unix_now_ms, upsert_ini_setting, validate_reticulum_config,
-    with_required_core_store_write, with_required_core_store_write_unchecked,
+    with_required_core_store_write_unchecked,
 };
 
 pub(super) async fn first_run_setup_status(
@@ -37,10 +37,25 @@ pub(super) async fn first_run_setup_complete(
     if !bootstrap_authorized(&state, &headers, peer)? {
         return Err(ApiError::Unauthorized);
     }
-    tokio::task::spawn_blocking(move || complete_setup(&state, &payload))
-        .await
-        .map_err(|error| ApiError::Internal(format!("first-run setup worker failed: {error}")))?
-        .map(Json)
+    tokio::task::spawn_blocking(move || {
+        let _guard = state
+            .setup_lock
+            .lock()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let mut response = complete_setup(&state, &payload)?;
+        // Enrollment is committed; publication failure must not invite re-enrollment.
+        let published = super::topic_diagnostics::update_identity_announce(
+            &state,
+            payload.hub_name.trim().to_string(),
+        );
+        response["identity_announce_update_pending"] = json!(!matches!(published, Ok(true)));
+        response["last_identity_announce_update_error"] =
+            json!(published.err().map(|error| error.to_string()));
+        Ok(response)
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("first-run setup worker failed: {error}")))?
+    .map(Json)
 }
 
 fn bootstrap_authorized(
@@ -56,10 +71,6 @@ fn bootstrap_authorized(
 }
 
 fn complete_setup(state: &AppState, payload: &FirstRunSetupPayload) -> Result<Value, ApiError> {
-    let _setup_guard = state
-        .setup_lock
-        .lock()
-        .map_err(|error| ApiError::Internal(format!("setup lock poisoned: {error}")))?;
     if load_kill_switch_pin(&state)?.is_some() {
         return Err(ApiError::Conflict(
             "First-run setup has already enrolled a kill switch PIN".to_string(),
@@ -67,19 +78,7 @@ fn complete_setup(state: &AppState, payload: &FirstRunSetupPayload) -> Result<Va
     }
 
     let hub_name = payload.hub_name.trim();
-    if hub_name.is_empty() {
-        return Err(ApiError::BadRequest("Hub name is required".to_string()));
-    }
-    if hub_name.chars().count() > 80 {
-        return Err(ApiError::BadRequest(
-            "Hub name must be 80 characters or fewer".to_string(),
-        ));
-    }
-    if hub_name.chars().any(char::is_control) {
-        return Err(ApiError::BadRequest(
-            "Hub name must not contain control characters".to_string(),
-        ));
-    }
+    super::hub_name::validate(hub_name)?;
 
     let remote_password = payload.remote_password.trim();
     if remote_password.chars().count() < 8 {
@@ -122,7 +121,8 @@ fn complete_setup(state: &AppState, payload: &FirstRunSetupPayload) -> Result<Va
     let mut files = setup_files::SetupFiles::default();
     if let Some(path) = state.config_path.as_deref() {
         let current = read_config_file(Some(path))?;
-        let updated = upsert_ini_setting(&current, "hub", "name", hub_name)?;
+        let updated = upsert_ini_setting(&current, "hub", "display_name", hub_name)?;
+        let updated = upsert_ini_setting(&updated, "hub", "name", hub_name)?;
         files.stage(path, updated)?;
     }
 
@@ -210,8 +210,7 @@ pub(super) fn first_run_setup_status_payload(
     let setup_required = pin.is_none();
     let expose_paths = include_sensitive_paths;
     let remote_password = load_stored_remote_password(state)?;
-    let hub_name =
-        with_required_core_store_write(state, |store| store.setting_value(HUB_NAME_SETTING))?;
+    let hub_name = super::hub_name::resolve(state)?;
     let reticulum_identity = ensure_reticulum_identity_status(state)?;
     Ok(json!({
         "setup_required": setup_required,

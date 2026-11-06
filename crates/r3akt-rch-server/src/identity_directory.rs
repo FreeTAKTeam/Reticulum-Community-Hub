@@ -377,7 +377,7 @@ mod tests {
         .expect("empty page");
         assert_eq!(empty["items"], json!([]));
         assert!(
-            app_info_payload(&state)["identity_directory"]["supported"]
+            app_info_payload(&state).expect("app info")["identity_directory"]["supported"]
                 .as_bool()
                 .expect("supported")
         );
@@ -407,7 +407,7 @@ mod tests {
                 lookup_concurrency: 2,
             })
             .expect("policy");
-        let info = app_info_payload(&state);
+        let info = app_info_payload(&state).expect("app info");
         assert_eq!(
             info["identity_directory"],
             json!({"supported":false,"page_size":25,"recent_hours":48,"lookup_max_entries":100,"lookup_concurrency":2})

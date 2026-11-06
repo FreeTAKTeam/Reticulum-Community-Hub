@@ -27,7 +27,6 @@ const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_MANAGED_RETICULUMD_TRANSPORT: &str = "127.0.0.1:0";
 const DEFAULT_LXMF_ZMQ_COMMAND_ENDPOINT: &str = "tcp://localhost:9100";
 const DEFAULT_LXMF_ZMQ_RESPONSE_ENDPOINT: &str = "tcp://localhost:9101";
-const DEFAULT_RCH_DISPLAY_NAME: &str = "RCH";
 const DEFAULT_RCH_ANNOUNCE_INTERVAL_SECONDS: u64 = 300;
 const DEFAULT_STORAGE_PATH: &str = "RTH_Store";
 const DEFAULT_LOG_LEVEL_NAME: &str = "debug";
@@ -58,7 +57,6 @@ struct ServerArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HubServiceConfig {
     identity_path: PathBuf,
-    display_name: String,
     announce_interval: StdDuration,
 }
 
@@ -340,6 +338,7 @@ fn apply_runtime_config(
     if let Some(path) = reticulum_config_path {
         state = state.with_reticulum_config_path(path);
     }
+    let display_name = state.reconcile_hub_display_name()?;
     if let Some(endpoint) = &args.reticulumd_rpc
         && let Some(source) = args.reticulumd_source.as_deref()
     {
@@ -355,7 +354,7 @@ fn apply_runtime_config(
                 response.as_str(),
                 args.reticulumd_source.as_deref(),
                 hub_service_config.identity_path.as_path(),
-                hub_service_config.display_name.clone(),
+                display_name,
             )
             .map_err(|error| format!("RCH service identity registration failed: {error}"))?;
     }
@@ -368,11 +367,13 @@ fn resolve_hub_service_config(
     let config_content = args
         .config_path
         .as_ref()
-        .and_then(|path| fs::read_to_string(path).ok());
-    let display_name = config_content
-        .as_deref()
-        .and_then(|content| ini_value(content, "hub", "display_name"))
-        .unwrap_or_else(|| DEFAULT_RCH_DISPLAY_NAME.to_string());
+        .map(|path| match fs::read_to_string(path) {
+            Ok(content) => Ok(Some(content)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        })
+        .transpose()?
+        .flatten();
     let interval_seconds = config_content
         .as_deref()
         .and_then(|content| ini_value(content, "hub", "announce_interval"))
@@ -414,7 +415,6 @@ fn resolve_hub_service_config(
         );
     Ok(HubServiceConfig {
         identity_path,
-        display_name,
         announce_interval: StdDuration::from_secs(interval_seconds),
     })
 }
@@ -2129,7 +2129,13 @@ mod tests {
 
         let config = super::resolve_hub_service_config(&args).expect("hub config");
 
-        assert_eq!(config.display_name, "Field RCH");
+        let state = r3akt_rch_server::AppState::from_sqlite_path(args.db_path.as_ref().unwrap())
+            .expect("state")
+            .with_config_path(args.config_path.as_ref().unwrap());
+        assert_eq!(
+            state.reconcile_hub_display_name().expect("name"),
+            "Field RCH"
+        );
         assert_eq!(config.identity_path, data_dir.join("preserved.identity"));
         assert_eq!(config.announce_interval.as_secs(), 42);
         std::fs::remove_dir_all(data_dir).expect("cleanup");
@@ -2143,7 +2149,12 @@ mod tests {
         let mut args = test_server_args(None, None);
         args.db_path = Some(data_dir.join("rch_state.sqlite3"));
         let defaults = super::resolve_hub_service_config(&args).expect("defaults");
-        assert_eq!(defaults.display_name, "RCH");
+        assert_eq!(
+            r3akt_rch_server::AppState::default()
+                .reconcile_hub_display_name()
+                .expect("name"),
+            "RCH"
+        );
         assert_eq!(defaults.identity_path, data_dir.join("identity"));
         assert_eq!(defaults.announce_interval.as_secs(), 300);
 
