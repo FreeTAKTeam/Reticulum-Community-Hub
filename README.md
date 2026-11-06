@@ -215,6 +215,36 @@ For large user inventories, see [identity directory pagination](docs/identity-di
 
 ## Development and verification
 
+### Hub display name
+
+The Rust server owns the RCH service name in SQLite `rch_settings.hub_name`.
+At startup and `POST /Command/ReloadConfig`, it reconciles that saved name into
+both `[hub] name` and `[hub] display_name` in `config.ini`. Existing installations
+without a saved name migrate from `[hub] name`, then `[hub] display_name`, then
+`RCH`, regardless of INI line order. Conflicting package defaults cannot replace
+a saved name; keep the database and service identity file across upgrades.
+Changed legacy configuration is backed up before reconciliation.
+
+To rename, save configuration with `PUT /Config`, changing either name field
+or changing both to the same value. One edited field wins over its unchanged
+mirror; competing edits are rejected. Omitted or unchanged fields retain the
+saved name. Names must be nonempty, at most 80 characters, and contain no control
+characters. Config rollback restores the backup's `name`, then `display_name`,
+or retains the saved name when neither is present. Direct file edits after
+migration do not override the saved name; use `PUT /Config` for renames.
+
+Setup, config saves, reload and rollback publish fresh LXMF service metadata using
+the existing identity keys and destination hash. The daemon's own `display_name`
+belongs to its separate identity and does not override the RCH name. Setup status
+and app-info report the same desired name; app-info's unnamed fallback is `RCH`.
+If publication fails after a save, the desired name stays saved and the route
+returns a publication error. First-run setup instead reports successful credential
+enrollment with `identity_announce_update_pending` and
+`last_identity_announce_update_error`, so enrollment is not repeated.
+`/diagnostics/runtime` exposes both fields; publication remains pending without
+an LXMF runtime. Retry with ReloadConfig or restart after restoring connectivity.
+Clients can display the old cached name until they receive the fresh announce.
+
 Before submitting a pull request, run the Rust quality checks:
 
 ```bash

@@ -9,13 +9,18 @@ use zeromq::{PullSocket, Socket, SocketRecv};
 
 mod announces;
 mod envelope_isolation;
+mod hub_name;
 mod replies;
 
 #[derive(Default)]
-struct IdentityBridge(Mutex<Option<ServiceIdentityRecord>>);
+struct IdentityBridge {
+    record: Mutex<Option<ServiceIdentityRecord>>,
+    published: Mutex<Vec<ServiceIdentityRecord>>,
+    reject_announce: AtomicBool,
+}
 impl ServiceIdentityBridge for IdentityBridge {
     fn list_service_identities(&self) -> std::io::Result<Vec<ServiceIdentityRecord>> {
-        Ok(self.0.lock().unwrap().clone().into_iter().collect())
+        Ok(self.record.lock().unwrap().clone().into_iter().collect())
     }
     fn create_service_identity(
         &self,
@@ -42,7 +47,7 @@ impl ServiceIdentityBridge for IdentityBridge {
             capabilities: spec.capabilities,
             metadata: spec.metadata,
         };
-        *self.0.lock().unwrap() = Some(record.clone());
+        *self.record.lock().unwrap() = Some(record.clone());
         Ok(record)
     }
     fn export_service_identity(&self, _: &str) -> std::io::Result<Vec<u8>> {
@@ -53,8 +58,12 @@ impl ServiceIdentityBridge for IdentityBridge {
         identity: &str,
         _: ServiceIdentitySpec,
     ) -> std::io::Result<ServiceIdentityRecord> {
-        let record = self.0.lock().unwrap().clone().unwrap();
+        if self.reject_announce.load(Ordering::Acquire) {
+            return Err(std::io::Error::other("fixture rejects announce"));
+        }
+        let record = self.record.lock().unwrap().clone().unwrap();
         assert_eq!(identity, record.identity);
+        self.published.lock().unwrap().push(record.clone());
         Ok(record)
     }
 }
@@ -65,6 +74,7 @@ impl OutboundBridge for NetworkBridge {
     }
 }
 struct Fixture {
+    identity_bridge: Arc<IdentityBridge>,
     daemon: Arc<RpcDaemon>,
     endpoint: String,
     response: String,
@@ -81,7 +91,8 @@ impl Fixture {
             "fixture-daemon".into(),
             Arc::new(NetworkBridge),
         ));
-        daemon.set_service_identity_bridge(Arc::new(IdentityBridge::default()));
+        let identity_bridge = Arc::new(IdentityBridge::default());
+        daemon.set_service_identity_bridge(identity_bridge.clone());
         let response = endpoint();
         let endpoint = endpoint();
         let stop = Arc::new(AtomicBool::new(false));
@@ -133,6 +144,7 @@ impl Fixture {
         });
         ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         Self {
+            identity_bridge,
             daemon,
             endpoint,
             response,

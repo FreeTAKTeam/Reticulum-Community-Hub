@@ -1,7 +1,6 @@
 use super::{
     ApiError, AppState, BTreeMap, ConfigFileKind, HashMap, HashSet, Json, RchSqliteStore, State,
-    Value, apply_config_file, config_text_section_value, json, normalize_identity_key,
-    normalize_topic_id,
+    Value, backup_config_file, hub_name, json, normalize_identity_key, normalize_topic_id,
 };
 
 pub(super) fn topic_subscription_diagnostics(state: &AppState) -> Result<Value, ApiError> {
@@ -81,6 +80,7 @@ pub(super) fn topic_subscription_diagnostics(state: &AppState) -> Result<Value, 
         "duplicate_normalized_subscription_count": duplicate_normalized_subscription_count,
         "missing_subscriber_identity_count": missing_subscriber_identity_count,
         "identity_announce_update_supported": identity_announce_update_supported,
+        "identity_announce_update_pending": !identity_announce_update_supported || last_identity_announce_update_error.is_some(),
         "last_identity_announce_update_error": last_identity_announce_update_error,
         "count": topic_count,
         "subscribers": subscriber_count,
@@ -105,31 +105,47 @@ pub(super) async fn apply_config_text(
     State(state): State<AppState>,
     body: String,
 ) -> Result<Json<Value>, ApiError> {
-    let display_name = config_text_section_value(&body, "hub", &["display_name"])
-        .unwrap_or_else(|| "RCH".to_string());
-    let response = apply_config_file(state.config_path.clone(), body, ConfigFileKind::Hub)?;
+    tokio::task::spawn_blocking(move || {
+        let _guard = state
+            .setup_lock
+            .lock()
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let path = state.config_path.as_ref().ok_or_else(|| {
+            ApiError::BadRequest("Configuration path is not configured".to_string())
+        })?;
+        let name = hub_name::renamed(&state, &body)?;
+        let backup_path = backup_config_file(path, ConfigFileKind::Hub)?;
+        hub_name::save(&state, &body, &name)?;
+        let published = update_identity_announce(&state, name)?;
+        Ok(Json(json!({
+            "applied": true,
+            "config_path": path.display().to_string(),
+            "backup_path": backup_path.map(|path| path.display().to_string()),
+            "identity_announce_update_pending": !published,
+        })))
+    })
+    .await
+    .map_err(|error| ApiError::Internal(format!("config save worker failed: {error}")))?
+}
+
+pub(super) fn update_identity_announce(
+    state: &AppState,
+    display_name: String,
+) -> Result<bool, ApiError> {
     if let Some(data_plane) = state.lxmf_zmq_data_plane.clone() {
-        let identity = match tokio::task::spawn_blocking(move || {
-            data_plane.update_identity_announce(
-                display_name,
-                vec![
-                    "r3akt".to_string(),
-                    "emergencymessages".to_string(),
-                    "telemetry".to_string(),
-                ],
-                BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
-            )
-        })
-        .await
-        {
-            Ok(Ok(identity)) => identity,
-            Ok(Err(error)) => {
-                let message = format!("RCH identity announce update failed: {error}");
-                record_identity_announce_update_error(&state, Some(message.clone()))?;
-                return Err(ApiError::ServiceUnavailable(message));
-            }
+        let identity = match data_plane.update_identity_announce(
+            display_name,
+            vec![
+                "r3akt".to_string(),
+                "emergencymessages".to_string(),
+                "telemetry".to_string(),
+            ],
+            BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
+        ) {
+            Ok(identity) => identity,
             Err(error) => {
-                let message = format!("RCH identity announce update task failed: {error}");
+                let message =
+                    format!("Hub name saved; RCH identity announce update pending: {error}");
                 record_identity_announce_update_error(&state, Some(message.clone()))?;
                 return Err(ApiError::ServiceUnavailable(message));
             }
@@ -150,6 +166,7 @@ pub(super) async fn apply_config_text(
             return Err(ApiError::ServiceUnavailable(message));
         }
         record_identity_announce_update_error(&state, None)?;
+        return Ok(true);
     }
-    Ok(response)
+    Ok(false)
 }

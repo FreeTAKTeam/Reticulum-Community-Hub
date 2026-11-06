@@ -565,7 +565,7 @@ async fn competing_setup_instances_commit_one_coherent_enrollment() {
     .expect("name");
     assert_eq!(
         std::fs::read_to_string(dir.join("config.ini")).expect("config"),
-        format!("[hub]\nname = {name}\n")
+        format!("[hub]\ndisplay_name = {name}\nname = {name}\n")
     );
     assert!(
         state
@@ -616,7 +616,7 @@ async fn setup_commit_failure_after_file_install_restores_everything_and_can_ret
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         std::fs::read_to_string(dir.join("config.ini")).expect("committed config"),
-        "[hub]\nname = Updated name\n"
+        "[hub]\ndisplay_name = Updated name\nname = Updated name\n"
     );
     assert!(
         state
