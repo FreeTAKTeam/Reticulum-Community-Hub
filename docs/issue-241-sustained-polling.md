@@ -54,8 +54,8 @@ imports; it does not promise replay of all events lost across a restart.
 
 The correction is reviewed in
 [LXMF-rs PR #654](https://github.com/FreeTAKTeam/LXMF-rs/pull/654).
-Current RCH SDK dependencies and daemon-build references align to immutable
-revision `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, based on version 0.13.0.
+The SDK dependencies and daemon-build references in that repair aligned to
+immutable revision `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, based on version 0.13.0.
 The northbound API and identity authorization contract are unchanged.
 
 ## Network worker starvation during storage contention
@@ -172,11 +172,15 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `10a19fb9174e420789d37f359c20ee317b0141f8`. RCH dependency locks, matching
+revision `c37f4c882fff5565459f5579852453f872773d7c`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
 and delivered-proof repairs alongside the existing event-stream fixes.
+It also contains snapshot allocation/codec and owned-interface shutdown
+corrections from the subsequent persistence investigation.
+Requalification of this newer source remains pending; the native result below
+identifies its earlier exact runtime and does not qualify this pin.
 
 ## Independent native continuity qualification
 
@@ -209,3 +213,20 @@ recovery against retained production state, or Columba/Pixel and Ratspeak/Window
 physical-client compatibility. Heavy retained-state and hours-long acceptance
 remain pending. The original production stall and memory-growth trigger remain
 unproven.
+
+## Follow-up qualification status
+
+A later constrained retained-state preflight of the preceding pair recorded a
+one-event increase in `memory.events.high` during observation, so it did not pass
+resource acceptance. Its release-profile RCH recovery stage verified initial
+bidirectional delivery and restart recovery, then stopped before Topic message
+admission when a newly created SDK identity was not discovered within 30 seconds.
+
+An isolated frozen-binary probe reproduced the discovery symptom and traced it
+to the intended fresh-interface ingress guard holding burst announces for about
+360 seconds.
+With only three seconds of spacing before each identity creation, both identities
+were learned on the first attempt under the same protection and 30-second
+deadline. Qualification setup must discover persistent recipients before enabling
+sustained one-second announce load. These failed lanes and the paced discovery
+control do not qualify the new source pin or hours-long resource acceptance.
