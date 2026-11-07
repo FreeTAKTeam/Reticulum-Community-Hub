@@ -172,13 +172,13 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `ba8fc23535cf97747ec54e5083825ab596367833`. RCH dependency locks, matching
+revision `b694d9f765c1783f255602967a625488c8804f4c`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
 and delivered-proof repairs alongside the existing event-stream fixes.
 It also contains snapshot allocation/codec and owned-interface shutdown
-corrections from the subsequent persistence investigation. The final increment
+corrections from the subsequent persistence investigation. The allocation increment
 reserves an exactly sized MessagePack output buffer. A controlled debug probe
 with 100,000 routes reduced peak extra requested allocation from 54,477,376 to
 43,011,557 bytes (21.0%), with unchanged output bytes. These allocation counters
@@ -273,3 +273,18 @@ the focused recovery behavior, not release memory acceptance. The `74c019c3`
 20-minute regular resource lane remains failed, with checkpoint high-event deltas
 of +6/0/0/0. A fresh constrained release preflight and the four-hour lanes remain
 pending; the final source has no hours-long acceptance result.
+
+The final daemon-only increment repairs a replay-hash shutdown cutoff. The early
+route checkpoint must precede interface retirement, but native ingress can still
+remember packet hashes while that checkpoint is written. The daemon now saves
+only the replay hash list after native interfaces and receipts drain, preserving
+the earlier route snapshot and the closed background-save fence. A deterministic
+late-packet regression fails before this fix and passes afterward; focused daemon
+replay/restart checks pass with and without ZeroMQ. This is lifecycle correctness
+evidence, not application authentication, custody or resource acceptance.
+
+The change from LXMF-rs `ba8fc235` to the current pin affects only daemon shutdown
+code, its lifecycle regression and evidence documentation. Shared libraries, SDK
+and RCH runtime code are unchanged. Earlier paired binary and runtime results
+remain attributed to their recorded revisions; the final release pair still
+requires a fresh constrained preflight and hours-long qualification.

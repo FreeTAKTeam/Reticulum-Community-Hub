@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: ba8fc23535cf97747ec54e5083825ab596367833
+  LXMF_REF: b694d9f765c1783f255602967a625488c8804f4c
   RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
