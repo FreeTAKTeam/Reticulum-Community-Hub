@@ -172,7 +172,7 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `b694d9f765c1783f255602967a625488c8804f4c`. RCH dependency locks, matching
+revision `b57b2ce7c852994bd11dbc6e92a6375e40c2960b`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
@@ -288,3 +288,8 @@ code, its lifecycle regression and evidence documentation. Shared libraries, SDK
 and RCH runtime code are unchanged. Earlier paired binary and runtime results
 remain attributed to their recorded revisions; the final release pair still
 requires a fresh constrained preflight and hours-long qualification.
+
+The final source revision additionally replaces two test-only chunk assertions
+for Rust 1.99 Clippy compatibility. Production source is identical to
+`b694d9f7`; explicit test-target Clippy and the lifecycle regression pass. This
+revision adds no new runtime or resource qualification result.
