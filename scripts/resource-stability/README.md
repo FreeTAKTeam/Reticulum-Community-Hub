@@ -122,6 +122,27 @@ HTTP and Unix RPC reads have whole-exchange deadlines, including trickling
 headers/bodies. The caller's remaining qualification time bounds each exchange.
 Pipe framing and SDK process startup/cleanup also have failure regressions.
 
+The same durable oracle supports explicit topic fanout through optional
+`verify_records(..., recipients={destination: node_directory},
+outbound_recipients={token: {destination: daemon_sender_id}})` arguments.
+In that mode, `observed_out[token]` maps every intended destination to its
+singleton SDK wire-ID set, and the returned outbound result maps destinations
+to authenticated receiver IDs. Each token must cover the complete declared
+recipient set. The oracle derives the canonical sender map from terminal
+`rch_broker_dispatch` rows, checks stored parent/content/destination ownership,
+matches every receipt target, and independently verifies each actual daemon
+sender and authenticated receiver row. Multiple SDK identities may share one
+node directory. Omitting both options preserves the original DM call and result
+shape; inbound arguments retain their original primary-peer contract.
+
+To exercise public topic fanout, create a topic with `POST /Topic` using
+`TopicID`, `TopicName` and `TopicPath`; register each intended delivery
+destination with `POST /Topic/Subscribe` using `TopicID` and `Destination`; then
+send `POST /Chat/Message` with `Scope: "topic"`, the same `TopicID`, full `Content`,
+empty `FileIDs`/`ImageIDs`, and no `Destination`. Retain those requests and
+responses with the business ID and intended recipient set. Each new acceptance
+lane must freeze and record its verifier hash before observation.
+
 This empty-history lane always writes `passed_final_acceptance: false`. It does
 not exercise propagation history, stamp mining, browser load, the required soak
 or slow-peer resource recovery. Those remain separate acceptance requirements.

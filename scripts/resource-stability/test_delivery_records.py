@@ -17,7 +17,7 @@ def database(path):
         yield connection
 
 
-class DurableEvidenceTests(unittest.TestCase):
+class DeliveryFixture:
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='rch-delivery-records-')
         self.root = Path(self.directory.name)
@@ -74,6 +74,8 @@ class DurableEvidenceTests(unittest.TestCase):
             change(record)
             connection.execute('UPDATE rch_messages SET payload=? WHERE message_id=?', [msgpack.packb(record, use_bin_type=True), message_id])
 
+
+class DurableEvidenceTests(DeliveryFixture, unittest.TestCase):
     def test_distinct_sender_rch_and_wire_identifiers_are_valid(self):
         self.assertEqual(self.verify(), {'test-in': 'wire-in', 'test-out': 'wire-out'})
 
@@ -160,6 +162,166 @@ class DurableEvidenceTests(unittest.TestCase):
     def test_extra_receiver_id_cannot_pass_with_one_valid_database_row(self):
         self.observed_out['test-out'].add('unexpected-wire-id')
         with self.assertRaisesRegex(RuntimeError, 'exactly one receiver message ID'):
+            self.verify()
+
+
+class FanoutEvidenceTests(DeliveryFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.second = 'second-peer-identity'
+        self.recipients = {self.destinations[1]: 'node1', self.second: 'node1'}
+        self.plan = {'test-out': {self.destinations[1]: 'daemon-out', self.second: 'daemon-out-2'}}
+        self.observed_out = {'test-out': {self.destinations[1]: {'wire-out'}, self.second: {'wire-out-2'}}}
+        with self.daemon(0) as connection:
+            connection.execute('INSERT INTO messages VALUES(?,?,?,?,?,?,?)',
+                ['daemon-out-2', self.destinations[0], self.second, content_for('test-out', False), 'out', 'delivered', None])
+        with self.daemon(1) as connection:
+            connection.execute('INSERT INTO messages VALUES(?,?,?,?,?,?,?)',
+                ['wire-out-2', self.destinations[0], self.second, content_for('test-out', False), 'in', None,
+                 json.dumps({'_lxmf': {'signature_valid': True, 'transport_encrypted': True}})])
+        self.patch_rch('rch-out', lambda record: record.update(destination=None, topic_id='fanout', delivery_mode='fanout'))
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(
+            reticulumd_dispatch_count=2, reticulumd_receipt_targets=[
+                {'destination': recipient, 'message_id': daemon_id, 'status': 'delivered'}
+                for recipient, daemon_id in self.plan['test-out'].items()]))
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata'].pop('reticulumd_message_id'))
+        with self.rch() as connection:
+            connection.execute('ALTER TABLE rch_broker_dispatch ADD COLUMN payload')
+            connection.execute('DELETE FROM rch_broker_dispatch')
+            for recipient, daemon_id in self.plan['test-out'].items():
+                intent = {'message': {'message_id': 'rch-out', 'content': content_for('test-out', False)},
+                          'request': {'destination': recipient, 'content': content_for('test-out', False)}}
+                connection.execute('INSERT INTO rch_broker_dispatch VALUES(?,?,?,?,?)',
+                    ['rch-out', daemon_id, 'terminal', 'delivered', json.dumps(intent)])
+
+    def verify(self):
+        return verify_records(self.root, self.destinations, self.expected_in, self.expected_out,
+            self.observed_in, self.observed_out, recipients=self.recipients, outbound_recipients=self.plan)
+
+    def test_two_service_identities_on_one_daemon_require_independent_complete_delivery(self):
+        self.assertEqual(self.verify(), {'test-in': 'wire-in', 'test-out': {
+            self.destinations[1]: 'wire-out', self.second: 'wire-out-2'}})
+
+    def test_recipient_options_are_explicit_and_required_together(self):
+        for options in [{'recipients': self.recipients}, {'outbound_recipients': self.plan}]:
+            with self.subTest(options=options), self.assertRaisesRegex(RuntimeError, 'recipients'):
+                verify_records(self.root, self.destinations, self.expected_in, self.expected_out,
+                    self.observed_in, self.observed_out, **options)
+
+    def test_missing_extra_and_wrong_planned_recipients_cannot_pass(self):
+        original = self.plan['test-out'].copy()
+        for changed in [
+                {self.destinations[1]: 'daemon-out'},
+                {**original, 'unexpected': 'another-id'},
+                {self.destinations[1]: 'daemon-out', 'wrong-recipient': 'daemon-out-2'}]:
+            with self.subTest(changed=changed):
+                self.plan['test-out'] = changed
+                with self.assertRaisesRegex(RuntimeError, 'recipient coverage'):
+                    self.verify()
+
+    def test_missing_extra_and_wrong_observed_recipients_cannot_pass(self):
+        original = self.observed_out['test-out'].copy()
+        for changed in [
+                {self.destinations[1]: {'wire-out'}},
+                {**original, 'unexpected': {'another-wire-id'}},
+                {self.destinations[1]: {'wire-out'}, 'wrong-recipient': {'wire-out-2'}}]:
+            with self.subTest(changed=changed):
+                self.observed_out['test-out'] = changed
+                with self.assertRaisesRegex(RuntimeError, 'recipient coverage'):
+                    self.verify()
+
+    def test_missing_extra_and_wrong_receipt_targets_cannot_pass(self):
+        targets = [{'destination': recipient, 'message_id': daemon_id, 'status': 'delivered'}
+                   for recipient, daemon_id in self.plan['test-out'].items()]
+        for changed in [targets[:1], targets + [{'destination': 'extra', 'message_id': 'extra', 'status': 'delivered'}],
+                        [targets[0], {**targets[1], 'destination': 'wrong'}]]:
+            with self.subTest(changed=changed):
+                self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(reticulumd_receipt_targets=changed))
+                with self.assertRaisesRegex(RuntimeError, 'recipient receipts'):
+                    self.verify()
+
+    def test_receipts_cannot_be_cross_attributed_between_recipients(self):
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(reticulumd_receipt_targets=[
+            {'destination': self.destinations[1], 'message_id': 'daemon-out-2', 'status': 'delivered'},
+            {'destination': self.second, 'message_id': 'daemon-out', 'status': 'delivered'}]))
+        with self.assertRaisesRegex(RuntimeError, 'recipient receipts'):
+            self.verify()
+
+    def test_correlated_inputs_and_admissions_cannot_hide_actual_sender_destination_mismatch(self):
+        self.plan['test-out'] = {self.destinations[1]: 'daemon-out-2', self.second: 'daemon-out'}
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(reticulumd_receipt_targets=[
+            {'destination': recipient, 'message_id': daemon_id, 'status': 'delivered'}
+            for recipient, daemon_id in self.plan['test-out'].items()]))
+        with self.rch() as connection:
+            connection.execute("UPDATE rch_broker_dispatch SET daemon_message_id=CASE daemon_message_id WHEN 'daemon-out' THEN 'daemon-out-2' ELSE 'daemon-out' END")
+        with self.assertRaisesRegex(RuntimeError, 'Sender durable row'):
+            self.verify()
+
+    def test_valid_receipt_plan_cannot_hide_missing_extra_or_nonterminal_admission(self):
+        with self.rch() as connection:
+            original = connection.execute('SELECT * FROM rch_broker_dispatch').fetchall()
+        for sql in ["DELETE FROM rch_broker_dispatch WHERE daemon_message_id='daemon-out-2'",
+                    "INSERT INTO rch_broker_dispatch SELECT * FROM rch_broker_dispatch LIMIT 1",
+                    "UPDATE rch_broker_dispatch SET state='admitted' WHERE daemon_message_id='daemon-out-2'",
+                    "UPDATE rch_broker_dispatch SET receipt_status='failed' WHERE daemon_message_id='daemon-out-2'"]:
+            with self.subTest(sql=sql):
+                with self.rch() as connection:
+                    connection.execute('DELETE FROM rch_broker_dispatch')
+                    connection.executemany('INSERT INTO rch_broker_dispatch VALUES(?,?,?,?,?)', original)
+                    connection.execute(sql)
+                with self.assertRaisesRegex(RuntimeError, 'fanout admission'):
+                    self.verify()
+
+    def test_dispatch_payload_cannot_belong_to_another_business_message_recipient_or_content(self):
+        with self.rch() as connection:
+            payload = json.loads(connection.execute("SELECT payload FROM rch_broker_dispatch WHERE daemon_message_id='daemon-out-2'").fetchone()[0])
+        for change in [lambda item: item['message'].update(message_id='other-business-id'),
+                       lambda item: item['request'].update(destination='wrong-recipient'),
+                       lambda item: item['request'].update(content='changed-content')]:
+            with self.subTest(change=change):
+                changed = json.loads(json.dumps(payload))
+                change(changed)
+                with self.rch() as connection:
+                    connection.execute("UPDATE rch_broker_dispatch SET payload=? WHERE daemon_message_id='daemon-out-2'", [json.dumps(changed)])
+                with self.assertRaisesRegex(RuntimeError, 'fanout admission'):
+                    self.verify()
+
+    def test_second_receiver_requires_its_own_authenticated_full_payload_and_event_id(self):
+        with self.daemon(1) as connection:
+            original = connection.execute("SELECT content, fields FROM messages WHERE id='wire-out-2'").fetchone()
+        for sql, values, reason in [
+                ("UPDATE messages SET content='changed' WHERE id='wire-out-2'", [], 'Receiver durable payload'),
+                ("UPDATE messages SET fields=? WHERE id='wire-out-2'", [json.dumps({'_lxmf': {'signature_valid': False, 'transport_encrypted': True}})], 'not authenticated')]:
+            with self.subTest(sql=sql):
+                with self.daemon(1) as connection:
+                    connection.execute("UPDATE messages SET content=?,fields=? WHERE id='wire-out-2'", original)
+                    connection.execute(sql, values)
+                with self.assertRaisesRegex(RuntimeError, reason):
+                    self.verify()
+        with self.daemon(1) as connection:
+            connection.execute("UPDATE messages SET content=?,fields=? WHERE id='wire-out-2'", original)
+        self.observed_out['test-out'][self.second] = {'wire-out'}
+        with self.assertRaisesRegex(RuntimeError, 'receiver durable message IDs'):
+            self.verify()
+
+    def test_recipient_mapping_reads_each_actual_node_database(self):
+        (self.root / 'node2').mkdir()
+        with self.daemon(1) as source, self.daemon(2) as destination:
+            source.backup(destination)
+        with self.daemon(1) as connection:
+            connection.execute("DELETE FROM messages WHERE id='wire-out-2'")
+        self.recipients[self.second] = 'node2'
+        self.assertEqual(self.verify()['test-out'][self.second], 'wire-out-2')
+
+    def test_wrong_node_mapping_cannot_substitute_another_recipient_database(self):
+        self.recipients[self.second] = 'node0'
+        with self.assertRaisesRegex(RuntimeError, 'Receiver durable payload'):
+            self.verify()
+
+    def test_second_sender_requires_an_actual_delivered_receipt(self):
+        with self.daemon(0) as connection:
+            connection.execute("UPDATE messages SET receipt_status='sent' WHERE id='daemon-out-2'")
+        with self.assertRaisesRegex(RuntimeError, 'Sender durable row'):
             self.verify()
 
 
