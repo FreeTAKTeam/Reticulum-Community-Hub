@@ -126,6 +126,12 @@ class DurableEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'outbound receipt'):
             self.verify()
 
+    def test_late_nonterminal_diagnostic_cannot_replace_authoritative_terminal_receipt(self):
+        # last_broker_receipt records the raw last input, including a late stale
+        # receipt; dispatch state and target status own terminal completion.
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(last_broker_receipt='sent'))
+        self.assertEqual(self.verify(), {'test-in': 'wire-in', 'test-out': 'wire-out'})
+
     def test_delivered_presentation_cannot_hide_missing_or_conflicting_admission(self):
         for sql in ["UPDATE rch_broker_dispatch SET daemon_message_id='different'",
                     "UPDATE rch_broker_dispatch SET state='admitted'",

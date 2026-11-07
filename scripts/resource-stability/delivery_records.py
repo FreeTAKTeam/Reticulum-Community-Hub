@@ -72,7 +72,7 @@ def verify_rch_records(root, destinations, expected_out, observed_in, *, deadlin
                     daemon_id = metadata.get('reticulumd_message_id')
                     if (record['destination'] != destinations[1] or record['delivery_state'] != 'delivered'
                             or record.get('delivery_method') != 'durable_broker'
-                            or metadata.get('acked') is not True or metadata.get('last_broker_receipt') != 'delivered'
+                            or metadata.get('acked') is not True
                             or metadata.get('receipt_pending') is not False
                             or metadata.get('dispatch_status') != 'accepted' or metadata.get('reticulumd_dispatch_count') != 1
                             or not isinstance(daemon_id, str) or not daemon_id
