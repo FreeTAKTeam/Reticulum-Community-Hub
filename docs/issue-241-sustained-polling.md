@@ -141,3 +141,32 @@ executable help were independently verified. The paired soak records process RSS
 without separate systemd memory limits; it does not establish the production
 trigger or memory-growth cause. Existing rch241.1 assets and stable v0.13.0 remain
 unchanged.
+
+## Durable worker initialization recovery
+
+The current durable-broker worker had a separate recovery gap: its one-time
+storage setup returned permanently on any database-open failure. The RCH process
+could remain active after the failure while intake, application, dispatch and
+announce reconciliation never started. Restoring storage did not restart those
+owners. This is a reproduced startup failure, not an established cause of the
+original production stall after fifteen minutes.
+
+Worker initialization now retries recoverable setup failures with the existing
+500 ms to 30 second backoff. Setup failures remain visible in inbound error
+counters and the durable broker intake lane; successful initialization clears
+the lane error, and successful polling clears the current inbound error. Static
+missing configuration still fails immediately. Terminal exit wakes retry waits,
+awaits any active blocking opener, and joins the worker. Purge prevents reopening
+the database. All store-slot guards are acquired and checked before any store is
+opened or published, so a failed attempt cannot strand partial ownership or
+replace an existing owner's connections.
+
+Controlled RpcDaemon/ZeroMQ regressions exercise unavailable storage followed by
+restoration and message import without restarting RCH, exit during retry, and
+all-or-nothing connection publication. The storage-restoration regression fails
+on the previous implementation because the worker has already exited. An
+additional initialized-worker regression holds a native SQLite writer until
+intake reports a busy-store error, requires a registered identity announce during
+contention, then releases the writer and requires both queued inputs to be
+imported. These checks establish bounded recovery in the tested paths; they do
+not reproduce or explain the original deployment's topology or memory growth.
