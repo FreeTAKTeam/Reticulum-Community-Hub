@@ -172,15 +172,19 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `c37f4c882fff5565459f5579852453f872773d7c`. RCH dependency locks, matching
+revision `74c019c3c38b82448c10fc50ecca778b3b7ccf83`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
 and delivered-proof repairs alongside the existing event-stream fixes.
 It also contains snapshot allocation/codec and owned-interface shutdown
-corrections from the subsequent persistence investigation.
-Requalification of this newer source remains pending; the native result below
-identifies its earlier exact runtime and does not qualify this pin.
+corrections from the subsequent persistence investigation. The final increment
+reserves an exactly sized MessagePack output buffer. A controlled debug probe
+with 100,000 routes reduced peak extra requested allocation from 54,477,376 to
+43,011,557 bytes (21.0%), with unchanged output bytes. These allocation counters
+exclude resident-memory and cgroup effects; release runtime qualification remains
+required. Requalification of this newer source remains pending; the native
+result below identifies its earlier exact runtime and does not qualify this pin.
 
 ## Independent native continuity qualification
 
@@ -230,3 +234,23 @@ were learned on the first attempt under the same protection and 30-second
 deadline. Qualification setup must discover persistent recipients before enabling
 sustained one-second announce load. These failed lanes and the paced discovery
 control do not qualify the new source pin or hours-long resource acceptance.
+
+A later release pair using LXMF-rs `c37f4c88` completed a 20-minute retained-state
+correctness window with 41 bidirectional message pairs and four Topic fanouts,
+plus an RCH restart after a committed acknowledgement was lost and fresh
+delivery afterward. It still failed the strict local resource gate: four
+`memory.events.high` events were added across four persistence checkpoints. The
+subsequent primary-daemon restart stopped at a guard requiring at least 100,000
+active paths, with 99,998 active paths observed.
+
+Offline identity comparison found exactly 100,000 distinct retained destinations
+across active and tunnel state: 99,997 seeded routes and all three real peer
+identities. The missing seeds were precisely the first three keys evicted by the
+declared 100,000-entry announce cache when new destinations arrived. All retained
+seeded route packet hashes, interfaces, next hops and hop counts matched the
+fixture. Both SDK recipients retained valid signed cache packets and tunnel
+entries. The exact bootstrap interface-skip counts were not captured; asynchronous
+TCP acceptance can race the restore mapping. This exposes a count-only fixture
+guard assumption and does not convert the failed lane into a pass. The new pin
+still needs exact identity recovery evidence and hours-long resource acceptance,
+without forced announcements manufacturing missing retained routes.
