@@ -141,3 +141,71 @@ executable help were independently verified. The paired soak records process RSS
 without separate systemd memory limits; it does not establish the production
 trigger or memory-growth cause. Existing rch241.1 assets and stable v0.13.0 remain
 unchanged.
+
+## Durable worker initialization recovery
+
+The current durable-broker worker had a separate recovery gap: its one-time
+storage setup returned permanently on any database-open failure. The RCH process
+could remain active after the failure while intake, application, dispatch and
+announce reconciliation never started. Restoring storage did not restart those
+owners. This is a reproduced startup failure, not an established cause of the
+original production stall after fifteen minutes.
+
+Worker initialization now retries recoverable setup failures with the existing
+500 ms to 30 second backoff. Setup failures remain visible in inbound error
+counters and the durable broker intake lane; successful initialization clears
+the lane error, and successful polling clears the current inbound error. Static
+missing configuration still fails immediately. Terminal exit wakes retry waits,
+awaits any active blocking opener, and joins the worker. Purge prevents reopening
+the database. All store-slot guards are acquired and checked before any store is
+opened or published, so a failed attempt cannot strand partial ownership or
+replace an existing owner's connections.
+
+Controlled RpcDaemon/ZeroMQ regressions exercise unavailable storage followed by
+restoration and message import without restarting RCH, exit during retry, and
+all-or-nothing connection publication. The storage-restoration regression fails
+on the previous implementation because the worker has already exited. An
+additional initialized-worker regression holds a native SQLite writer until
+intake reports a busy-store error, requires a registered identity announce during
+contention, then releases the writer and requires both queued inputs to be
+imported. These checks establish bounded recovery in the tested paths; they do
+not reproduce or explain the original deployment's topology or memory growth.
+
+The current paired source baseline is LXMF-rs version `0.16.1` at immutable
+revision `10a19fb9174e420789d37f359c20ee317b0141f8`. RCH dependency locks, matching
+daemon workflow checkouts and runtime metadata use that revision. This is a
+source-built baseline; `release_tag` is null because no published release tag is
+asserted to identify this source. It includes the subsequent propagation budget
+and delivered-proof repairs alongside the existing event-stream fixes.
+
+## Independent native continuity qualification
+
+The frozen RCH debug binary from
+`3665b92df7b5a94fef9b2d754e1c61a2c78780be`, paired with the SDK at
+`10a19fb9174e420789d37f359c20ee317b0141f8`, passed a 1,228-second native run.
+Its SHA256 was
+`6ad83d0a0fe5bc4a3a05f28b5920c2dca2415870d874591a2e2e9a51ad10f1d2`.
+The release daemon's production source was
+`6858828f584f4043b1f99fef38ae55baea83ee59`; its unchanged binary was independently
+matched by SHA256. Source, binary and harness hashes were checked again after
+the run.
+
+Two isolated daemons exchanged real TCP traffic through RCH and the public SDK:
+41 unique messages in each direction, with all 82 full payloads verified against
+authenticated, encrypted receiver rows and actual delivered sender receipts.
+RCH outbound verification also required matching terminal durable dispatch
+admissions. There were 11,257 polls with zero errors and 40 successful announce
+calls; a peer's observed RCH announce timestamp advanced by 1,164 seconds. The
+same broker journal finished with stored/applied checkpoints of 123/123, no
+pending inbox or dispatch work, and no lane errors. Maximum sampled readiness
+latency was 23.85 ms. After a two-second remote-daemon execution pause and
+resumption, fresh messages completed delivery. This induced neither a restart
+nor a disconnect. Every owned service exited with code zero without forced
+cleanup.
+
+This run used empty histories, native processes and CPU affinity, with no
+per-service memory budgets. It does not establish a constrained memory plateau,
+recovery against retained production state, or Columba/Pixel and Ratspeak/Windows
+physical-client compatibility. Heavy retained-state and hours-long acceptance
+remain pending. The original production stall and memory-growth trigger remain
+unproven.

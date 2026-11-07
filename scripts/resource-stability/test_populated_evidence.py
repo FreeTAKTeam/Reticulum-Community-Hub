@@ -176,7 +176,7 @@ class FinishEvidenceTests(unittest.TestCase):
 
 
 class PolicyTests(unittest.TestCase):
-    def test_both_daemon_launches_use_the_manifest_cadence_without_disabling_ingress(self):
+    def test_both_daemons_enable_durable_custody_and_manifest_cadence_without_disabling_ingress(self):
         with tempfile.TemporaryDirectory(prefix='rch-cadence-') as directory:
             output = Path(directory) / 'run'
             binary = Path(__file__).resolve()
@@ -199,6 +199,8 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(manifest['periodic_announce_interval_s'], 10)
             self.assertEqual(len(launches), 2)
             for index, arguments in enumerate(launches):
+                self.assertEqual(arguments.count('--zmq-durable-broker'), 1,
+                                 'current RCH requires daemon durable broker negotiation')
                 interval = arguments[arguments.index('--announce-interval-secs') + 1]
                 self.assertEqual(int(interval), manifest['periodic_announce_interval_s'])
                 config = (output / f'node{index}' / 'reticulum.toml').read_text()

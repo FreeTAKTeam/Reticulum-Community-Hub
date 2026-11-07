@@ -10,6 +10,7 @@ use zeromq::{PullSocket, Socket, SocketRecv};
 mod announces;
 mod envelope_isolation;
 mod hub_name;
+mod recovery;
 mod replies;
 
 #[derive(Default)]

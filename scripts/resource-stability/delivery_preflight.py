@@ -127,6 +127,7 @@ storage_maintenance_interval_secs = 300
                               ['--db', str(directory / 'daemon.sqlite3'), '--config', str(config),
                                '--rpc-unix', str(directory / 'rpc.sock'), '--transport', f'127.0.0.1:{transport_port}',
                                '--zmq-rpc-command', f'tcp://127.0.0.1:{command_port}',
+                               '--zmq-durable-broker',
                                '--announce-interval-secs', str(PERIODIC_ANNOUNCE_INTERVAL_S)],
                               directory, 512 * MIB, 768 * MIB, 2048 * MIB, cpus, ENV)
             services[f'node{index}'] = service

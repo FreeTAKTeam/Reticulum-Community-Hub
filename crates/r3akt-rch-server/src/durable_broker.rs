@@ -3,6 +3,7 @@ use super::*;
 use r3akt_rch_core::{DurableOutboundIntent, InboxBatch, InboxEvent, RchCommandTransaction};
 use r3akt_transport_rns::durable_broker as broker;
 mod announce_sync;
+mod worker_setup;
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -75,52 +76,8 @@ fn plane(state: &AppState) -> Result<&ZmqDataPlane, ApiError> {
 
 pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let setup_state = state.clone();
-        let setup = tokio::task::spawn_blocking(move || {
-            let path = setup_state.sqlite_path.as_ref().ok_or_else(|| {
-                ApiError::ServiceUnavailable("durable broker requires SQLite".into())
-            })?;
-            let _ = path;
-            let lease = setup_state.broker_consumer_lease.clone().ok_or_else(|| {
-                ApiError::ServiceUnavailable(
-                    "durable consumer ownership was not acquired at startup".into(),
-                )
-            })?;
-            let _quiescence = setup_state
-                .broker_work_gate
-                .read()
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
-            ensure_kill_switch_persistence_unlocked(&setup_state)?;
-            let mut stores = Vec::with_capacity(3);
-            for _ in 0..3 {
-                stores.push(open(&setup_state)?);
-            }
-            let consumer = stores[0].durable_consumer_id().map_err(storage)?;
-            plane(&setup_state)?;
-            for (slot, store) in setup_state.durable_broker_worker_stores.iter().zip(stores) {
-                let mut slot = slot
-                    .lock()
-                    .map_err(|error| ApiError::Internal(error.to_string()))?;
-                if slot.is_some() {
-                    return Err(ApiError::Internal(
-                        "durable broker worker stores already have an owner".into(),
-                    ));
-                }
-                *slot = Some(store);
-            }
-            Ok::<_, ApiError>((lease, consumer))
-        })
-        .await;
-        let (_lease, consumer) = match setup {
-            Ok(Ok(value)) => value,
-            Ok(Err(error)) => {
-                record_reticulumd_inbound_worker_event_error(&state, error.to_string());
-                return;
-            }
-            Err(error) => {
-                record_reticulumd_inbound_worker_event_error(&state, error.to_string());
-                return;
-            }
+        let Some(consumer) = worker_setup::prepare(&state, interval).await else {
+            return;
         };
         let mut owners = tokio::task::JoinSet::new();
         for lane in 0..4 {

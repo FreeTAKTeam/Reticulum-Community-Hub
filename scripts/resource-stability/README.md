@@ -16,6 +16,11 @@ disable shared-instance networking, and stop only the randomly named units they
 created. Fixture writes refuse occupied propagation tables and existing RCH
 fixture files. No production data is used.
 
+Both runners explicitly enable `--zmq-durable-broker` on their observation
+daemons. Current RCH requires durable custody negotiation during service identity
+registration; exposing a ZeroMQ command endpoint alone is insufficient and fails
+with `SDK_BROKER_DISABLED` before delivery observation can begin.
+
 Build fixture tools from the paired source checkouts:
 
 ```sh
@@ -109,9 +114,34 @@ Success requires unique returned sender IDs, unchanged full payloads, terminal
 SDK/RCH receipts, exact sender and receiver SQLite rows, authenticated/encrypted
 receiver metadata and zero RCH poll errors. SDK, RCH and wire IDs can differ;
 unique tokens plus exact content and identities establish their relationship.
+For RCH outbound traffic, the verifier follows the business message ID through
+`reticulumd_message_id` and its sole receipt target to the daemon sender row. It
+also requires the matching terminal, delivered `rch_broker_dispatch` admission;
+RCH presentation state alone cannot qualify a missing or mismatched admission.
 HTTP and Unix RPC reads have whole-exchange deadlines, including trickling
 headers/bodies. The caller's remaining qualification time bounds each exchange.
 Pipe framing and SDK process startup/cleanup also have failure regressions.
+
+The same durable oracle supports explicit topic fanout through optional
+`verify_records(..., recipients={destination: node_directory},
+outbound_recipients={token: {destination: daemon_sender_id}})` arguments.
+In that mode, `observed_out[token]` maps every intended destination to its
+singleton SDK wire-ID set, and the returned outbound result maps destinations
+to authenticated receiver IDs. Each token must cover the complete declared
+recipient set. The oracle derives the canonical sender map from terminal
+`rch_broker_dispatch` rows, checks stored parent/content/destination ownership,
+matches every receipt target, and independently verifies each actual daemon
+sender and authenticated receiver row. Multiple SDK identities may share one
+node directory. Omitting both options preserves the original DM call and result
+shape; inbound arguments retain their original primary-peer contract.
+
+To exercise public topic fanout, create a topic with `POST /Topic` using
+`TopicID`, `TopicName` and `TopicPath`; register each intended delivery
+destination with `POST /Topic/Subscribe` using `TopicID` and `Destination`; then
+send `POST /Chat/Message` with `Scope: "topic"`, the same `TopicID`, full `Content`,
+empty `FileIDs`/`ImageIDs`, and no `Destination`. Retain those requests and
+responses with the business ID and intended recipient set. Each new acceptance
+lane must freeze and record its verifier hash before observation.
 
 This empty-history lane always writes `passed_final_acceptance: false`. It does
 not exercise propagation history, stamp mining, browser load, the required soak
