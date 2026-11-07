@@ -172,7 +172,7 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `74c019c3c38b82448c10fc50ecca778b3b7ccf83`. RCH dependency locks, matching
+revision `ba8fc23535cf97747ec54e5083825ab596367833`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
@@ -254,3 +254,22 @@ TCP acceptance can race the restore mapping. This exposes a count-only fixture
 guard assumption and does not convert the failed lane into a pass. The new pin
 still needs exact identity recovery evidence and hours-long resource acceptance,
 without forced announcements manufacturing missing retained routes.
+
+The following release pair using LXMF-rs `74c019c3` passed its retained identity
+proof, but fresh SDK-to-RCH delivery after the primary restart was marked
+`source_identity_unknown`. Periodic destination cleanup had removed a source key
+restored from a valid detached tunnel because its dynamic active interface was
+unmapped. The final pin retains identity references from live tunnel paths until
+the last tunnel reference expires. Its deterministic regression also verifies
+release after expiry and preserves invalid-cache rejection controls.
+
+An independent local TCP comparison used the same driver and unchanged 60-second
+authentication gate, with empty histories, a detached saved route and a retained
+tunnel. The frozen `74c019c3` release failed source authentication after cleanup;
+the corrected debug daemon passed fresh authenticated, encrypted delivery in both
+directions in 5.352 seconds. It used no scoped SDK reannouncement, route deletion
+or cache rewrite, and all owned processes exited with code zero. This establishes
+the focused recovery behavior, not release memory acceptance. The `74c019c3`
+20-minute regular resource lane remains failed, with checkpoint high-event deltas
+of +6/0/0/0. A fresh constrained release preflight and the four-hour lanes remain
+pending; the final source has no hours-long acceptance result.
