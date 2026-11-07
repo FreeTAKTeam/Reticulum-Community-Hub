@@ -35,18 +35,23 @@ class DurableEvidenceTests(unittest.TestCase):
                                     self.destinations[index], content_for(token, index == 0), 'in', None, crypto])
                 token = 'test-out' if index == 0 else 'test-in'
                 connection.execute('INSERT INTO messages VALUES(?,?,?,?,?,?,?)',
-                                   ['rch-out' if index == 0 else 'sdk-in', self.destinations[index],
+                                   ['daemon-out' if index == 0 else 'sdk-in', self.destinations[index],
                                     self.destinations[1-index], content_for(token, index == 1), 'out', 'delivered', None])
         (self.root / 'rch').mkdir()
         with self.rch() as connection:
             connection.execute('CREATE TABLE rch_messages(message_id, payload)')
+            connection.execute('CREATE TABLE rch_broker_dispatch(message_id, daemon_message_id, state, receipt_status)')
+            connection.execute("INSERT INTO rch_broker_dispatch VALUES('rch-out','daemon-out','terminal','delivered')")
             for record in [
                 {'message_id': 'rch-in', 'content': content_for('test-in', True), 'sender': self.destinations[1],
-                 'delivery_state': 'received', 'delivery_metadata': {'source': self.destinations[1], 'direction': 'inbound', 'reticulumd_inbound': True}},
+                 'delivery_state': 'received', 'delivery_metadata': {'direction': 'inbound', 'reticulumd_inbound': True}},
                 {'message_id': 'rch-out', 'content': content_for('test-out', False), 'destination': self.destinations[1],
-                 'delivery_state': 'delivered', 'delivery_metadata': {'acked': True, 'receipt_status': 'delivered',
-                    'reticulumd_receipt_targets': [{'sdk_message_id': 'rch-out', 'destination': self.destinations[1],
-                        'sdk_terminal': True, 'status': 'delivered'}]}},
+                 'delivery_method': 'durable_broker', 'delivery_state': 'delivered',
+                 'delivery_metadata': {'acked': True, 'last_broker_receipt': 'delivered',
+                    'receipt_pending': False, 'dispatch_status': 'accepted', 'reticulumd_dispatch_count': 1,
+                    'reticulumd_message_id': 'daemon-out',
+                    'reticulumd_receipt_targets': [{'message_id': 'daemon-out', 'destination': self.destinations[1],
+                        'status': 'delivered'}]}},
             ]:
                 connection.execute('INSERT INTO rch_messages VALUES(?,?)', [record['message_id'], msgpack.packb(record, use_bin_type=True)])
 
@@ -114,6 +119,41 @@ class DurableEvidenceTests(unittest.TestCase):
     def test_rch_delivered_state_without_matching_receipt_cannot_pass(self):
         self.patch_rch('rch-out', lambda record: record['delivery_metadata'].update(acked=False))
         with self.assertRaisesRegex(RuntimeError, 'outbound receipt'):
+            self.verify()
+
+    def test_conflicting_rch_receipt_and_daemon_identifiers_cannot_pass(self):
+        self.patch_rch('rch-out', lambda record: record['delivery_metadata']['reticulumd_receipt_targets'][0].update(message_id='different'))
+        with self.assertRaisesRegex(RuntimeError, 'outbound receipt'):
+            self.verify()
+
+    def test_delivered_presentation_cannot_hide_missing_or_conflicting_admission(self):
+        for sql in ["UPDATE rch_broker_dispatch SET daemon_message_id='different'",
+                    "UPDATE rch_broker_dispatch SET state='admitted'",
+                    "UPDATE rch_broker_dispatch SET receipt_status='failed'",
+                    "INSERT INTO rch_broker_dispatch SELECT * FROM rch_broker_dispatch",
+                    "DELETE FROM rch_broker_dispatch"]:
+            with self.subTest(sql=sql):
+                with self.rch() as connection:
+                    connection.execute("DELETE FROM rch_broker_dispatch")
+                    connection.execute("INSERT INTO rch_broker_dispatch VALUES('rch-out','daemon-out','terminal','delivered')")
+                    connection.execute(sql)
+                with self.assertRaisesRegex(RuntimeError, 'durable admission'):
+                    self.verify()
+
+    def test_daemon_sender_receipt_is_required_even_with_valid_rch_admission(self):
+        with self.daemon(0) as connection:
+            connection.execute("UPDATE messages SET receipt_status='sent' WHERE id='daemon-out'")
+        with self.assertRaisesRegex(RuntimeError, 'Sender durable row'):
+            self.verify()
+
+    def test_missing_observed_token_cannot_pass_with_complete_database_rows(self):
+        self.observed_in.clear()
+        with self.assertRaisesRegex(RuntimeError, 'every admitted token'):
+            self.verify()
+
+    def test_extra_receiver_id_cannot_pass_with_one_valid_database_row(self):
+        self.observed_out['test-out'].add('unexpected-wire-id')
+        with self.assertRaisesRegex(RuntimeError, 'exactly one receiver message ID'):
             self.verify()
 
 

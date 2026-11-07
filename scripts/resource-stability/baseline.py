@@ -121,7 +121,8 @@ storage_maintenance_interval_secs = 300
         daemon = Service('daemon', args.daemon,
                          ['--db', str(run / 'daemon.sqlite3'), '--config', str(config),
                           '--rpc-unix', str(run / 'rpc.sock'), '--transport', f'127.0.0.1:{transport}',
-                          '--zmq-rpc-command', f'tcp://127.0.0.1:{command}'], run,
+                          '--zmq-rpc-command', f'tcp://127.0.0.1:{command}',
+                          '--zmq-durable-broker'], run,
                          512 * MIB, 768 * MIB, 2048 * MIB, cpus, ENV)
         services['daemon'] = daemon
         rpc = LocalRpc(run / 'rpc.sock', timeout=120)

@@ -16,6 +16,11 @@ disable shared-instance networking, and stop only the randomly named units they
 created. Fixture writes refuse occupied propagation tables and existing RCH
 fixture files. No production data is used.
 
+Both runners explicitly enable `--zmq-durable-broker` on their observation
+daemons. Current RCH requires durable custody negotiation during service identity
+registration; exposing a ZeroMQ command endpoint alone is insufficient and fails
+with `SDK_BROKER_DISABLED` before delivery observation can begin.
+
 Build fixture tools from the paired source checkouts:
 
 ```sh
@@ -109,6 +114,10 @@ Success requires unique returned sender IDs, unchanged full payloads, terminal
 SDK/RCH receipts, exact sender and receiver SQLite rows, authenticated/encrypted
 receiver metadata and zero RCH poll errors. SDK, RCH and wire IDs can differ;
 unique tokens plus exact content and identities establish their relationship.
+For RCH outbound traffic, the verifier follows the business message ID through
+`reticulumd_message_id` and its sole receipt target to the daemon sender row. It
+also requires the matching terminal, delivered `rch_broker_dispatch` admission;
+RCH presentation state alone cannot qualify a missing or mismatched admission.
 HTTP and Unix RPC reads have whole-exchange deadlines, including trickling
 headers/bodies. The caller's remaining qualification time bounds each exchange.
 Pipe framing and SDK process startup/cleanup also have failure regressions.
