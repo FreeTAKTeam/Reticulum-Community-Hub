@@ -170,3 +170,10 @@ intake reports a busy-store error, requires a registered identity announce durin
 contention, then releases the writer and requires both queued inputs to be
 imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
+
+The current paired source baseline is LXMF-rs version `0.16.1` at immutable
+revision `980d1dcd339bac4bc279854e37e851479edf80cc`. RCH dependency locks, matching
+daemon workflow checkouts and runtime metadata use that revision. This is a
+source-built baseline; `release_tag` is null because no published release tag is
+asserted to identify this source. It includes the subsequent propagation budget
+and delivered-proof repairs alongside the existing event-stream fixes.
