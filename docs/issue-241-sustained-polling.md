@@ -172,7 +172,7 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `b57b2ce7c852994bd11dbc6e92a6375e40c2960b`. RCH dependency locks, matching
+revision `435b0f1de03602d9d9e2984c7f86cce6a69bc3fa`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
@@ -283,14 +283,14 @@ late-packet regression fails before this fix and passes afterward; focused daemo
 replay/restart checks pass with and without ZeroMQ. This is lifecycle correctness
 evidence, not application authentication, custody or resource acceptance.
 
-The change from LXMF-rs `ba8fc235` to the current pin affects only daemon shutdown
+The change from LXMF-rs `ba8fc235` to `b694d9f7` affected only daemon shutdown
 code, its lifecycle regression and evidence documentation. Shared libraries, SDK
-and RCH runtime code are unchanged. Earlier paired binary and runtime results
-remain attributed to their recorded revisions; the final release pair still
-requires a fresh constrained preflight and hours-long qualification.
+and RCH runtime code were unchanged in that increment. Earlier paired binary and
+runtime results remain attributed to their recorded revisions. Exact paired-runtime
+qualification is recorded on [PR #304](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/304).
 
-The final source revision additionally replaces two test-only chunk assertions
-for Rust 1.99 Clippy compatibility. Production source is identical to
+LXMF-rs `b57b2ce7` additionally replaced two test-only chunk assertions
+for Rust 1.99 Clippy compatibility. Its production source was identical to
 `b694d9f7`; explicit test-target Clippy and the lifecycle regression pass. This
 revision adds no new runtime or resource qualification result.
 
@@ -325,5 +325,15 @@ and payloads intact. All 131 core tests pass.
 
 These results establish bounded work for this count query with an empty active
 set. They do not establish the cause of RCH memory growth or qualify the new
-paired runtime. Resource validation and the final dependency alignment remain
-separate gates; earlier runtime results retain their original binary attribution.
+paired runtime. Resource validation remains separate; earlier runtime results
+retain their original binary attribution.
+
+The current LXMF-rs pin also addresses repeated retained-history maintenance
+reads: a conservative row-count bound skips unnecessary announce-window walks,
+mutation-aware cursors preserve the recent window, and a partial index serves
+the unchanged retryable-outbound query without scanning terminal rows. Existing
+retention limits, latest-peer protections and delivery ownership remain in place.
+Controlled SQL and native tests establish those paths; full-window exact counts
+still have material page-read cost. These controlled results do not qualify the
+paired runtime. Its resource evidence is recorded separately on
+[PR #304](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/304).
