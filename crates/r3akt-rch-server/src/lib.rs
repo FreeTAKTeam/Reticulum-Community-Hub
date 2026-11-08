@@ -35417,7 +35417,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "8");
+        assert_eq!(payload["persistence"]["schema_version"], "9");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

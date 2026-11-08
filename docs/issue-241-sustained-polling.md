@@ -293,3 +293,37 @@ The final source revision additionally replaces two test-only chunk assertions
 for Rust 1.99 Clippy compatibility. Production source is identical to
 `b694d9f7`; explicit test-target Clippy and the lifecycle regression pass. This
 revision adds no new runtime or resource qualification result.
+
+## Active-delivery diagnostics count
+
+The frozen `b360099` RCH / `b57b2ce7` LXMF pair later completed its four-hour
+correctness lane: 481 bidirectional pairs, 48 Topic fanouts and 1,065 canonical
+authenticated rows including recovery traffic. Resources remain unqualified.
+RCH logical read rates increased while the recent-message residency stayed near
+126 records and 1.025 MB; logical reads are distinct from physical storage reads.
+
+Each `/diagnostics/runtime` request separately counts durable active dispatches.
+Its query includes `pending` and `admitted`, while the existing pending-only
+partial index covers only `pending`. On the stopped database, counting zero
+active deliveries scanned all 581 completed dispatch rows. An authorized private
+copy probe read 7,991,296 logical bytes for that query; the exact active-state
+partial index reduced this to 57,344 bytes, including fresh-connection overhead.
+Python SQLite 3.53.1 reproduced the system SQLite 3.46.1 read measurements and
+results; these scratch probes do not measure production endpoint latency or
+resident-memory effects. The inbox aggregate already uses a covering index and
+is a separate, smaller retained-history scan.
+
+Schema migration 9 adds the exact-predicate active-dispatch partial index,
+preserving the query, the pending-only index and all retained delivery rows.
+The normal migration backup and transaction cover the change. A real Rust
+regression on bundled SQLite 3.53.2 fails before this migration: zero-active
+counts take 139 VM / 31 full-scan steps at 32 completed rows and 40,011 / 9,999
+at 10,000. With the migration, both take 30 VM steps and zero full-scan steps.
+Additional checks preserve pending/admitted transitions, terminal, unknown and
+case-sensitive states, and an idempotent schema-8 upgrade with its prior backup
+and payloads intact. All 131 core tests pass.
+
+These results establish bounded work for this count query with an empty active
+set. They do not establish the cause of RCH memory growth or qualify the new
+paired runtime. Resource validation and the final dependency alignment remain
+separate gates; earlier runtime results retain their original binary attribution.

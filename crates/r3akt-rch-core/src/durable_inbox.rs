@@ -1,4 +1,5 @@
 //! RCH owns custody checkpoints and ordered business completion independently of daemon ACKs.
+mod active_count_index;
 mod lease;
 mod pending_indexes;
 #[cfg(test)]

@@ -156,10 +156,10 @@ fn version_seven_upgrade_preserves_history_and_backs_up_before_indexing() {
     let path = dir.join("state.db");
     let store = RchSqliteStore::open(&path).unwrap();
     history(&store, 330);
-    store.connection.execute_batch("DROP INDEX IF EXISTS rch_broker_inbox_unfinished; DROP INDEX IF EXISTS rch_broker_dispatch_pending_state; DELETE FROM rch_schema_migrations WHERE version=8; UPDATE rch_settings SET setting_value='7' WHERE setting_key='schema_version';").unwrap();
+    store.connection.execute_batch("DROP INDEX IF EXISTS rch_broker_dispatch_active_state; DROP INDEX IF EXISTS rch_broker_inbox_unfinished; DROP INDEX IF EXISTS rch_broker_dispatch_pending_state; DELETE FROM rch_schema_migrations WHERE version IN (8,9); UPDATE rch_settings SET setting_value='7' WHERE setting_key='schema_version';").unwrap();
     drop(store);
     let store = RchSqliteStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), "8");
+    assert_eq!(store.schema_version().unwrap(), "9");
     assert_eq!(
         store
             .connection

@@ -6,6 +6,12 @@ use super::{
 };
 use std::fmt::Write;
 
+#[cfg(test)]
+mod tests;
+
+const ACTIVE_DELIVERY_COUNT_SQL: &str =
+    "SELECT COUNT(*) FROM rch_broker_dispatch WHERE state IN ('pending','admitted')";
+
 pub const RECENT_MESSAGE_COUNT: usize = 500;
 pub const RECENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 pub const RECENT_MESSAGE_IDLE_MS: i64 = 30 * 60 * 1000;
@@ -175,11 +181,11 @@ impl RchSqliteStore {
     /// Active dispatch operations are durable, whether or not their parent is resident.
     pub fn message_history_counts(&self) -> Result<(usize, usize), RchCoreError> {
         let history = self.row_count("rch_messages")?;
-        let active = self.connection.query_row(
-            "SELECT COUNT(*) FROM rch_broker_dispatch WHERE state IN ('pending','admitted')",
-            [],
-            |row| sqlite_read_usize(row, 0),
-        )?;
+        let active = self
+            .connection
+            .query_row(ACTIVE_DELIVERY_COUNT_SQL, [], |row| {
+                sqlite_read_usize(row, 0)
+            })?;
         Ok((history, active))
     }
     pub fn recent_messages(&self) -> Result<Vec<MessageRecord>, RchCoreError> {
