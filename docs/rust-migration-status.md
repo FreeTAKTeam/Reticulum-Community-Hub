@@ -134,7 +134,7 @@ Minimum Rust checks:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo +1.88.0 check --workspace --all-targets --locked
+cargo +1.89.0 check --workspace --all-targets --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo audit --deny warnings
 cargo build --release -p r3akt-rch-server

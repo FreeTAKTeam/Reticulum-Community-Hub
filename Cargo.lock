@@ -1080,9 +1080,9 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1131,7 +1131,7 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 [[package]]
 name = "lxmf-propagation"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "hex",
  "hkdf",
@@ -1148,7 +1148,7 @@ dependencies = [
 [[package]]
 name = "lxmf-reference"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "serde",
 ]
@@ -1156,7 +1156,7 @@ dependencies = [
 [[package]]
 name = "lxmf-sdk"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "hex",
  "hmac",
@@ -1176,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "lxmf-wire"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -1490,7 +1490,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "r3akt-event-broker"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "hex",
  "hmac",
@@ -1758,7 +1758,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "reticulum-rs-core"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "aes",
  "atomicwrites",
@@ -1779,7 +1779,7 @@ dependencies = [
 [[package]]
 name = "reticulum-rs-rpc"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -1807,7 +1807,7 @@ dependencies = [
 [[package]]
 name = "reticulum-rs-zeromq"
 version = "0.16.1"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=435b0f1de03602d9d9e2984c7f86cce6a69bc3fa#435b0f1de03602d9d9e2984c7f86cce6a69bc3fa"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=8c27a200939495e7d412a92ee171329d0c458d28#8c27a200939495e7d412a92ee171329d0c458d28"
 dependencies = [
  "async-trait",
  "asynchronous-codec",
@@ -1869,9 +1869,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
  "fallible-iterator",

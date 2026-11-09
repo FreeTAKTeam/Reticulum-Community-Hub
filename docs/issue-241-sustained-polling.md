@@ -172,11 +172,15 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `435b0f1de03602d9d9e2984c7f86cce6a69bc3fa`. RCH dependency locks, matching
+revision `8c27a200939495e7d412a92ee171329d0c458d28`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
 and delivered-proof repairs alongside the existing event-stream fixes.
+The current wrapper is rusqlite 0.41.1 / SQLite 3.54.1 with Rust 1.89 minimum;
+[the security alignment](migrations/sqlite-3-54-security.md) separates this
+source/lock preparation from pending patched-engine native qualification.
+Earlier Rust 1.88 / SQLite 3.53.2 evidence below keeps its original attribution.
 It also contains snapshot allocation/codec and owned-interface shutdown
 corrections from the subsequent persistence investigation. The allocation increment
 reserves an exactly sized MessagePack output buffer. A controlled debug probe

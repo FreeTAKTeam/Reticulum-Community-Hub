@@ -242,7 +242,7 @@ cargo test -p r3akt-rch-server
 cargo test -p r3akt-rch-core
 cargo test -p r3akt-transport-rns
 cargo test -p r3akt-tak-connector
-cargo +1.88.0 check --workspace --all-targets --locked
+cargo +1.89.0 check --workspace --all-targets --locked
 cargo audit --deny warnings
 $env:RUSTDOCFLAGS = "-D warnings"; cargo doc --workspace --no-deps
 npm --prefix ui ci

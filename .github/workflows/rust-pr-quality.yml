@@ -16,7 +16,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LXMF_REF: 435b0f1de03602d9d9e2984c7f86cce6a69bc3fa
+  LXMF_REF: 8c27a200939495e7d412a92ee171329d0c458d28
 
 jobs:
   msrv-docs:
@@ -35,10 +35,10 @@ jobs:
           path: LXMF-rs
           ref: ${{ env.LXMF_REF }}
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.89
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
 
       - name: Check minimum supported Rust version
         working-directory: rch
