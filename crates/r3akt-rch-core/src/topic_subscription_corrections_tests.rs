@@ -99,14 +99,14 @@ fn sqlite_migration_is_additive_for_existing_database_like_python_startup() {
     }
 
     let store = RchSqliteStore::open(&db_path).expect("migrated store");
-    assert_eq!(store.schema_version().expect("schema version"), "8");
+    assert_eq!(store.schema_version().expect("schema version"), "9");
     let migration_count: i64 = store
         .connection
         .query_row("SELECT COUNT(*) FROM rch_schema_migrations", [], |row| {
             row.get(0)
         })
         .expect("migration count");
-    assert_eq!(migration_count, 8);
+    assert_eq!(migration_count, 9);
     let index_count: i64 = store
         .connection
         .query_row(
@@ -119,14 +119,14 @@ fn sqlite_migration_is_additive_for_existing_database_like_python_startup() {
     drop(store);
 
     let reopened = RchSqliteStore::open(&db_path).expect("reopened store");
-    assert_eq!(reopened.schema_version().expect("schema version"), "8");
+    assert_eq!(reopened.schema_version().expect("schema version"), "9");
     let reopened_migration_count: i64 = reopened
         .connection
         .query_row("SELECT COUNT(*) FROM rch_schema_migrations", [], |row| {
             row.get(0)
         })
         .expect("reopened migration count");
-    assert_eq!(reopened_migration_count, 8);
+    assert_eq!(reopened_migration_count, 9);
     drop(reopened);
 
     let connection = Connection::open(&db_path).expect("sqlite");
@@ -212,7 +212,7 @@ fn sqlite_migration_preserves_existing_subscriber_payloads() {
     }
 
     let store = RchSqliteStore::open(&db_path).expect("migrated store");
-    assert_eq!(store.schema_version().expect("schema version"), "8");
+    assert_eq!(store.schema_version().expect("schema version"), "9");
     let snapshot = store
         .load_snapshot()
         .expect("load snapshot")

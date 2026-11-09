@@ -18,7 +18,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "EPL-2.0"
 repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 
@@ -35,10 +35,10 @@ r3akt-rch-server = { path = "crates/r3akt-rch-server" }
 r3akt-tak-connector = { path = "crates/r3akt-tak-connector" }
 r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
-rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "10a19fb9174e420789d37f359c20ee317b0141f8", version = "0.16.1" }
-rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "10a19fb9174e420789d37f359c20ee317b0141f8", version = "0.16.1" }
-lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "10a19fb9174e420789d37f359c20ee317b0141f8", version = "0.16.1", default-features = false, features = ["std"] }
-lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "10a19fb9174e420789d37f359c20ee317b0141f8", version = "0.16.1", default-features = false, features = ["zmq-pipeline-backend"] }
+rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1", version = "0.16.1" }
+rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1", version = "0.16.1" }
+lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1", version = "0.16.1", default-features = false, features = ["std"] }
+lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1", version = "0.16.1", default-features = false, features = ["zmq-pipeline-backend"] }
 base64 = "0.22"
 argon2 = "0.5"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
@@ -57,7 +57,7 @@ tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 rmp-serde = "1.3"
-rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "backup"] }
 thiserror = "2.0"
 uuid = { version = "1.8", features = ["serde", "v4", "v7"] }
 zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }

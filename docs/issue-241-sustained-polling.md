@@ -54,8 +54,8 @@ imports; it does not promise replay of all events lost across a restart.
 
 The correction is reviewed in
 [LXMF-rs PR #654](https://github.com/FreeTAKTeam/LXMF-rs/pull/654).
-Current RCH SDK dependencies and daemon-build references align to immutable
-revision `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, based on version 0.13.0.
+The SDK dependencies and daemon-build references in that repair aligned to
+immutable revision `bbde8f2ce35eef8e5a4d99042faed38c6b8fbf68`, based on version 0.13.0.
 The northbound API and identity authorization contract are unchanged.
 
 ## Network worker starvation during storage contention
@@ -172,11 +172,23 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `10a19fb9174e420789d37f359c20ee317b0141f8`. RCH dependency locks, matching
+revision `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
 and delivered-proof repairs alongside the existing event-stream fixes.
+The current wrapper is rusqlite 0.41.1 / SQLite 3.54.1 with Rust 1.89 minimum;
+[the security alignment](migrations/sqlite-3-54-security.md) separates this
+source/lock preparation from pending patched-engine native qualification.
+Earlier Rust 1.88 / SQLite 3.53.2 evidence below keeps its original attribution.
+It also contains snapshot allocation/codec and owned-interface shutdown
+corrections from the subsequent persistence investigation. The allocation increment
+reserves an exactly sized MessagePack output buffer. A controlled debug probe
+with 100,000 routes reduced peak extra requested allocation from 54,477,376 to
+43,011,557 bytes (21.0%), with unchanged output bytes. These allocation counters
+exclude resident-memory and cgroup effects; release runtime qualification remains
+required. Requalification of this newer source remains pending; the native
+result below identifies its earlier exact runtime and does not qualify this pin.
 
 ## Independent native continuity qualification
 
@@ -209,3 +221,123 @@ recovery against retained production state, or Columba/Pixel and Ratspeak/Window
 physical-client compatibility. Heavy retained-state and hours-long acceptance
 remain pending. The original production stall and memory-growth trigger remain
 unproven.
+
+## Follow-up qualification status
+
+A later constrained retained-state preflight of the preceding pair recorded a
+one-event increase in `memory.events.high` during observation, so it did not pass
+resource acceptance. Its release-profile RCH recovery stage verified initial
+bidirectional delivery and restart recovery, then stopped before Topic message
+admission when a newly created SDK identity was not discovered within 30 seconds.
+
+An isolated frozen-binary probe reproduced the discovery symptom and traced it
+to the intended fresh-interface ingress guard holding burst announces for about
+360 seconds.
+With only three seconds of spacing before each identity creation, both identities
+were learned on the first attempt under the same protection and 30-second
+deadline. Qualification setup must discover persistent recipients before enabling
+sustained one-second announce load. These failed lanes and the paced discovery
+control do not qualify the new source pin or hours-long resource acceptance.
+
+A later release pair using LXMF-rs `c37f4c88` completed a 20-minute retained-state
+correctness window with 41 bidirectional message pairs and four Topic fanouts,
+plus an RCH restart after a committed acknowledgement was lost and fresh
+delivery afterward. It still failed the strict local resource gate: four
+`memory.events.high` events were added across four persistence checkpoints. The
+subsequent primary-daemon restart stopped at a guard requiring at least 100,000
+active paths, with 99,998 active paths observed.
+
+Offline identity comparison found exactly 100,000 distinct retained destinations
+across active and tunnel state: 99,997 seeded routes and all three real peer
+identities. The missing seeds were precisely the first three keys evicted by the
+declared 100,000-entry announce cache when new destinations arrived. All retained
+seeded route packet hashes, interfaces, next hops and hop counts matched the
+fixture. Both SDK recipients retained valid signed cache packets and tunnel
+entries. The exact bootstrap interface-skip counts were not captured; asynchronous
+TCP acceptance can race the restore mapping. This exposes a count-only fixture
+guard assumption and does not convert the failed lane into a pass. The new pin
+still needs exact identity recovery evidence and hours-long resource acceptance,
+without forced announcements manufacturing missing retained routes.
+
+The following release pair using LXMF-rs `74c019c3` passed its retained identity
+proof, but fresh SDK-to-RCH delivery after the primary restart was marked
+`source_identity_unknown`. Periodic destination cleanup had removed a source key
+restored from a valid detached tunnel because its dynamic active interface was
+unmapped. The final pin retains identity references from live tunnel paths until
+the last tunnel reference expires. Its deterministic regression also verifies
+release after expiry and preserves invalid-cache rejection controls.
+
+An independent local TCP comparison used the same driver and unchanged 60-second
+authentication gate, with empty histories, a detached saved route and a retained
+tunnel. The frozen `74c019c3` release failed source authentication after cleanup;
+the corrected debug daemon passed fresh authenticated, encrypted delivery in both
+directions in 5.352 seconds. It used no scoped SDK reannouncement, route deletion
+or cache rewrite, and all owned processes exited with code zero. This establishes
+the focused recovery behavior, not release memory acceptance. The `74c019c3`
+20-minute regular resource lane remains failed, with checkpoint high-event deltas
+of +6/0/0/0. A fresh constrained release preflight and the four-hour lanes remain
+pending; the final source has no hours-long acceptance result.
+
+The final daemon-only increment repairs a replay-hash shutdown cutoff. The early
+route checkpoint must precede interface retirement, but native ingress can still
+remember packet hashes while that checkpoint is written. The daemon now saves
+only the replay hash list after native interfaces and receipts drain, preserving
+the earlier route snapshot and the closed background-save fence. A deterministic
+late-packet regression fails before this fix and passes afterward; focused daemon
+replay/restart checks pass with and without ZeroMQ. This is lifecycle correctness
+evidence, not application authentication, custody or resource acceptance.
+
+The change from LXMF-rs `ba8fc235` to `b694d9f7` affected only daemon shutdown
+code, its lifecycle regression and evidence documentation. Shared libraries, SDK
+and RCH runtime code were unchanged in that increment. Earlier paired binary and
+runtime results remain attributed to their recorded revisions. Exact paired-runtime
+qualification is recorded on [PR #304](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/304).
+
+LXMF-rs `b57b2ce7` additionally replaced two test-only chunk assertions
+for Rust 1.99 Clippy compatibility. Its production source was identical to
+`b694d9f7`; explicit test-target Clippy and the lifecycle regression pass. This
+revision adds no new runtime or resource qualification result.
+
+## Active-delivery diagnostics count
+
+The frozen `b360099` RCH / `b57b2ce7` LXMF pair later completed its four-hour
+correctness lane: 481 bidirectional pairs, 48 Topic fanouts and 1,065 canonical
+authenticated rows including recovery traffic. Resources remain unqualified.
+RCH logical read rates increased while the recent-message residency stayed near
+126 records and 1.025 MB; logical reads are distinct from physical storage reads.
+
+Each `/diagnostics/runtime` request separately counts durable active dispatches.
+Its query includes `pending` and `admitted`, while the existing pending-only
+partial index covers only `pending`. On the stopped database, counting zero
+active deliveries scanned all 581 completed dispatch rows. An authorized private
+copy probe read 7,991,296 logical bytes for that query; the exact active-state
+partial index reduced this to 57,344 bytes, including fresh-connection overhead.
+Python SQLite 3.53.1 reproduced the system SQLite 3.46.1 read measurements and
+results; these scratch probes do not measure production endpoint latency or
+resident-memory effects. The inbox aggregate already uses a covering index and
+is a separate, smaller retained-history scan.
+
+Schema migration 9 adds the exact-predicate active-dispatch partial index,
+preserving the query, the pending-only index and all retained delivery rows.
+The normal migration backup and transaction cover the change. A real Rust
+regression on bundled SQLite 3.53.2 fails before this migration: zero-active
+counts take 139 VM / 31 full-scan steps at 32 completed rows and 40,011 / 9,999
+at 10,000. With the migration, both take 30 VM steps and zero full-scan steps.
+Additional checks preserve pending/admitted transitions, terminal, unknown and
+case-sensitive states, and an idempotent schema-8 upgrade with its prior backup
+and payloads intact. All 131 core tests pass.
+
+These results establish bounded work for this count query with an empty active
+set. They do not establish the cause of RCH memory growth or qualify the new
+paired runtime. Resource validation remains separate; earlier runtime results
+retain their original binary attribution.
+
+The current LXMF-rs pin also addresses repeated retained-history maintenance
+reads: a conservative row-count bound skips unnecessary announce-window walks,
+mutation-aware cursors preserve the recent window, and a partial index serves
+the unchanged retryable-outbound query without scanning terminal rows. Existing
+retention limits, latest-peer protections and delivery ownership remain in place.
+Controlled SQL and native tests establish those paths; full-window exact counts
+still have material page-read cost. These controlled results do not qualify the
+paired runtime. Its resource evidence is recorded separately on
+[PR #304](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/304).

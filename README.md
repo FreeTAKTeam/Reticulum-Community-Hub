@@ -103,7 +103,7 @@ desktop packages have their own release notes and platform requirements.
 
 Requirements:
 
-- Rust 1.88 or newer for the server workspace and Tauri desktop shell;
+- Rust 1.89 or newer for the server workspace and Tauri desktop shell;
 - a local Reticulum configuration;
 - [`LXMF-rs`](https://github.com/FreeTAKTeam/LXMF-rs) `reticulumd` for live LXMF transport;
 - Node.js and npm only when building the web or desktop interface.

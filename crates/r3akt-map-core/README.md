@@ -104,7 +104,7 @@ CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android26-clang \
   cargo build -p r3akt-map-core --features sqlite --target aarch64-linux-android
 ```
 
-Minimum Rust version follows the workspace (`1.88`).
+Minimum Rust version follows the workspace (`1.89`).
 
 ## Consuming from REM
 

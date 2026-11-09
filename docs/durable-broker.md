@@ -30,10 +30,11 @@ deleting database files. The before/after query-cost evidence
 and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
-Paired LXMF-rs source: `c45a5113807fdf5618b55d4e6ba7f598c3eaafe7`
-(`reticulumd-test-0.16.0-linux-c45a5113.1`, SDK 0.16.0). Cargo dependencies, workflow
-checkouts and managed daemon builds use this same immutable revision.
-Building the paired source requires Rust 1.88 or newer.
+Paired LXMF-rs source: `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`
+(SDK 0.16.1, source-built baseline with no asserted release tag). Cargo dependencies,
+workflow checkouts and managed daemon builds use this same immutable revision.
+Building the paired source requires Rust 1.89 or newer; the direct SQLite wrapper
+is aligned as described in the [security migration](migrations/sqlite-3-54-security.md).
 
 The daemon physical budget is persisted on first enablement. Its main database
 page cap uses one quarter of the selected budget to leave WAL and control

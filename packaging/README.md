@@ -80,8 +80,10 @@ establish the new candidate's compatibility.
 Pull request quality control is handled by
 `.github/workflows/rust-pr-quality.yml`. It runs Rust 1.99.1 formatting, clippy,
 locked workspace tests, release builds for the server and TAK service, and
-`cargo audit`; the workspace minimum Rust version is 1.88 for the paired LXMF
-0.16.0 dependency.
+`cargo audit`; the workspace minimum Rust version is 1.89 for the paired LXMF
+0.16.1 / rusqlite 0.41.1 dependencies. The current source-built baseline is owned
+by `config/lxmf-runtime-baseline.json`; published preview details above remain
+historical package records.
 
 ## Debian AMD64 installation
 

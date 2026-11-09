@@ -428,7 +428,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "8";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "9";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -2799,7 +2799,8 @@ impl RchSqliteStore {
             self.migrate_durable_inbox()?;
             self.migrate_command_indexes()?;
             self.migrate_identity_directory()?;
-            return self.migrate_broker_pending_indexes();
+            self.migrate_broker_pending_indexes()?;
+            return self.migrate_broker_active_count_index();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2968,7 +2969,8 @@ impl RchSqliteStore {
         self.migrate_durable_inbox()?;
         self.migrate_command_indexes()?;
         self.migrate_identity_directory()?;
-        self.migrate_broker_pending_indexes()
+        self.migrate_broker_pending_indexes()?;
+        self.migrate_broker_active_count_index()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -12962,7 +12964,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "8");
+        assert_eq!(store.schema_version().expect("schema version"), "9");
     }
 
     #[test]
@@ -16352,7 +16354,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "8");
+        assert_eq!(store.schema_version().expect("schema version"), "9");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16396,7 +16398,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 8);
+        assert_eq!(migration_count, 9);
 
         let index_exists: bool = store
             .connection
@@ -16456,7 +16458,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "8");
+        assert_eq!(store.schema_version().expect("schema version"), "9");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");

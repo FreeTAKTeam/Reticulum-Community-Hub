@@ -64,9 +64,9 @@ database and validate `/Status`, `/openapi.json`, `/Help`, `/api/v1/app/info`,
 and at least one topic/chat/checklist/mission flow.
 
 GitHub PR quality control is handled by
-`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.88 for the
-quality gates and the locked workspace minimum-version check, matching the
-paired LXMF-rs 0.16.1-rc.1-linux dependency. It exposes separate required checks for formatting, clippy with
+`.github/workflows/rust-pr-quality.yml`. The workflow uses Rust 1.99.1 for quality gates and Rust 1.89 for the
+locked workspace minimum-version check, matching the paired LXMF-rs 0.16.1
+and rusqlite 0.41.1 dependencies. It exposes separate required checks for formatting, clippy with
 `-D warnings`, MSRV and denied-warning rustdoc, locked workspace tests, UI
 lint/type-check/tests/build, release server/TAK-service builds, and
 `cargo audit`.
@@ -230,12 +230,13 @@ Release blockers cleared in the latest parity pass:
   six `/internal/delivery-*` mutation callbacks have been removed without
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
-- Production library dependencies use LXMF `0.16.1-rc.1-linux` from immutable revision
-  `213af2d8048ded5ff38f67ca8c0b4cc143d19ada`
-  (`v0.16.1-rc.1-linux`); a clean server build does not
-  require a sibling checkout. CI and release packages use that same revision,
-  including the #678 announce-cache cleanup and #663 resource/ZeroMQ
-  follow-through. The paired dependency requires Rust 1.88 or newer.
+- Production library dependencies use LXMF `0.16.1` from immutable revision
+  `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1` as a source-built baseline,
+  with no published release tag asserted for that revision. A clean server build
+  does not require a sibling checkout. CI and managed daemon builds use the same
+  revision. The paired dependency requires Rust 1.89 or newer and aligns with
+  RCH's direct rusqlite 0.41.1 dependency; see the
+  [SQLite security migration](migrations/sqlite-3-54-security.md).
   The matching ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by
   the scheduled compatibility workflow. Preview.26 targets only the complete
