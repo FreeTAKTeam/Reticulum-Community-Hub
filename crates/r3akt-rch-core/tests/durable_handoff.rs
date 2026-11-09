@@ -131,7 +131,7 @@ fn inbox_commit_precedes_business_and_outbox_commits_atomically() {
         connection
             .query_row("SELECT sqlite_version()", [], |r| r.get::<_, String>(0))
             .unwrap(),
-        "3.53.2"
+        "3.54.1"
     );
     assert_eq!(
         store.inbox_ack_receipt("rch").unwrap().unwrap().2,

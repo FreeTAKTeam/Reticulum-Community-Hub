@@ -231,7 +231,7 @@ Release blockers cleared in the latest parity pass:
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
 - Production library dependencies use LXMF `0.16.1` from immutable revision
-  `8c27a200939495e7d412a92ee171329d0c458d28` as a source-built baseline,
+  `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1` as a source-built baseline,
   with no published release tag asserted for that revision. A clean server build
   does not require a sibling checkout. CI and managed daemon builds use the same
   revision. The paired dependency requires Rust 1.89 or newer and aligns with

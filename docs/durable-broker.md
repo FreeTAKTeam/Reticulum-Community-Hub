@@ -30,7 +30,7 @@ deleting database files. The before/after query-cost evidence
 and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
-Paired LXMF-rs source: `8c27a200939495e7d412a92ee171329d0c458d28`
+Paired LXMF-rs source: `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`
 (SDK 0.16.1, source-built baseline with no asserted release tag). Cargo dependencies,
 workflow checkouts and managed daemon builds use this same immutable revision.
 Building the paired source requires Rust 1.89 or newer; the direct SQLite wrapper

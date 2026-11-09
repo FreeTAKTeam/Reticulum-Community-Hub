@@ -1,7 +1,7 @@
 # Bundled SQLite security alignment
 
 Current source builds pair LXMF-rs `0.16.1` at immutable source
-`8c27a200939495e7d412a92ee171329d0c458d28` with RCH's direct `rusqlite 0.41.1`.
+`9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1` with RCH's direct `rusqlite 0.41.1`.
 The single native `libsqlite3-sys 0.39.1` bundles SQLite 3.54.1 and satisfies
 [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html)
 (CVE-2026-119375), whose patched range starts at native library 0.39.0.

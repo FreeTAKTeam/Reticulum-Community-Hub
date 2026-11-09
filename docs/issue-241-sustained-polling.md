@@ -172,7 +172,7 @@ imported. These checks establish bounded recovery in the tested paths; they do
 not reproduce or explain the original deployment's topology or memory growth.
 
 The current paired source baseline is LXMF-rs version `0.16.1` at immutable
-revision `8c27a200939495e7d412a92ee171329d0c458d28`. RCH dependency locks, matching
+revision `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`. RCH dependency locks, matching
 daemon workflow checkouts and runtime metadata use that revision. This is a
 source-built baseline; `release_tag` is null because no published release tag is
 asserted to identify this source. It includes the subsequent propagation budget
