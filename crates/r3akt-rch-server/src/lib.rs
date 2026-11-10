@@ -37,6 +37,9 @@
     )
 )]
 
+mod announce_capabilities;
+use announce_capabilities::decode_hex as decode_announce_capabilities_from_app_data_hex;
+
 mod attachment_io;
 mod attachment_persistence;
 mod auth;
@@ -7787,6 +7790,7 @@ fn runtime_diagnostics_payload(state: &AppState) -> Result<Value, ApiError> {
         "lxmf_sdk": lxmf_sdk_diagnostics_payload(state, &outbound_delivery)?,
         "reticulumd_inbound": reticulumd_inbound_worker_diagnostics(state),
         "announce_cache": announce_cache_diagnostics(state)?,
+        "announce_capability_parser": announce_capabilities::diagnostics(),
         "message_residency": message_residency::diagnostics(state)?,
         "persistence": persistence_diagnostics(&state)?,
         "mission_change_fanout_cache": mission_change_fanout_cache_diagnostics(&state)?,
@@ -9454,178 +9458,6 @@ fn announce_capability_list(state: &AppState) -> Vec<&'static str> {
     capabilities
 }
 
-fn decode_announce_capabilities_from_app_data_hex(app_data_hex: &str) -> Vec<String> {
-    let Some(bytes) = decode_hex_bytes(app_data_hex) else {
-        return Vec::new();
-    };
-    decode_announce_capabilities_from_app_data(&bytes)
-}
-
-fn decode_announce_capabilities_from_app_data(app_data: &[u8]) -> Vec<String> {
-    if let Ok(text) = std::str::from_utf8(app_data) {
-        let capabilities = normalize_capability_value(&Value::String(text.to_string()));
-        if !capabilities.is_empty() {
-            return capabilities;
-        }
-    }
-
-    if let Some(slots) = msgpack_top_level_array_slices(app_data)
-        && let Some(capabilities) = slots
-            .into_iter()
-            .skip(2)
-            .find_map(decode_announce_capability_slot_bytes)
-    {
-        return capabilities;
-    }
-
-    let Ok(decoded) = rmp_serde::from_slice::<Value>(app_data) else {
-        return Vec::new();
-    };
-    match decoded {
-        Value::String(_) | Value::Object(_) => normalize_capability_value(&decoded),
-        Value::Array(slots) => slots
-            .iter()
-            .skip(2)
-            .find_map(decode_announce_capability_slot)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
-}
-
-fn decode_announce_capability_slot_bytes(slot: &[u8]) -> Option<Vec<String>> {
-    if let Some(bytes) = msgpack_binary_or_string_bytes(slot) {
-        let decoded = rmp_serde::from_slice::<Value>(&bytes).ok()?;
-        let capabilities = normalize_capability_value(&decoded);
-        if !capabilities.is_empty() {
-            return Some(capabilities);
-        }
-    }
-    let decoded = rmp_serde::from_slice::<Value>(slot).ok()?;
-    let capabilities = normalize_capability_value(&decoded);
-    (!capabilities.is_empty()).then_some(capabilities)
-}
-
-fn decode_announce_capability_slot(slot: &Value) -> Option<Vec<String>> {
-    let direct = normalize_capability_value(slot);
-    if !direct.is_empty() {
-        return Some(direct);
-    }
-    let bytes = json_value_as_bytes(slot)?;
-    let decoded = rmp_serde::from_slice::<Value>(&bytes).ok()?;
-    let capabilities = normalize_capability_value(&decoded);
-    (!capabilities.is_empty()).then_some(capabilities)
-}
-
-fn msgpack_top_level_array_slices(bytes: &[u8]) -> Option<Vec<&[u8]>> {
-    let (count, mut offset) = msgpack_array_header(bytes, 0)?;
-    let mut slots = Vec::with_capacity(count);
-    for _ in 0..count {
-        let start = offset;
-        offset = msgpack_item_end(bytes, offset)?;
-        slots.push(&bytes[start..offset]);
-    }
-    (offset == bytes.len()).then_some(slots)
-}
-
-fn msgpack_array_header(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
-    let marker = *bytes.get(offset)?;
-    match marker {
-        0x90..=0x9f => Some(((marker & 0x0f) as usize, offset + 1)),
-        0xdc => Some((read_be_u16(bytes, offset + 1)? as usize, offset + 3)),
-        0xdd => Some((read_be_u32(bytes, offset + 1)? as usize, offset + 5)),
-        _ => None,
-    }
-}
-
-fn msgpack_item_end(bytes: &[u8], offset: usize) -> Option<usize> {
-    let marker = *bytes.get(offset)?;
-    match marker {
-        0x00..=0x7f | 0xc0 | 0xc2 | 0xc3 | 0xe0..=0xff => Some(offset + 1),
-        0xcc | 0xd0 => Some(offset + 2),
-        0xcd | 0xd1 => Some(offset + 3),
-        0xca | 0xce | 0xd2 => Some(offset + 5),
-        0xcb | 0xcf | 0xd3 => Some(offset + 9),
-        0xc4 | 0xd9 => msgpack_len_prefixed_end(bytes, offset, 1),
-        0xc5 | 0xda => msgpack_len_prefixed_end(bytes, offset, 2),
-        0xc6 | 0xdb => msgpack_len_prefixed_end(bytes, offset, 4),
-        0xa0..=0xbf => {
-            let len = (marker & 0x1f) as usize;
-            checked_slice_end(bytes, offset + 1, len)
-        }
-        0x90..=0x9f => {
-            let count = (marker & 0x0f) as usize;
-            msgpack_sequence_end(bytes, offset + 1, count)
-        }
-        0xdc => {
-            let count = read_be_u16(bytes, offset + 1)? as usize;
-            msgpack_sequence_end(bytes, offset + 3, count)
-        }
-        0xdd => {
-            let count = read_be_u32(bytes, offset + 1)? as usize;
-            msgpack_sequence_end(bytes, offset + 5, count)
-        }
-        0x80..=0x8f => {
-            let count = ((marker & 0x0f) as usize) * 2;
-            msgpack_sequence_end(bytes, offset + 1, count)
-        }
-        0xde => {
-            let count = read_be_u16(bytes, offset + 1)? as usize * 2;
-            msgpack_sequence_end(bytes, offset + 3, count)
-        }
-        0xdf => {
-            let count = read_be_u32(bytes, offset + 1)? as usize * 2;
-            msgpack_sequence_end(bytes, offset + 5, count)
-        }
-        _ => None,
-    }
-}
-
-fn msgpack_sequence_end(bytes: &[u8], mut offset: usize, count: usize) -> Option<usize> {
-    for _ in 0..count {
-        offset = msgpack_item_end(bytes, offset)?;
-    }
-    Some(offset)
-}
-
-fn msgpack_len_prefixed_end(bytes: &[u8], offset: usize, len_bytes: usize) -> Option<usize> {
-    let payload_offset = offset + 1 + len_bytes;
-    let len = match len_bytes {
-        1 => *bytes.get(offset + 1)? as usize,
-        2 => read_be_u16(bytes, offset + 1)? as usize,
-        4 => read_be_u32(bytes, offset + 1)? as usize,
-        _ => return None,
-    };
-    checked_slice_end(bytes, payload_offset, len)
-}
-
-fn checked_slice_end(bytes: &[u8], offset: usize, len: usize) -> Option<usize> {
-    let end = offset.checked_add(len)?;
-    (end <= bytes.len()).then_some(end)
-}
-
-fn msgpack_binary_or_string_bytes(slot: &[u8]) -> Option<Vec<u8>> {
-    let marker = *slot.first()?;
-    let (payload_offset, len) = match marker {
-        0xa0..=0xbf => (1, (marker & 0x1f) as usize),
-        0xc4 | 0xd9 => (2, *slot.get(1)? as usize),
-        0xc5 | 0xda => (3, read_be_u16(slot, 1)? as usize),
-        0xc6 | 0xdb => (5, read_be_u32(slot, 1)? as usize),
-        _ => return None,
-    };
-    let end = checked_slice_end(slot, payload_offset, len)?;
-    Some(slot[payload_offset..end].to_vec())
-}
-
-fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
-    let slice = bytes.get(offset..offset + 2)?;
-    Some(u16::from_be_bytes([slice[0], slice[1]]))
-}
-
-fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    let slice = bytes.get(offset..offset + 4)?;
-    Some(u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
-}
-
 fn normalize_capability_value(value: &Value) -> Vec<String> {
     match value {
         Value::String(text) => {
@@ -9657,42 +9489,6 @@ where
         }
     }
     normalized
-}
-
-fn json_value_as_bytes(value: &Value) -> Option<Vec<u8>> {
-    if let Some(text) = value.as_str() {
-        return Some(text.as_bytes().to_vec());
-    }
-    value.as_array().map(|items| {
-        items
-            .iter()
-            .filter_map(|item| item.as_u64().and_then(|byte| u8::try_from(byte).ok()))
-            .collect()
-    })
-}
-
-fn decode_hex_bytes(raw_hex: &str) -> Option<Vec<u8>> {
-    let text = raw_hex.trim();
-    if text.is_empty() || !text.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(text.len() / 2);
-    let chars = text.as_bytes();
-    for pair in chars.as_chunks::<2>().0 {
-        let high = hex_value(pair[0])?;
-        let low = hex_value(pair[1])?;
-        bytes.push((high << 4) | low);
-    }
-    Some(bytes)
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 async fn kill_switch_status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
