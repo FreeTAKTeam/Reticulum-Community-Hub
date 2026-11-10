@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.37 Linux AMD64 testing candidate
+
+Preview.37 includes fixes merged through `6aa061ffae10c235885b20129c6049e994dca8ef` and pairs RCH with LXMF-rs SDK and daemon source `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`. See [the preview.37 notes](release-notes-v3.0.0-preview.37.md). Package and runtime qualification is pending until performed; real-peer, physical-radio, sustained-load, deployment, and systemd PID 1 acceptance remain separate gates.
+
 ## Preview.36 latest daemon Linux AMD64 release
 
 Preview.36 pairs the RCH server with LXMF-rs SDK and daemon `0.16.1-rc.1-linux` at immutable source `213af2d8048ded5ff38f67ca8c0b4cc143d19ada`. See [the preview.36 notes](release-notes-v3.0.0-preview.36.md). Release qualification is pending until performed; real-peer, physical-radio, sustained-load, deployment, and systemd PID 1 acceptance remain separate gates.
