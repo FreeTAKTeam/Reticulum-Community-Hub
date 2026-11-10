@@ -3,12 +3,42 @@
 use crate::sensor::{OriginPosition, POSITION_SKEW_MS, SensorState};
 use serde_json::{Value, json};
 
-const EARTH_RADIUS_M: f64 = 6_371_008.8;
+pub(crate) const EARTH_RADIUS_M: f64 = 6_371_008.8;
 const MAX_STEPS: u32 = 72;
 
-fn destination(origin: &OriginPosition, bearing: f64, distance: f64) -> [f64; 2] {
-    let lat = origin.lat.to_radians();
-    let lon = origin.lon.to_radians();
+/// Great-circle destination for a true bearing and distance in metres.
+/// The returned longitude is normalized to [-180, 180].
+///
+/// # Errors
+/// Rejects non-finite bearings and distances outside the shortest half-circle.
+pub fn destination(
+    origin: crate::Position,
+    bearing_deg: f64,
+    distance_m: f64,
+) -> Result<crate::Position, &'static str> {
+    if !bearing_deg.is_finite()
+        || !distance_m.is_finite()
+        || !(0.0..=std::f64::consts::PI * EARTH_RADIUS_M).contains(&distance_m)
+    {
+        return Err("invalid bearing or distance");
+    }
+    if distance_m == 0.0 {
+        return Ok(origin);
+    }
+    let [lon, lat] = destination_unwrapped(
+        origin.lat(),
+        origin.lon(),
+        bearing_deg.rem_euclid(360.0),
+        distance_m,
+    );
+    crate::Position::new(lat, (lon + 180.0).rem_euclid(360.0) - 180.0)
+        .map_err(|_| "invalid destination")
+}
+
+fn destination_unwrapped(lat: f64, lon: f64, bearing: f64, distance: f64) -> [f64; 2] {
+    let origin_lon = lon;
+    let lat = lat.to_radians();
+    let lon = lon.to_radians();
     let bearing = bearing.to_radians();
     let arc = distance / EARTH_RADIUS_M;
     let target_lat = (lat.sin() * arc.cos() + lat.cos() * arc.sin() * bearing.cos())
@@ -17,10 +47,10 @@ fn destination(origin: &OriginPosition, bearing: f64, distance: f64) -> [f64; 2]
     let target_lon = lon
         + (bearing.sin() * arc.sin() * lat.cos()).atan2(arc.cos() - lat.sin() * target_lat.sin());
     let mut lon = target_lon.to_degrees();
-    while lon - origin.lon > 180.0 {
+    while lon - origin_lon > 180.0 {
         lon -= 360.0;
     }
-    while lon - origin.lon < -180.0 {
+    while lon - origin_lon < -180.0 {
         lon += 360.0;
     }
     [lon, target_lat.to_degrees()]
@@ -113,8 +143,9 @@ pub fn project(
                     .unwrap_or(MAX_STEPS);
                 let mut ring = vec![[position.lon, position.lat]];
                 for step in 0..=steps {
-                    ring.push(destination(
-                        position,
+                    ring.push(destination_unwrapped(
+                        position.lat,
+                        position.lon,
                         azimuth - fov / 2.0 + fov * f64::from(step) / f64::from(steps),
                         ground,
                     ));
@@ -123,7 +154,7 @@ pub fn project(
                 features.push(
                     json!({"type":"Feature","properties":properties,"geometry":polygon(&ring)}),
                 );
-                let end = destination(position, azimuth, ground);
+                let end = destination_unwrapped(position.lat, position.lon, azimuth, ground);
                 // Split arrows that cross the antimeridian as well as sector polygons.
                 let line = clip_line([position.lon, position.lat], end);
                 features.push(json!({"type":"Feature","properties":properties,"geometry":line}));

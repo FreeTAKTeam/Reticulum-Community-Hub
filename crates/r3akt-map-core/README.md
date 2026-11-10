@@ -138,6 +138,48 @@ receiver and Columba Kotlin stream decoder against
 `tests/fixtures/marker_stream.json`. This is source-level interoperability,
 not Android or radio validation.
 
+## Camera ground-point estimates
+
+`camera_ground::ground_point` intersects a camera ray with an explicitly
+chosen horizontal plane. `SensorState.azimuth_deg` is absolute true bearing,
+not aircraft course; negative `elevation_deg` points below the horizon. An
+optional `ImageOffset` uses half-image widths/heights, with positive x right
+and y down, and carries the frame's capture time. Off-centre projection uses
+a centered, undistorted pinhole model
+and requires both fields of view, optical-axis roll, and explicit bounds on
+roll and pixel/lens/frame-timing error. Positive roll turns image right toward
+image down.
+Adapters must convert their camera's orientation and image conventions.
+
+`GroundModel::Flat` requires the origin altitude and ground height to share
+the same known R3S datum. For AGL the ground height is zero. Alternatively,
+`GroundModel::TakeoffRelative` explicitly supplies both heights relative to
+the same take-off point without changing the R3S wire datum; its origin height
+must be sampled at `OriginPosition.fix_at_ms`. The caller must
+choose a height and a height-error bound that apply across the target area;
+the function does not look up terrain or assume take-off elevation is flat.
+
+The caller supplies bounds for horizontal position (`OriginPosition.accuracy_m`),
+altitude, camera angles, and maximum 3D platform speed during any pose/fix
+skew. These are absolute error bounds, not standard deviations. Limits specify
+the current time, maximum sample age, minimum ray depression and maximum slant
+range. Future, stale or more than two seconds out-of-sync position, pose or
+frame samples are refused. The pixel angular-error bound must include camera
+motion between the frame and pose times; timestamps alone do not measure it.
+The limits apply to the uncertainty envelope as well as the nominal ray.
+Missing calibration/accuracy, unknown or mismatched datums, non-positive
+height, and unbounded horizon or polar cases also return a typed error.
+
+The output includes the ground model, coordinate, ground/slant ranges, and a
+conditional horizontal uncertainty radius. This radius is not CEP or a
+confidence level: it holds only if the supplied bounds and flat-plane model
+hold. It excludes Earth-curvature effects on the intersection, terrain or
+obstacles outside the supplied height bound, unbounded lens distortion, and
+unmodeled motion. `sensor_geometry::destination` exposes the existing
+mean-radius spherical great-circle destination calculation with a normalized
+longitude. Hardware camera calibration and field accuracy have not been
+qualified by these tests.
+
 ## Compatibility fixtures and tests
 
 ```sh

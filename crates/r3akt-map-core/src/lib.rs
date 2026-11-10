@@ -23,6 +23,7 @@
 //! (markers) are separate models and are never conflated.
 
 pub mod bytes;
+pub mod camera_ground;
 pub mod idempotency;
 pub mod marker;
 pub mod marker_wire;
