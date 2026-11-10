@@ -219,7 +219,7 @@ pub fn decode_packed(bytes: &[u8]) -> Result<Option<Vec<SensorState>>, &'static 
     value.get("128").map(decode_value).transpose()
 }
 
-/// Adds SID 128 while preserving the original standard sensor values.
+/// Adds SID 128 while preserving the original standard sensor values; no sensors means no SID 128.
 /// # Errors
 /// Rejects invalid standard location data or invalid geometry.
 pub fn encode_packed(
@@ -248,6 +248,9 @@ pub fn encode_packed(
         .transpose()?
         .flatten();
     let standard = crate::telemetry_encode::encode(timestamp_s, location, None)?;
+    if sensors.is_empty() {
+        return Ok(standard);
+    }
     // Preserve binary SID 2 slots: JSON conversion would change them into numeric arrays.
     let extension =
         rmp_serde::to_vec(&encode_value(sensors)?).map_err(|_| "sensor encoding failed")?;
@@ -299,23 +302,19 @@ pub fn validate_position_against_packed(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct Binary<'a>(#[serde(with = "binary")] &'a [u8]);
-mod binary {
-    use serde::Serializer;
-    pub fn serialize<S: Serializer>(v: &&[u8], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_bytes(v)
+struct Binary(Vec<u8>);
+impl Serialize for Binary {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(&self.0)
     }
 }
+type StreamEntry = (Binary, u64, Binary, (&'static str, Binary, Binary));
 
-/// Field-3 origin identity stays distinct from the authenticated LXMF sender.
-/// # Errors
-/// Rejects invalid origin identity, source time, location or geometry.
-pub fn encode_origin_sensor_stream(
+fn origin_stream(
     origin_id: &str,
     position: Option<&OriginPosition>,
     sensors: &[SensorState],
-) -> Result<Vec<u8>, &'static str> {
+) -> Result<Vec<StreamEntry>, &'static str> {
     let id =
         crate::marker::object_destination_hash(origin_id).map_err(|_| "invalid sensor origin")?;
     let hash = (0..32)
@@ -326,17 +325,74 @@ pub fn encode_origin_sensor_stream(
     let time = sensors
         .iter()
         .map(|s| s.sample_at_ms)
+        .chain(position.map(|p| p.fix_at_ms))
         .max()
-        .ok_or("missing sensors")?
-        .max(position.map_or(0, |p| p.fix_at_ms));
+        .ok_or("missing source state")?;
     let packed = encode_packed(time / 1000, position, sensors)?;
-    rmp_serde::to_vec(&vec![(
-        Binary(&hash),
+    Ok(vec![(
+        Binary(hash),
         time / 1000,
-        Binary(&packed),
-        ("camera", Binary(&[255, 255, 255]), Binary(&[48, 96, 160])),
+        Binary(packed),
+        (
+            "camera",
+            Binary(vec![255, 255, 255]),
+            Binary(vec![48, 96, 160]),
+        ),
     )])
-    .map_err(|_| "origin stream encoding failed")
+}
+
+/// Field-3 origin identity stays distinct from the authenticated LXMF sender.
+/// # Errors
+/// Rejects invalid origin identity, source time, location or geometry.
+pub fn encode_origin_sensor_stream(
+    origin_id: &str,
+    position: Option<&OriginPosition>,
+    sensors: &[SensorState],
+) -> Result<Vec<u8>, &'static str> {
+    rmp_serde::to_vec(&origin_stream(origin_id, position, sensors)?)
+        .map_err(|_| "origin stream encoding failed")
+}
+
+/// Complete LXMF fields map for one object update: field 3 (object stream),
+/// field 11 (team, which lets RCH relay the update to REM) and field 13 (origin fix).
+/// A position with no sensor readings is valid. Validated with the hub's receive rules.
+/// # Errors
+/// Rejects invalid origin identity, an empty team, a missing position and sensors,
+/// or anything `sensor_frame::decode` would reject.
+pub fn encode_object_fields(
+    origin_id: &str,
+    position: Option<&OriginPosition>,
+    sensors: &[SensorState],
+    team: Option<&str>,
+) -> Result<Vec<u8>, &'static str> {
+    use serde::ser::{SerializeMap, Serializer};
+    let id =
+        crate::marker::object_destination_hash(origin_id).map_err(|_| "invalid sensor origin")?;
+    if team.is_some_and(|t| t.trim().is_empty()) {
+        return Err("invalid team");
+    }
+    let stream = origin_stream(&id, position, sensors)?;
+    let fix = position.map(|p| {
+        json!([SensorEvent::OriginFix(OriginFixEvent {
+            origin_id: id.clone(),
+            position: p.clone(),
+        })])
+    });
+    let mut bytes = Vec::new();
+    let mut serializer = rmp_serde::Serializer::new(&mut bytes);
+    let len = 1 + usize::from(team.is_some()) + usize::from(fix.is_some());
+    let encode = |_| "object fields encoding failed";
+    let mut map = (&mut serializer).serialize_map(Some(len)).map_err(encode)?;
+    map.serialize_entry(&3_u8, &stream).map_err(encode)?;
+    if let Some(team) = team {
+        map.serialize_entry(&11_u8, team).map_err(encode)?;
+    }
+    if let Some(fix) = &fix {
+        map.serialize_entry(&13_u8, fix).map_err(encode)?;
+    }
+    map.end().map_err(encode)?;
+    crate::sensor_frame::decode(&bytes, &id)?;
+    Ok(bytes)
 }
 
 /// Materializes every accepted sensor while preserving unchanged packets and unknown SID bytes.

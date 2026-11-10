@@ -70,6 +70,19 @@ fn authenticated_origin_moves_without_mutating_sender_and_cascades_on_delete() {
         vec![marker.object_destination_hash.clone()]
     );
     unit.commit().unwrap();
+    // #308: the public client encoder's position-only update is accepted and moves the marker.
+    let mut flown = position(now + 500);
+    flown.lon += 0.01;
+    let id = &marker.object_destination_hash;
+    let update = wire::encode_object_fields(id, Some(&flown), &[], Some("Blue")).unwrap();
+    let mut unit = store.begin_r3akt_command().unwrap();
+    let update = r3akt_map_core::msgpack::to_json(&update).unwrap();
+    assert_eq!(
+        unit.stage_sensor_frame(&writer, &update, now + 500)
+            .unwrap(),
+        vec![id.clone()]
+    );
+    assert_eq!(unit.commit_delta().unwrap().after.markers[0].lon, flown.lon);
     let mut moved = position(now + 1000);
     moved.lat += 0.01;
     let mut unit = store.begin_r3akt_command().unwrap();
