@@ -17,6 +17,7 @@ use thiserror::Error;
 
 mod commands;
 mod fields;
+pub mod teams;
 pub use commands::{encode_commands, encode_commands_for_team};
 pub use fields::{FIELD_COMMANDS, FIELD_EVENT, FIELD_GROUP, FIELD_RESULTS};
 const MECP_PREFIX: &str = "MECP/";

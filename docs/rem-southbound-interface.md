@@ -269,5 +269,13 @@ requested TEAM. In Connected mode, RCH fanout is restricted to the validated
 TEAM's durable REM destinations. Commands without `FIELD_GROUP` remain accepted
 for compatibility with older REM clients.
 
+Clients can use `r3akt_profile_rch::teams` to look up colors and UIDs or check
+`is_canonical_team_uid` before sending. UID checks require an exact lowercase
+wire value; color lookup accepts surrounding whitespace and ignores ASCII case.
+The hub uses the same table. A team upsert with only a canonical `color` now
+uses that color's canonical UID; a noncanonical explicit UID or a named custom
+team remains distinct. Existing teams with previously generated UIDs are not
+migrated.
+
 `rem.registry.peers.list` remains available as the legacy unscoped REM registry
 command, and `GET /api/rem/peers` remains the operator-facing HTTP registry.
