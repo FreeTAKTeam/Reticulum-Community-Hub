@@ -1,6 +1,10 @@
 //! Optional announce capability metadata is untrusted, including embedded `MessagePack`.
 use super::{Value, normalize_capability_value};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    LazyLock,
+    atomic::{AtomicU64, Ordering},
+};
+use std::time::Instant;
 
 mod msgpack;
 #[cfg(test)]
@@ -9,7 +13,38 @@ mod tests;
 const MAX_APP_DATA_BYTES: usize = 16 * 1024;
 const MAX_DEPTH: usize = 32;
 const MAX_ITEMS: usize = 4096;
-static REJECTED: AtomicU64 = AtomicU64::new(0);
+const LOG_INTERVAL_SECONDS: u64 = 60;
+static LOG_START: LazyLock<Instant> = LazyLock::new(Instant::now);
+static REJECTIONS: Rejections = Rejections {
+    total: AtomicU64::new(0),
+    next_log_second: AtomicU64::new(0),
+};
+
+#[derive(Default)]
+struct Rejections {
+    total: AtomicU64,
+    next_log_second: AtomicU64,
+}
+
+impl Rejections {
+    fn record_at(&self, now_seconds: u64) -> Option<u64> {
+        let total = self.total.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+        // Monotonic time, independent of the lifetime count. Only one concurrent
+        // caller can claim a log window, including the first rejection at time zero.
+        let next = self.next_log_second.load(Ordering::Relaxed);
+        (now_seconds >= next
+            && self
+                .next_log_second
+                .compare_exchange(
+                    next,
+                    now_seconds.saturating_add(LOG_INTERVAL_SECONDS),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok())
+        .then_some(total)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 enum DecodeError {
@@ -29,26 +64,28 @@ enum DecodeError {
 
 pub(super) fn diagnostics() -> Value {
     serde_json::json!({
-        "rejected_total": REJECTED.load(Ordering::Relaxed),
+        "rejected_total": REJECTIONS.total.load(Ordering::Relaxed),
+        "rejected_total_scope": "failed_app_data_decode_calls",
+        "log_interval_seconds": LOG_INTERVAL_SECONDS,
         "max_app_data_bytes": MAX_APP_DATA_BYTES,
         "max_depth": MAX_DEPTH,
         "max_items": MAX_ITEMS,
     })
 }
 
-fn rejected(error: DecodeError) {
-    let count = REJECTED.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-    // A replayed bad record must not turn into an unbounded journal flood.
-    if count.is_power_of_two() {
-        eprintln!("announce capability metadata rejected: {error}; rejected_total={count}");
-    }
+pub(super) fn decode_hex(raw_hex: &str) -> Vec<String> {
+    decode_hex_with_rejections(raw_hex, &REJECTIONS)
 }
 
-pub(super) fn decode_hex(raw_hex: &str) -> Vec<String> {
+fn decode_hex_with_rejections(raw_hex: &str, rejections: &Rejections) -> Vec<String> {
     match decode_hex_result(raw_hex) {
         Ok(capabilities) => capabilities,
         Err(error) => {
-            rejected(error);
+            // Count one failed decode call, never individual optional slots or
+            // unique peers/attacks. The containing announce is still ingested.
+            if let Some(count) = rejections.record_at(LOG_START.elapsed().as_secs()) {
+                eprintln!("announce capability decoding failed: {error}; rejected_total={count}");
+            }
             Vec::new()
         }
     }
@@ -102,8 +139,9 @@ fn decode(bytes: &[u8]) -> Result<Vec<String>, DecodeError> {
         for slot in slots.into_iter().skip(2) {
             match decode_slot(slot) {
                 Ok(capabilities) if !capabilities.is_empty() => return Ok(capabilities),
-                Ok(_) => {}
-                Err(error) => rejected(error),
+                // Other clients may put opaque non-capability bytes in these
+                // slots. Failed capability probes are expected, not rejections.
+                Ok(_) | Err(_) => {}
             }
         }
         return Ok(Vec::new());
@@ -113,7 +151,8 @@ fn decode(bytes: &[u8]) -> Result<Vec<String>, DecodeError> {
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value, DecodeError> {
-    // Every serde decode, including embedded values, crosses this same boundary.
+    // Embedded documents need their own budgets; outer slots are already checked
+    // by array_items and can be deserialized directly in decode_slot.
     msgpack::validate(bytes)?;
     rmp_serde::from_slice(bytes).map_err(|_| DecodeError::Value)
 }
@@ -132,7 +171,7 @@ fn decode_slot(slot: &[u8]) -> Result<Vec<String>, DecodeError> {
             Err(_) => {}
         }
     }
-    let value = decode_value(slot)?;
+    let value: Value = rmp_serde::from_slice(slot).map_err(|_| DecodeError::Value)?;
     let caps = normalize_capability_value(&value);
     if !caps.is_empty() {
         return Ok(caps);

@@ -118,6 +118,10 @@ pub(super) fn validate(bytes: &[u8]) -> Result<(), DecodeError> {
 }
 
 pub(super) fn array_items(bytes: &[u8]) -> Result<Option<Vec<&[u8]>>, DecodeError> {
+    if !matches!(bytes.first(), Some(0x90..=0x9f | 0xdc | 0xdd)) {
+        // Non-array documents are validated by decode_value, once.
+        return Ok(None);
+    }
     validate(bytes)?;
     let mut cursor = Cursor::new(bytes);
     let count = match cursor.take(1)?[0] {
@@ -135,8 +139,8 @@ pub(super) fn array_items(bytes: &[u8]) -> Result<Option<Vec<&[u8]>>, DecodeErro
     Ok(Some(slots))
 }
 
+// Called only for complete slots already validated by array_items.
 pub(super) fn byte_payload(bytes: &[u8]) -> Result<Option<(&[u8], bool)>, DecodeError> {
-    validate(bytes)?;
     let mut cursor = Cursor::new(bytes);
     let marker = cursor.take(1)?[0];
     let (len, binary) = match marker {

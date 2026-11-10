@@ -20,7 +20,7 @@
 - Max app-data 16 KiB, nesting 32 and total MessagePack items 4096. Bounds apply before allocation/serde decoding, including embedded binary/string and byte-array capability slots.
 - Parse lengths/counts with checked arithmetic and validate fixed-width primitive payloads, containers and exact document end; structural walk allocates no input-sized collection.
 - Preserve existing plain UTF-8, direct maps/strings, REM array and embedded MessagePack capability formats.
-- Reject bad optional capabilities without rejecting the whole announce/page; expose an aggregate rejection count and exponentially rate-limited payload-free reason logs.
+- Reject bad optional capabilities without rejecting the whole announce/page. Following PR review, count only failed outer decode calls; opaque optional-slot probes do not increment the counter. Emit payload-free failure logs at most once per 60 seconds of monotonic time.
 - Keep the production records private. Committed tests use sanitized equivalent headers and benign sentinel data.
 
 ## Tasks

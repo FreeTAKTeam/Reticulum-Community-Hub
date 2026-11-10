@@ -1,5 +1,7 @@
 # Issue 307 parser repair and deployment evidence
 
+This records the initial deployed hotfix. Subsequent PR changes and their deployment boundary are documented in [the review follow-up](REVIEW.md).
+
 ## Scope and artifact
 
 The server hotfix was built from commit `8e28f164188399eb8260622a9f442b417746624b`, based on the deployed `v3.0.0-preview.36` commit `719c9dbc9ebad0790488a1e3b2dc387caea23156`. The LXMF dependency remains `213af2d8048ded5ff38f67ca8c0b4cc143d19ada`. The patch changes announcement capability parsing and its diagnostics/tests; it does not change database schemas, the daemon, UI, identities or configuration.

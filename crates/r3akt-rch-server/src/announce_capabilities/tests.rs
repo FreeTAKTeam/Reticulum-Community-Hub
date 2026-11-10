@@ -182,3 +182,74 @@ fn arbitrary_short_headers_never_panic() {
         }
     }
 }
+
+#[test]
+fn opaque_optional_slots_do_not_count_as_failed_announces() {
+    let rejections = Rejections::default();
+    let opaque = [0xdd, 0x41, 0xdc, 0xc1, 0x48];
+    let mut array = vec![0x94, 0xc0, 0xc0];
+    array.extend(binary_slot(&opaque));
+    array.extend(rmp_serde::to_vec(&opaque.to_vec()).unwrap());
+    assert!(decode_hex_with_rejections(&hex(&array), &rejections).is_empty());
+    assert_eq!(rejections.total.load(Ordering::Relaxed), 0);
+
+    // Several unrelated slots before real capabilities must remain a success.
+    array[0] = 0x95;
+    array.extend(rmp_serde::to_vec_named(&json!({"caps": ["r3akt"]})).unwrap());
+    assert_eq!(
+        decode_hex_with_rejections(&hex(&array), &rejections),
+        vec!["r3akt"]
+    );
+    assert_eq!(rejections.total.load(Ordering::Relaxed), 0);
+
+    // A malformed outer document counts once, regardless of its slot contents.
+    array.push(0xc0);
+    for (index, input) in [hex(&array), hex(&opaque), "zz".to_owned()]
+        .iter()
+        .enumerate()
+    {
+        assert!(decode_hex_with_rejections(input, &rejections).is_empty());
+        assert_eq!(rejections.total.load(Ordering::Relaxed), (index + 1) as u64);
+    }
+}
+
+#[test]
+fn rejection_logging_resumes_by_time_even_after_large_counts_or_idle_periods() {
+    let rejections = Rejections::default();
+    assert_eq!(rejections.record_at(0), Some(1));
+    for _ in 0..100 {
+        assert_eq!(rejections.record_at(0), None);
+    }
+    assert_eq!(rejections.record_at(LOG_INTERVAL_SECONDS - 1), None);
+    assert_eq!(rejections.record_at(LOG_INTERVAL_SECONDS), Some(103));
+    rejections.total.store(1_000_000, Ordering::Relaxed);
+    assert_eq!(rejections.record_at(86_400), Some(1_000_001));
+    assert_eq!(rejections.record_at(86_400), None);
+    assert_eq!(
+        rejections.record_at(86_400 + LOG_INTERVAL_SECONDS),
+        Some(1_000_003)
+    );
+}
+
+#[test]
+fn concurrent_rejections_share_one_log_window_without_losing_counts() {
+    let rejections = Rejections::default();
+    let barrier = std::sync::Barrier::new(16);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    rejections.record_at(100).is_some()
+                })
+            })
+            .collect();
+        let logged = handles
+            .into_iter()
+            .map(|handle| usize::from(handle.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(logged, 1);
+    });
+    assert_eq!(rejections.total.load(Ordering::Relaxed), 16);
+    assert_eq!(rejections.record_at(100 + LOG_INTERVAL_SECONDS), Some(17));
+}
