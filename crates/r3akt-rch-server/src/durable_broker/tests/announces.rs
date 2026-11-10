@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn zmq_announce_sweeps_import_more_than_32_peers_and_replay_after_restart() {
+fn zmq_announce_sweeps_skip_malformed_capabilities_and_replay_after_restart() {
     let dir = std::env::temp_dir().join(format!("rch-announce-sweep-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let daemon_path = dir.join("daemon.db");
@@ -12,7 +12,8 @@ fn zmq_announce_sweeps_import_more_than_32_peers_and_replay_after_restart() {
                 "id": format!("announce-{i:04}"), "peer": format!("{i:032x}"),
                 "timestamp": 1000+i, "name": format!("peer-{i}"),
                 "name_source":"announce", "first_seen":1000, "seen_count":1,
-                "capabilities":["group_chat"]
+                "capabilities": if [1, 32, 33, 64, 75].contains(&i) { json!([]) } else { json!(["group_chat"]) },
+                "app_data_hex": if [1, 32, 33, 64, 75].contains(&i) { Some("dd41dcc148") } else { None }
             }))
             .unwrap();
             store.insert_announce(&record).unwrap();
@@ -36,6 +37,16 @@ fn zmq_announce_sweeps_import_more_than_32_peers_and_replay_after_restart() {
             })
             .unwrap();
         assert_eq!(count, 75);
+        let payload: Vec<u8> = conn
+            .query_row(
+                "SELECT payload FROM rch_identity_announces WHERE destination_hash=?1",
+                [format!("{:032x}", 74)],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let record: r3akt_rch_core::IdentityAnnounceRecord =
+            rmp_serde::from_slice(&payload).unwrap();
+        assert_eq!(record.announce_capabilities, vec!["group_chat"]);
         let oldest: i64 = conn
             .query_row(
                 "SELECT last_seen_ts_ms FROM rch_identity_announces WHERE destination_hash=?1",
