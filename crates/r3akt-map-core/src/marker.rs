@@ -203,6 +203,7 @@ impl MarkerRecord {
     }
 
     /// The RCH marker API representation (`/api/markers`, mission events).
+    /// Markers have no stored expiry, so no `stale_at` is emitted.
     #[must_use]
     pub fn api_value(&self) -> Value {
         let updated_at = iso8601_from_unix_ms(self.updated_ts_ms);
@@ -216,7 +217,6 @@ impl MarkerRecord {
             "notes": self.notes,
             "position": { "lat": self.lat, "lon": self.lon },
             "time": updated_at,
-            "stale_at": updated_at,
             "created_at": iso8601_from_unix_ms(self.created_ts_ms),
             "updated_at": updated_at,
         })

@@ -117,11 +117,15 @@ RCH to REM: every replica arrives in `FIELD_EVENT` (`0x0D`) as
     "payload": { "object_destination_hash": "...", "type": "fire", "symbol": "fire",
                  "name": "Ridge", "category": "incident", "notes": null,
                  "position": { "lat": 44.5, "lon": -1.25 }, "origin_rch": "...",
-                 "created_at": "...", "updated_at": "...", "time": "...", "stale_at": "..." },
+                 "created_at": "...", "updated_at": "...", "time": "..." },
     "source": { "rns_identity": "<rch identity>" }
   }
 }
 ```
+
+RCH does not store marker expiry, so marker API responses, activity telemetry,
+and replicas omit `stale_at`. The HTTP `ttl_seconds` input is currently accepted
+but does not set an expiry.
 
 `event_type` is `mission.marker.created`, `mission.marker.updated`,
 `mission.marker.position.updated` or `mission.marker.deleted`. Relayed REM

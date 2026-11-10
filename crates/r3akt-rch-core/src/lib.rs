@@ -13641,7 +13641,7 @@ mod tests {
         assert!(created_result["created_at"].as_str().is_some());
         assert!(created_result["updated_at"].as_str().is_some());
         assert_eq!(created_result["time"], created_result["updated_at"]);
-        assert_eq!(created_result["stale_at"], created_result["updated_at"]);
+        assert!(created_result.get("stale_at").is_none());
         assert_eq!(
             created[1].event_field().expect("event")["event_type"],
             "mission.marker.created"
