@@ -29,6 +29,11 @@ Both methods require the configured northbound API credential and SQLite persist
 
 `GET /Sensors` returns `{items, observedAtMs, ttlMs}`. Items contain `originId`, `writerId`, `originKind`, `label`, nullable `position`, and sorted sensors with `state`, optional `manifest`, optional `sourceExpiresAtMs` and native `display` flags/GeoJSON. RCH's `sensor_telemetry_ttl_ms` setting defaults to 300,000 ms and is clamped to 1,000–86,400,000 ms. Missing, stale or unsynchronized moving fixes suppress precise sectors; pose/fix skew is limited to two seconds. Near-nadir samples do not draw a misleading direction. Sectors are planar display extents, without terrain intersection.
 
+The shared crate also offers an explicit flat-ground camera-point estimate;
+its calibration, uncertainty and refusal contract is documented in the
+[`r3akt-map-core` README](../crates/r3akt-map-core/README.md#camera-ground-point-estimates).
+It is separate from these display sectors and is not a terrain lookup.
+
 `POST /Sensors` is the explicit operator/TAK boundary for an existing marker:
 
 ```json
