@@ -14898,7 +14898,6 @@ fn marker_event_payload(event_type: &str, marker: &MarkerRecord) -> Value {
         "position": {"lat": marker.lat, "lon": marker.lon},
         "origin_rch": marker.origin_rch,
         "time": time,
-        "stale_at": time,
         "timestamp": iso8601_from_unix_ms(marker.updated_ts_ms),
     });
     if event_type == "marker.created" {
@@ -14944,7 +14943,6 @@ fn marker_telemetry_payload(event_type: &str, marker: &MarkerRecord) -> Value {
                 "origin_rch": marker.origin_rch,
                 "position": {"lat": marker.lat, "lon": marker.lon},
                 "time": iso8601_from_unix_ms(marker.updated_ts_ms),
-                "stale_at": iso8601_from_unix_ms(marker.updated_ts_ms),
                 "notes": marker.notes,
             }
         }
@@ -26655,6 +26653,7 @@ mod tests {
         assert_eq!(payload[0]["object_destination_hash"], marker_id);
         assert_eq!(payload[0]["name"], "Alpha");
         assert_eq!(payload[0]["position"], json!({"lat": 45.1, "lon": -63.2}));
+        assert!(payload[0].get("stale_at").is_none());
 
         let alias_created = app
             .clone()
@@ -26768,6 +26767,7 @@ mod tests {
             .find(|entry| entry["object_destination_hash"] == marker_id)
             .expect("persisted marker");
         assert_eq!(persisted_marker["name"], "Bravo");
+        assert!(persisted_marker.get("stale_at").is_none());
         assert_eq!(
             persisted_marker["position"],
             json!({"lat": 46.0, "lon": -64.0})
@@ -26826,6 +26826,13 @@ mod tests {
         assert!(event_types.contains(&"marker_updated"));
         assert!(event_types.contains(&"marker_deleted"));
         assert!(event_types.contains(&"marker_telemetry_recorded"));
+        let marker_events = payload.as_array().expect("events").iter().filter(|event| {
+            ["marker_created", "marker_updated", "marker_deleted"]
+                .contains(&event["type"].as_str().unwrap_or_default())
+        });
+        for event in marker_events {
+            assert!(event["metadata"].get("stale_at").is_none());
+        }
 
         let telemetry = restarted
             .oneshot(
@@ -26856,6 +26863,9 @@ mod tests {
             entry["peer_destination"] == marker_id
                 && entry["telemetry"]["custom"]["metadata"]["event_type"] == "marker.deleted"
                 && entry["telemetry"]["location"]["latitude"] == 46.0
+                && entry["telemetry"]["custom"]["metadata"]
+                    .get("stale_at")
+                    .is_none()
         }));
 
         let snapshot = RchSqliteStore::open(&db_path)

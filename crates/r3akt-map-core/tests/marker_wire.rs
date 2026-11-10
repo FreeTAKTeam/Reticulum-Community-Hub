@@ -43,6 +43,7 @@ fn marker_stream_and_replica_identify_the_object_not_the_sender() {
     let decoded = telemetry::decode_field(&entry[2]).unwrap();
     assert_eq!(decoded.telemetry["location"]["latitude"], 44.5);
     assert_eq!(decoded.telemetry["location"]["longitude"], -1.25);
+    assert!(fields["13"]["payload"].get("stale_at").is_none());
     let replica = replica::from_api_value(&fields["13"]["payload"], "receiver".into()).unwrap();
     assert_eq!(
         replica.object_destination_hash,

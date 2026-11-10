@@ -179,7 +179,6 @@ fn create_move_rename_and_api_representation() {
             "notes": "synthetic",
             "position": {"lat": -12.25, "lon": 100.5},
             "time": "2023-11-14T22:13:22Z",
-            "stale_at": "2023-11-14T22:13:22Z",
             "created_at": "2023-11-14T22:13:20Z",
             "updated_at": "2023-11-14T22:13:22Z",
         })
