@@ -96,6 +96,10 @@ the shared `r3akt-map-core` marker API representation as the replica payload.
 REM to RCH: REM sends the standard mission command envelope in
 `FIELD_COMMANDS` with `FIELD_GROUP` set to its active TEAM UID:
 
+Clients can use `r3akt_profile_rch::encode_commands_for_team` to encode those
+fields. Pass the canonical TEAM UID for fanout, or `None` for legacy unscoped
+commands; RCH checks the sender's team membership when receiving the command.
+
 - `mission.marker.create` with `object_destination_hash` (32 hex characters,
   minted by REM), `marker_type`, `symbol`, `name`, `category`, `lat`, `lon`
   and optional `notes`. RCH keeps the supplied identifier; repeating the same

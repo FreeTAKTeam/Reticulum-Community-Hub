@@ -15,7 +15,9 @@ use r3akt_protocol::{Ack, Command, Destination, NodeId, Payload, ProtocolEnvelop
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
+mod commands;
 mod fields;
+pub use commands::{encode_commands, encode_commands_for_team};
 pub use fields::{FIELD_COMMANDS, FIELD_EVENT, FIELD_GROUP, FIELD_RESULTS};
 const MECP_PREFIX: &str = "MECP/";
 
@@ -523,11 +525,6 @@ pub fn decode_mecp_message(input: &str) -> Result<DecodedMecpMessage, RchProfile
         extras,
         warnings,
     })
-}
-
-pub fn encode_commands(commands: &[MissionCommandEnvelope]) -> Result<Vec<u8>, RchProfileError> {
-    let fields = BTreeMap::from([(FIELD_COMMANDS, commands)]);
-    rmp_serde::to_vec_named(&fields).map_err(|error| RchProfileError::Encode(error.to_string()))
 }
 
 pub fn decode_commands(bytes: &[u8]) -> Result<Vec<MissionCommandEnvelope>, RchProfileError> {
