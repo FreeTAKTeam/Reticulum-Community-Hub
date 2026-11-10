@@ -53,6 +53,10 @@ use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, SecondsFormat, Utc};
+use r3akt_profile_rch::teams::{
+    CANONICAL_TEAMS, canonical_team_color_for_uid, canonical_team_for_uid,
+    canonical_team_uid_for_color,
+};
 use r3akt_profile_rch::{
     CommandResultEnvelope, CommandResultStatus, EventEnvelope, MissionCommandEnvelope,
 };
@@ -12093,25 +12097,18 @@ fn normalize_mission_status(value: Option<&str>) -> Result<String, RchCoreError>
 }
 
 fn normalize_team_color(value: &str) -> Result<String, RchCoreError> {
-    normalize_enum(
-        value,
-        "color",
-        &[
-            "YELLOW",
-            "RED",
-            "BLUE",
-            "ORANGE",
-            "MAGENTA",
-            "MAROON",
-            "PURPLE",
-            "DARK_BLUE",
-            "CYAN",
-            "TEAL",
-            "GREEN",
-            "DARK_GREEN",
-            "BROWN",
-        ],
-    )
+    let value = value.trim().to_ascii_uppercase();
+    if value.is_empty() || canonical_team_uid_for_color(&value).is_some() {
+        return Ok(value);
+    }
+    let colors = CANONICAL_TEAMS
+        .iter()
+        .map(|(_, color)| *color)
+        .collect::<Vec<_>>();
+    Err(RchCoreError::InvalidPayload(format!(
+        "color must be one of: {}",
+        colors.join(", ")
+    )))
 }
 
 fn normalize_team_role(value: &str) -> Result<String, RchCoreError> {
@@ -12392,52 +12389,6 @@ fn reject_disallowed_eam_fields(args: &Value) -> Result<(), RchCoreError> {
     Ok(())
 }
 
-fn canonical_team_color_for_uid(team_uid: &str) -> Option<&'static str> {
-    canonical_team_for_uid(team_uid).map(|(_, color)| color)
-}
-
-fn canonical_team_for_uid(team_uid: &str) -> Option<(&'static str, &'static str)> {
-    match team_uid {
-        "d6b6e188b910d6bdd24d04b7a7ec5444" => Some(("d6b6e188b910d6bdd24d04b7a7ec5444", "YELLOW")),
-        "65ce79a3a3e4b51ec0ec52d1d3d2b0b9" => Some(("65ce79a3a3e4b51ec0ec52d1d3d2b0b9", "RED")),
-        "43341e5c822d99857fa6e8641f2ca9c0" => Some(("43341e5c822d99857fa6e8641f2ca9c0", "BLUE")),
-        "a83eb640e4c4884be14831e3d7ef5ae0" => Some(("a83eb640e4c4884be14831e3d7ef5ae0", "ORANGE")),
-        "7ac50a910f42b06cd9cb68dad3def681" => Some(("7ac50a910f42b06cd9cb68dad3def681", "MAGENTA")),
-        "372824ef4f15881291455562f7570233" => Some(("372824ef4f15881291455562f7570233", "MAROON")),
-        "4bf2a1d2217c8668942658137f2a6824" => Some(("4bf2a1d2217c8668942658137f2a6824", "PURPLE")),
-        "cbb35fc9a8f5a91d7bd2b5e5b644edcd" => {
-            Some(("cbb35fc9a8f5a91d7bd2b5e5b644edcd", "DARK_BLUE"))
-        }
-        "d4cd5030b68df059ec6beabe416dd6a6" => Some(("d4cd5030b68df059ec6beabe416dd6a6", "CYAN")),
-        "4d7a7a974beec395bf83491604768499" => Some(("4d7a7a974beec395bf83491604768499", "TEAL")),
-        "612a32262163b73a80eca944c2158546" => Some(("612a32262163b73a80eca944c2158546", "GREEN")),
-        "341653613d4c76d56bee99c1f38177b1" => {
-            Some(("341653613d4c76d56bee99c1f38177b1", "DARK_GREEN"))
-        }
-        "4efe72ac30f5b85142fdcab6d96c7631" => Some(("4efe72ac30f5b85142fdcab6d96c7631", "BROWN")),
-        _ => None,
-    }
-}
-
-fn canonical_team_uid_for_color(color: &str) -> Option<&'static str> {
-    match color {
-        "YELLOW" => Some("d6b6e188b910d6bdd24d04b7a7ec5444"),
-        "RED" => Some("65ce79a3a3e4b51ec0ec52d1d3d2b0b9"),
-        "BLUE" => Some("43341e5c822d99857fa6e8641f2ca9c0"),
-        "ORANGE" => Some("a83eb640e4c4884be14831e3d7ef5ae0"),
-        "MAGENTA" => Some("7ac50a910f42b06cd9cb68dad3def681"),
-        "MAROON" => Some("372824ef4f15881291455562f7570233"),
-        "PURPLE" => Some("4bf2a1d2217c8668942658137f2a6824"),
-        "DARK_BLUE" => Some("cbb35fc9a8f5a91d7bd2b5e5b644edcd"),
-        "CYAN" => Some("d4cd5030b68df059ec6beabe416dd6a6"),
-        "TEAL" => Some("4d7a7a974beec395bf83491604768499"),
-        "GREEN" => Some("612a32262163b73a80eca944c2158546"),
-        "DARK_GREEN" => Some("341653613d4c76d56bee99c1f38177b1"),
-        "BROWN" => Some("4efe72ac30f5b85142fdcab6d96c7631"),
-        _ => None,
-    }
-}
-
 fn canonical_team_from_team_args<'a>(
     args: &'a Value,
     requested_uid: Option<&'a str>,
@@ -12445,11 +12396,17 @@ fn canonical_team_from_team_args<'a>(
     if let Some(uid) = requested_uid {
         return canonical_team_for_uid(uid);
     }
-    let has_noncanonical_name = ["team_name", "name", "group_name"].iter().any(|field| {
-        optional_text(args, &[*field])
-            .and_then(|value| normalize_team_color(&value).ok())
-            .is_none()
-    });
+    // Preserve named-team precedence while allowing a color without a name.
+    let name_fields = ["team_name", "name", "group_name"];
+    let has_name = name_fields
+        .iter()
+        .any(|field| optional_text(args, &[*field]).is_some());
+    let has_noncanonical_name = has_name
+        && name_fields.iter().any(|field| {
+            optional_text(args, &[*field])
+                .and_then(|value| normalize_team_color(&value).ok())
+                .is_none()
+        });
     for field in ["color", "team_name", "name", "group_name"] {
         if field == "color" && has_noncanonical_name {
             continue;
