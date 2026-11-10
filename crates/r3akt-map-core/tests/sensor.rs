@@ -470,3 +470,42 @@ fn source_expiry_and_position_only_updates_survive_storage() {
     assert_eq!(retained.packed_telemeter.as_ref(), Some(&latest));
     wire::validate_position_against_packed(&moved, &retained.packed_telemeter.unwrap()).unwrap();
 }
+
+#[test]
+fn object_fields_round_trip_with_and_without_sensors() {
+    use r3akt_map_core::sensor_frame;
+    let id = "ab".repeat(16);
+    let mut aircraft = position();
+    (aircraft.alt_m, aircraft.speed_mps) = (Some(120.0), Some(25.0));
+    (aircraft.course_deg, aircraft.accuracy_m) = (Some(90.0), Some(3.0));
+    for (fix, sensors) in [(&aircraft, vec![]), (&position(), vec![state()])] {
+        let bytes = wire::encode_object_fields(&id, Some(fix), &sensors, Some("Blue")).unwrap();
+        let fields = r3akt_map_core::msgpack::to_json(&bytes).unwrap();
+        assert_eq!(fields["11"], "Blue");
+        assert_eq!(fields["3"][0][0], json!(vec![171; 16]));
+        let frame = sensor_frame::decode(&bytes, &"cd".repeat(16)).unwrap();
+        assert!(matches!(&frame.events[..],
+            [wire::SensorEvent::OriginFix(e)] if e.origin_id == id && &e.position == fix));
+        let samples = frame.samples.iter().map(|s| &s.sensors).collect::<Vec<_>>();
+        assert_eq!(
+            samples,
+            if sensors.is_empty() {
+                vec![]
+            } else {
+                vec![&sensors]
+            }
+        );
+    }
+    let sensors_only = wire::encode_object_fields(&id, None, &[state()], None).unwrap();
+    let fields = r3akt_map_core::msgpack::to_json(&sensors_only).unwrap();
+    assert!(fields.get("11").is_none() && fields.get("13").is_none());
+    assert_eq!(
+        wire::encode_object_fields(&id, None, &[], Some("Blue")),
+        Err("missing source state")
+    );
+    assert_eq!(
+        wire::encode_object_fields(&id, Some(&position()), &[], Some(" ")),
+        Err("invalid team")
+    );
+    assert!(wire::encode_object_fields("not-a-hash", Some(&position()), &[], None).is_err());
+}
