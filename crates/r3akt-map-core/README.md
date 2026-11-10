@@ -177,8 +177,11 @@ hold. It excludes Earth-curvature effects on the intersection, terrain or
 obstacles outside the supplied height bound, unbounded lens distortion, and
 unmodeled motion. `sensor_geometry::destination` exposes the existing
 mean-radius spherical great-circle destination calculation with a normalized
-longitude. Hardware camera calibration and field accuracy have not been
-qualified by these tests.
+longitude. The companion `sensor_geometry::distance_and_bearing` returns the
+distance and initial true bearing between two positions using the same sphere.
+The bearing is absent for coincident or antipodal positions and at a polar
+origin. These calculations are not ellipsoidal survey measurements. Hardware
+camera calibration and field accuracy have not been qualified by these tests.
 
 ## Compatibility fixtures and tests
 

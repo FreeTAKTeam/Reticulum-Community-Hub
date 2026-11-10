@@ -35,6 +35,46 @@ pub fn destination(
         .map_err(|_| "invalid destination")
 }
 
+/// Great-circle distance in metres and initial true bearing in degrees.
+/// Uses the same mean-radius sphere as [`destination`], not an ellipsoidal survey.
+/// Bearing is absent for coincident or antipodal positions and when the origin
+/// is at either pole, where an initial true bearing is undefined.
+#[must_use]
+#[expect(
+    clippy::float_cmp,
+    reason = "Only exact coincident, antipodal, and polar coordinates lack a bearing"
+)]
+pub fn distance_and_bearing(
+    origin: crate::Position,
+    target: crate::Position,
+) -> (f64, Option<f64>) {
+    let mut delta_lon = target.lon() - origin.lon();
+    if delta_lon > 180.0 {
+        delta_lon -= 360.0;
+    } else if delta_lon < -180.0 {
+        delta_lon += 360.0;
+    }
+    if origin.lat() == target.lat() && (delta_lon == 0.0 || origin.lat().abs() == 90.0) {
+        return (0.0, None);
+    }
+    if origin.lat() == -target.lat() && (delta_lon.abs() == 180.0 || origin.lat().abs() == 90.0) {
+        return (std::f64::consts::PI * EARTH_RADIUS_M, None);
+    }
+
+    let (sin_lat1, cos_lat1) = origin.lat().to_radians().sin_cos();
+    let (sin_lat2, cos_lat2) = target.lat().to_radians().sin_cos();
+    let (sin_lon, cos_lon) = delta_lon.to_radians().sin_cos();
+    let east = cos_lat2 * sin_lon;
+    let north = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_lon;
+    let dot = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_lon;
+    let distance = east.hypot(north).atan2(dot) * EARTH_RADIUS_M;
+    let bearing = (origin.lat().abs() < 90.0).then(|| {
+        let angle = east.atan2(north).to_degrees().rem_euclid(360.0);
+        if angle >= 360.0 { 0.0 } else { angle }
+    });
+    (distance, bearing)
+}
+
 fn destination_unwrapped(lat: f64, lon: f64, bearing: f64, distance: f64) -> [f64; 2] {
     let origin_lon = lon;
     let lat = lat.to_radians();
