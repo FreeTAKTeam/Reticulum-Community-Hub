@@ -41,8 +41,8 @@ $originalExitCode = Get-Variable -Name LASTEXITCODE -Scope Global -ValueOnly -Er
 try {
     $package = New-Item -ItemType File -Path (Join-Path $testDir.FullName "package.zip")
     $desktop = New-Item -ItemType File -Path (Join-Path $testDir.FullName "desktop build.zip")
-    $view = "release view v3.0.0-preview.38 --repo owner/repo --json assets"
-    $upload = "release upload v3.0.0-preview.38 --repo owner/repo $($desktop.FullName)"
+    $view = "release view --repo owner/repo --json assets -- v3.0.0-preview.38"
+    $upload = "release upload --repo owner/repo -- v3.0.0-preview.38 $($desktop.FullName)"
     $state.Assets = @(
         @{ name = $package.Name; label = "" },
         @{ name = "desktop.build.zip"; label = $desktop.Name }
@@ -57,6 +57,16 @@ try {
     if ($state.Calls.Count -ne 2 -or $state.Calls[0] -ne $view -or $state.Calls[1] -ne $upload) {
         throw "Only the missing package should be uploaded."
     }
+
+    $state.Calls.Clear()
+    $arguments.Tag = "--clobber"
+    & $helper @arguments
+    if ($state.Calls.Count -ne 2 -or
+        $state.Calls[0] -ne "release view --repo owner/repo --json assets -- --clobber" -or
+        $state.Calls[1] -ne "release upload --repo owner/repo -- --clobber $($desktop.FullName)") {
+        throw "A flag-like tag must follow the option terminator."
+    }
+    $arguments.Tag = "v3.0.0-preview.38"
 
     $state.Calls.Clear()
     Assert-Fails "Missing release assets:*" -VerifyOnly

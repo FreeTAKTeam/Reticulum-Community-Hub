@@ -13,7 +13,7 @@ if ($files.Count -eq 0) {
     throw "No release assets match '$Path'."
 }
 
-$releaseJson = gh release view $Tag --repo $Repository --json assets
+$releaseJson = gh release view --repo $Repository --json assets "--" $Tag
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to list assets for release '$Tag' (gh exit $LASTEXITCODE)."
 }
@@ -37,7 +37,7 @@ if ($VerifyOnly) {
     throw "Missing release assets: $($missing -join ', ')."
 }
 
-gh release upload $Tag --repo $Repository @missing
+gh release upload --repo $Repository "--" $Tag @missing
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to upload missing assets for release '$Tag' (gh exit $LASTEXITCODE)."
 }
