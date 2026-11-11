@@ -735,7 +735,10 @@ const dragging = ref(false);
 const dragOffset = ref({ x: 0, y: 0 });
 const wsClient = ref<WsClient | null>(null);
 maplibregl.setWorkerUrl(mapWorkerUrl);
-const mapStyle = import.meta.env.VITE_RTH_MAP_STYLE_URL ?? defaultMapStyle as maplibregl.StyleSpecification;
+const fiordStyleUrl = "https://tiles.openfreemap.org/styles/fiord";
+const mapStyle = import.meta.env.VITE_RCH_MAP_STYLE_URL?.trim() ||
+  import.meta.env.VITE_RTH_MAP_STYLE_URL?.trim() || fiordStyleUrl;
+let usingFallbackStyle = false;
 const defaultMapView = { lat: 0, lon: 0, zoom: 1 };
 let pollerId: number | undefined;
 let disposed = false;
@@ -1008,7 +1011,7 @@ const dismissRadialMenus = () => {
   }
 };
 const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
-  if (markerMoveArmId.value || draggingMarkerId.value) {
+  if (markerMoveArmId.value || draggingMarkerId.value || zoneMode.value || zoneEditingId.value) {
     return;
   }
   const anchored = resolveMarkerScreenPoint(markerId, point);
@@ -2334,6 +2337,7 @@ const resolveMarkerLabelField = (): DataDrivenPropertyValueSpecification<string>
 
 const buildMarkerLabelLayout = (): {
   "text-field": DataDrivenPropertyValueSpecification<string>;
+  "text-font": string[];
   "text-size": number;
   "text-offset": [number, number];
   "text-anchor": "top";
@@ -2341,6 +2345,7 @@ const buildMarkerLabelLayout = (): {
   "text-ignore-placement": true;
 } => ({
   "text-field": resolveMarkerLabelField(),
+  "text-font": ["Noto Sans Regular"],
   "text-size": MARKER_LABEL_SIZE,
   "text-offset": MARKER_LABEL_OFFSET,
   "text-anchor": "top",
@@ -2999,7 +3004,7 @@ const handleOperatorMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) => 
   }
   const markerId = String(markerIdRaw);
   const anchored = resolveMarkerScreenPoint(markerId, toScreenPoint(event.point)) ?? toScreenPoint(event.point);
-  if (!draggingMarkerId.value) {
+  if (!draggingMarkerId.value && !zoneMode.value && !zoneEditingId.value) {
     openHoverMarkerRadialMenu(markerId, anchored);
     const cursor = markerMoveArmId.value && markerMoveArmId.value === markerId ? "move" : "pointer";
     if (mapInstance.value) {
@@ -3016,7 +3021,7 @@ const handleTelemetryMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) =>
   }
   const markerId = String(markerIdRaw);
   openHoverMarkerRadialMenu(markerId, toScreenPoint(event.point));
-  if (!draggingMarkerId.value && mapInstance.value) {
+  if (!draggingMarkerId.value && !zoneMode.value && !zoneEditingId.value && mapInstance.value) {
     mapInstance.value.getCanvas().style.cursor = "pointer";
   }
 };
@@ -3594,6 +3599,18 @@ onMounted(async () => {
       style: mapStyle,
       center: [initialView.lon, initialView.lat],
       zoom: initialView.zoom
+    });
+    mapInstance.value.on("error", (event) => {
+      if (disposed) { return; }
+      if (!mapReady.value && !usingFallbackStyle && mapStyle === fiordStyleUrl &&
+        event.error instanceof maplibregl.AJAXError && event.error.url === fiordStyleUrl) {
+        usingFallbackStyle = true;
+        console.warn("Fiord basemap unavailable; using the previous map style.", event.error);
+        toastStore.push("Fiord basemap unavailable; using the previous map style.", "warning");
+        mapInstance.value?.setStyle(defaultMapStyle as maplibregl.StyleSpecification, { diff: false });
+      } else {
+        console.error("Map error", event.error);
+      }
     });
     mapInstance.value.on("load", () => {
       void handleMapLoaded(symbolsPromise).catch(error => {

@@ -32,8 +32,12 @@ npm run preview
 
 - `VITE_RCH_BASE_URL`: Optional base URL for the REST/WS endpoints. When unset, the UI uses the browser origin.
 - `VITE_RCH_WS_BASE_URL`: Optional explicit WebSocket base URL (defaults to the REST base URL with ws/wss).
-- `VITE_RCH_MAP_STYLE_URL`: Optional MapLibre style URL (use a local/offline style for disconnected environments).
+- `VITE_RCH_MAP_STYLE_URL`: Optional MapLibre style URL, set at build time. The default is [OpenFreeMap Fiord](https://tiles.openfreemap.org/styles/fiord). For disconnected use, point this to a locally hosted style whose tiles, sprites, and glyphs are also available locally. `VITE_RTH_MAP_STYLE_URL` remains supported as a legacy alias; `VITE_RCH_MAP_STYLE_URL` takes precedence.
 - `VITE_RCH_MOCK`: Set to `true` to enable mock REST/WS responses for offline UI development.
+
+If the default Fiord style request fails, the map warns the operator and falls back to the previous bundled style so operational overlays can initialize. That style still uses Internet-hosted map data and fonts; it is not an offline basemap.
+
+For example, place an offline style and its resources under `ui/public/assets/offline-map/` and build with `VITE_RCH_MAP_STYLE_URL=/assets/offline-map/style.json npm run build`. The embedded server exposes `/assets/`; the style must reference tiles, sprites, and glyphs available from the same origin, HTTPS, or a loopback service permitted by the UI security policy.
 
 ## Deployment Modes
 
