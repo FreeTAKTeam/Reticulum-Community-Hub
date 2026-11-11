@@ -37,6 +37,7 @@ function Assert-Fails {
     throw "Expected failure: $Message"
 }
 
+$originalExitCode = Get-Variable -Name LASTEXITCODE -Scope Global -ValueOnly -ErrorAction SilentlyContinue
 try {
     $package = New-Item -ItemType File -Path (Join-Path $testDir.FullName "package.zip")
     $desktop = New-Item -ItemType File -Path (Join-Path $testDir.FullName "desktop build.zip")
@@ -79,5 +80,10 @@ try {
 
     Write-Host "Release asset attachment tests passed."
 } finally {
+    if ($null -eq $originalExitCode) {
+        Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    } else {
+        $global:LASTEXITCODE = $originalExitCode
+    }
     Remove-Item -LiteralPath $testDir.FullName -Recurse -Force
 }
