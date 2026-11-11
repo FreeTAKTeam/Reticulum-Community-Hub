@@ -1008,6 +1008,9 @@ const dismissRadialMenus = () => {
   }
 };
 const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
+  if (markerMoveArmId.value || draggingMarkerId.value) {
+    return;
+  }
   const anchored = resolveMarkerScreenPoint(markerId, point);
   if (!anchored) {
     return;
@@ -1021,6 +1024,9 @@ const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
   openMarkerRadialMenu(markerId, anchored);
 };
 const openHoverZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
+  if (markerMoveArmId.value || draggingMarkerId.value) {
+    return;
+  }
   if (zoneRadialMenuZoneId.value === zoneId) {
     zoneRadialMenuPoint.value = point;
     return;

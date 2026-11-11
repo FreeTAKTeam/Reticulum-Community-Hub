@@ -37,6 +37,9 @@ const isOperatorMarkerEntry = (entry: TelemetryEntry) => {
   if (!isRecord(custom)) {
     return false;
   }
+  if (isOperatorMarkerMetadata(custom.metadata)) {
+    return true;
+  }
   const marker = custom.marker;
   if (Array.isArray(marker)) {
     return marker.some((item) => isOperatorMarkerMetadata(item));
