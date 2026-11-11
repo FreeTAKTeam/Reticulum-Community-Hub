@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  LXMF_REF: 460fef80eeff371500965d2331856bf67a407387
+  LXMF_REF: 9908a7ef8360db30bb352ca372d70b4d07fbba8b
   RUSTUP_TOOLCHAIN: "1.99.1"
 
 jobs:
@@ -182,6 +182,8 @@ jobs:
         if: github.event_name == 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''
         uses: softprops/action-gh-release@v2
         with:
+          # Preserve the qualified files already uploaded to the release draft.
+          overwrite_files: false
           files: rch/dist/rch-server_*.deb*
           fail_on_unmatched_files: true
 
@@ -198,6 +200,8 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          # Preserve the qualified files already uploaded to the release draft.
+          overwrite_files: false
           files: |
             rch/dist/${{ steps.package.outputs.package_name }}.*
           fail_on_unmatched_files: true
@@ -317,6 +321,8 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          # Preserve the qualified files already uploaded to the release draft.
+          overwrite_files: false
           files: |
             rch/dist/desktop/${{ matrix.artifact }}/*
           fail_on_unmatched_files: true
