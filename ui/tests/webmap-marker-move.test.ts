@@ -12,7 +12,7 @@ vi.mock("maplibre-gl", () => ({
   Map: class {
     canvas = document.createElement("canvas");
     dragPan = { enable: vi.fn(), disable: vi.fn() };
-    doubleClickZoom = { enable: vi.fn() };
+    doubleClickZoom = { enable: vi.fn(), disable: vi.fn() };
     on() {}
     once() {}
     off() {}
@@ -73,6 +73,33 @@ describe("map marker movement", () => {
     page.setupState.finishMarkerDrag();
     await vi.waitFor(() => expect(patch).toHaveBeenCalledWith("/api/markers/marker-id/position", { lat: 3, lon: 4 }));
 
+    page.setupState.handleOperatorMarkerHoverMove(markerEvent);
+    await nextTick();
+    expect(root.querySelector(".webmap-marker-radial-menu")).not.toBeNull();
+  });
+
+  it.each(["drawing", "editing"])("keeps marker menus out of the way while %s a zone", async (mode) => {
+    get.mockImplementation(async (path: string) => path === "/api/markers" ? [{
+      object_destination_hash: "marker-id", name: "Marker", position: { lat: 1, lon: 2 }
+    }] : []);
+    const root = document.createElement("div");
+    document.body.append(root);
+    app = createApp(WebMapPage).use(createPinia());
+    const page = app.mount(root).$;
+    await vi.waitFor(() => expect(page.setupState.markersStore.markerIndex.has("marker-id")).toBe(true));
+    if (mode === "drawing") page.setupState.zoneMode = true;
+    else page.setupState.zoneEditingId = "zone-id";
+    page.setupState.mapInstance.getCanvas().style.cursor = "crosshair";
+
+    const markerEvent = { features: [{ properties: { id: "marker-id" } }], point: { x: 300, y: 300 } };
+    page.setupState.handleOperatorMarkerHoverMove(markerEvent);
+    page.setupState.handleTelemetryMarkerHoverMove(markerEvent);
+    await nextTick();
+    expect(root.querySelector(".webmap-marker-radial-menu")).toBeNull();
+    expect(page.setupState.mapInstance.getCanvas().style.cursor).toBe("crosshair");
+
+    page.setupState.zoneMode = false;
+    page.setupState.zoneEditingId = "";
     page.setupState.handleOperatorMarkerHoverMove(markerEvent);
     await nextTick();
     expect(root.querySelector(".webmap-marker-radial-menu")).not.toBeNull();
