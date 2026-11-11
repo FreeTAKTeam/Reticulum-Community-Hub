@@ -986,6 +986,11 @@ impl AppState {
     ) -> Result<Self, r3akt_rch_core::RchCoreError> {
         let path = path.as_ref().to_path_buf();
         let mut store = RchSqliteStore::open_admin(&path)?;
+        if let Err(error) =
+            auth::warn_legacy_credentials(&mut store, |warning| eprintln!("warning: {warning}"))
+        {
+            eprintln!("warning: could not check for legacy credentials at startup: {error}");
+        }
         store.prune_telemetry_records(reticulumd_source)?;
         let snapshot = store.load_snapshot_without_identity_announces()?;
         let mut state = Self {
@@ -34062,10 +34067,7 @@ mod tests {
             .expect("body")
             .to_bytes();
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(payload["setup_required"], false);
-        assert_eq!(payload["config_path"], serde_json::Value::Null);
-        assert_eq!(payload["reticulum_config_path"], serde_json::Value::Null);
-        assert_eq!(payload["reticulum_identity_path"], serde_json::Value::Null);
+        assert_eq!(payload, json!({"setup_required": false}));
 
         let authenticated_status = app
             .oneshot(

@@ -13,8 +13,10 @@ on `rch-python`; do not mix stores or packaging between release lines.
 - Remote browser connections require HTTPS/WSS. Set exact comma-separated
   `RCH_ALLOWED_ORIGINS` when using a TLS proxy or separately hosted UI. Wildcards,
   paths and forwarded addresses do not grant browser authority.
-- Stored passwords and kill-switch PINs use Argon2id PHC records. A successful
-  login transparently upgrades legacy salted SHA-256 preview records.
+- Stored passwords and kill-switch PINs use Argon2id PHC records. Startup logs
+  warn when legacy salted SHA-256 preview records are still present. Sign in
+  with the enrolled password to upgrade its record. PIN records upgrade on
+  successful verification during normal kill-switch use.
 - Five failures in five minutes cause a five-minute per-client, per-surface
   lockout. HTTP returns `429` with `Retry-After: 300`.
 - ZeroMQ command/response sockets are mandatory for LXMF delivery. RPC is
