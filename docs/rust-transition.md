@@ -230,12 +230,11 @@ Release blockers cleared in the latest parity pass:
   six `/internal/delivery-*` mutation callbacks have been removed without
   compatibility shims. See the
   [issue 247 validation evidence](goals/issue-247-sdk-routing/EVIDENCE.md).
-- Production library dependencies use LXMF `0.16.1` from immutable revision
-  `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1` as a source-built baseline,
-  with no published release tag asserted for that revision. A clean server build
-  does not require a sibling checkout. CI and managed daemon builds use the same
-  revision. The paired dependency requires Rust 1.89 or newer and aligns with
-  RCH's direct rusqlite 0.41.1 dependency; see the
+- Production library dependencies use LXMF `0.16.1` from the immutable source in
+  the [LXMF runtime baseline](../config/lxmf-runtime-baseline.json).
+  A clean server build does not require a sibling checkout. CI and managed daemon
+  builds use the same revision. The paired dependency requires Rust 1.89 or newer
+  and aligns with RCH's direct rusqlite 0.41.1 dependency. See the
   [SQLite security migration](migrations/sqlite-3-54-security.md).
   The matching ZMQ-capable `reticulumd` is bundled and described by
   `config/lxmf-runtime-baseline.json`; sibling `main` is checked separately by

@@ -30,11 +30,18 @@ deleting database files. The before/after query-cost evidence
 and remaining production checks are in
 [the idle-broker regression record](issue-276-idle-broker.md).
 
-Paired LXMF-rs source: `9b972f9a8d3a7949eae89bc78f7a9691f06f3ed1`
-(SDK 0.16.1, source-built baseline with no asserted release tag). Cargo dependencies,
-workflow checkouts and managed daemon builds use this same immutable revision.
+The [LXMF runtime baseline](../config/lxmf-runtime-baseline.json) records the
+immutable source shared by Cargo dependencies, workflow checkouts and managed
+daemon builds. It uses SDK 0.16.1 without an upstream release tag.
 Building the paired source requires Rust 1.89 or newer; the direct SQLite wrapper
 is aligned as described in the [security migration](migrations/sqlite-3-54-security.md).
+
+Negotiated broker sessions expire after five minutes without a successful
+request. An authenticated request already in flight keeps its session available
+through completion. When a broker call needs negotiation again, the existing
+RCH transport actor restores the service identity and the intake worker resumes
+from its durable checkpoint. Daemon `daemon_status_ex` reports aggregate
+`resources.durable_broker_sessions.current` and `expired_total` counts.
 
 The daemon physical budget is persisted on first enablement. Its main database
 page cap uses one quarter of the selected budget to leave WAL and control
