@@ -79,10 +79,22 @@ jobs:
         working-directory: rch
         run: npm --prefix ui ci
 
+      - name: Check out the pinned Ubuntu mirror helper
+        if: matrix.check == 'test:e2e'
+        uses: actions/checkout@v6
+        with:
+          repository: FreeTAKTeam/LXMF-rs
+          ref: ${{ env.LXMF_REF }}
+          path: LXMF-rs
+          sparse-checkout: tools/scripts/ci-ubuntu-apt-mirror.sh
+          sparse-checkout-cone-mode: false
+
       - name: Install acceptance browser
         if: matrix.check == 'test:e2e'
         working-directory: rch/ui
-        run: npx --no-install playwright install --with-deps chromium
+        run: |
+          bash ../../LXMF-rs/tools/scripts/ci-ubuntu-apt-mirror.sh
+          npx --no-install playwright install --with-deps chromium
 
       - name: Run independent UI check
         working-directory: rch
