@@ -142,6 +142,11 @@ jobs:
         working-directory: rch
         run: ./scripts/check-rust-module-size.ps1
 
+      - name: Test release asset attachment
+        shell: pwsh
+        working-directory: rch
+        run: ./scripts/attach-release-assets.Tests.ps1
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

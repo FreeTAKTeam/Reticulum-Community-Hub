@@ -38,6 +38,9 @@ full matrix. Versioned releases such as `v3.0.0-preview.33` produce
 release version produces only the archive.
 
 The release workflow owns all five server packages and both desktop packages.
+Its attachment steps upload missing assets and preserve assets already present
+by filename or label, including verified files staged on the draft. They do not
+edit release metadata or overwrite files.
 The current testing candidate is
 [`v3.0.0-preview.33`](../docs/release-notes-v3.0.0-preview.33.md), scoped to the
 complete Linux AMD64 server archive and Debian installer for DigitalOcean
