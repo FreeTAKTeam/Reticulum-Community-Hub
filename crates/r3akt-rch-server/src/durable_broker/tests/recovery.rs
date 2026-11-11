@@ -259,3 +259,105 @@ async fn initialized_workers_resume_after_sqlite_writer_contention() {
     drop(fixture);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+#[ignore = "waits for the paired daemon's five-minute broker session lifetime"]
+fn paired_rch_actor_recovers_expired_session_and_durable_custody() {
+    let dir = std::env::temp_dir().join(format!("rch-session-expiry-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut fixture = Fixture::open(&dir.join("daemon.db"));
+    let identity = dir.join("identity");
+    let restart_db = dir.join("restart.db");
+    for _ in 0..3 {
+        let restarted = fixture.state(&restart_db, &identity);
+        plane(&restarted).unwrap().shutdown().unwrap();
+    }
+
+    let idle = fixture.state(&dir.join("idle.db"), &identity);
+    fixture.response = endpoint();
+    let active = fixture.state(&dir.join("active.db"), &identity);
+    let consumer = open(&idle).unwrap().durable_consumer_id().unwrap();
+    let destination = idle.reticulumd_source.as_deref().unwrap();
+    fixture.inbound("before-session-expiry", destination);
+    intake(&idle, &consumer).unwrap();
+    assert!(apply(&idle, &consumer).unwrap());
+    let before = open(&idle).unwrap().inbox_checkpoint(&consumer).unwrap();
+    assert_eq!(before.stored, 1);
+    assert_eq!(before.applied, 1);
+
+    let sessions =
+        || fixture.daemon.resource_usage_snapshot().unwrap()["durable_broker_sessions"].clone();
+    assert_eq!(sessions()["current"], 5);
+    assert_eq!(sessions()["expired_total"], 0);
+
+    let active_plane = plane(&active).unwrap();
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_secs(30));
+        active_plane.broker_announces().unwrap();
+    }
+    fixture.inbound("after-session-expiry", destination);
+    let expired = intake(&idle, &consumer).unwrap_err();
+    assert!(matches!(
+        expired,
+        ApiError::ServiceUnavailable(message) if message.contains("SDK_BROKER_NEGOTIATION_REQUIRED")
+    ));
+    assert_eq!(sessions()["current"], 1);
+    assert_eq!(sessions()["expired_total"], 4);
+    active_plane.broker_announces().unwrap();
+
+    // The normal worker must recover using the same actor and local checkpoint.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let owner = spawn(idle.clone(), Duration::from_millis(50));
+            let recovered = tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    let checkpoint = open(&idle).unwrap().inbox_checkpoint(&consumer).unwrap();
+                    let healthy = idle
+                        .broker_lane_errors
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .all(Option::is_none);
+                    if checkpoint.applied == 2 && healthy {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await;
+            request_runtime_exit(&idle);
+            tokio::time::timeout(Duration::from_secs(3), owner)
+                .await
+                .unwrap()
+                .unwrap();
+            recovered.expect("normal worker must resume custody after actor restoration");
+        });
+    let after = open(&idle).unwrap().inbox_checkpoint(&consumer).unwrap();
+    assert_eq!(after.journal_id, before.journal_id);
+    assert_eq!(after.stored, 2);
+    assert_eq!(after.applied, 2);
+    let remote = plane(&idle)
+        .unwrap()
+        .broker_resume(broker::ResumeRequest {
+            consumer_id: broker::ConsumerId(consumer),
+            identity: String::new(),
+            journal_id: after.journal_id.map(broker::JournalId),
+            stored: broker::EventPosition(after.stored),
+        })
+        .unwrap();
+    assert_eq!(remote.stored.0, after.stored);
+    assert_eq!(idle.messages.read().unwrap().len(), 2);
+    assert_eq!(sessions()["current"], 2);
+    assert_eq!(sessions()["expired_total"], 4);
+
+    plane(&idle).unwrap().shutdown().unwrap();
+    active_plane.shutdown().unwrap();
+    drop(idle);
+    drop(active);
+    drop(fixture);
+    std::fs::remove_dir_all(dir).unwrap();
+}
