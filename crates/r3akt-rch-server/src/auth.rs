@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use axum::http::HeaderMap;
+use r3akt_rch_core::{RchCoreError, RchSqliteStore};
 use rand_core::OsRng;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -152,14 +153,60 @@ pub(super) fn argon2id_hash(value: &str) -> Result<String, ApiError> {
         })
 }
 
+fn is_legacy_secret(salt: &str, hash: &str) -> bool {
+    !salt.is_empty() && hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub(super) fn warn_legacy_credentials(
+    store: &mut RchSqliteStore,
+    mut warn: impl FnMut(&str),
+) -> Result<(), RchCoreError> {
+    let [
+        password_salt,
+        password_hash,
+        password_created_at,
+        pin_salt,
+        pin_hash,
+        pin_created_at,
+    ] = store.setting_values([
+        REMOTE_ACCESS_PASSWORD_SALT_SETTING,
+        REMOTE_ACCESS_PASSWORD_HASH_SETTING,
+        REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING,
+        KILL_SWITCH_PIN_SALT_SETTING,
+        KILL_SWITCH_PIN_HASH_SETTING,
+        KILL_SWITCH_PIN_CREATED_AT_SETTING,
+    ])?;
+    for (salt, hash, created_at, warning) in [
+        (
+            password_salt,
+            password_hash,
+            password_created_at,
+            "Legacy SHA-256 remote password is still stored. Sign in with the enrolled password to upgrade it to Argon2id.",
+        ),
+        (
+            pin_salt,
+            pin_hash,
+            pin_created_at,
+            "Legacy SHA-256 kill switch PIN is still stored. It upgrades to Argon2id on successful PIN verification.",
+        ),
+    ] {
+        if let (Some(salt), Some(hash), Some(created_at)) = (salt, hash, created_at)
+            && created_at.parse::<i64>().is_ok()
+            && is_legacy_secret(&salt, &hash)
+        {
+            warn(warning);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn verify_versioned_secret(
     salt: &str,
     hash: &str,
     value: &str,
 ) -> Result<bool, ApiError> {
     if !is_argon2id_phc(hash) {
-        if salt.is_empty() || hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
+        if !is_legacy_secret(salt, hash) {
             return Err(ApiError::Internal(
                 "invalid legacy authentication secret".to_string(),
             ));
@@ -350,6 +397,58 @@ pub(super) fn openapi_auth_validation_operation() -> Value {
 #[cfg(test)]
 mod migration_tests {
     use super::*;
+
+    #[test]
+    fn startup_warns_about_legacy_credentials_without_rewriting_them() {
+        let path = std::env::temp_dir().join(format!("rch-legacy-warning-{}.db", Uuid::new_v4()));
+        let mut store = RchSqliteStore::open(&path).expect("store");
+        let remote_hash = password_hash("password-salt", "old-password");
+        let pin_hash = password_hash("pin-salt", "123456");
+        let settings = [
+            (REMOTE_ACCESS_PASSWORD_SALT_SETTING, "password-salt"),
+            (REMOTE_ACCESS_PASSWORD_HASH_SETTING, remote_hash.as_str()),
+            (REMOTE_ACCESS_PASSWORD_CREATED_AT_SETTING, "1234"),
+            (KILL_SWITCH_PIN_SALT_SETTING, "pin-salt"),
+            (KILL_SWITCH_PIN_HASH_SETTING, pin_hash.as_str()),
+            (KILL_SWITCH_PIN_CREATED_AT_SETTING, "5678"),
+        ];
+
+        warn_legacy_credentials(&mut store, |warning| {
+            panic!("absent credentials: {warning}")
+        })
+        .expect("check absent credentials");
+        store
+            .set_setting_values_atomic(&settings)
+            .expect("seed credentials");
+        let mut warnings = Vec::new();
+        warn_legacy_credentials(&mut store, |warning| warnings.push(warning.to_owned()))
+            .expect("check legacy credentials");
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].starts_with("Legacy SHA-256 remote password"));
+        assert!(warnings[1].starts_with("Legacy SHA-256 kill switch PIN"));
+
+        AppState::from_sqlite_path(&path).expect("startup with both legacy credentials");
+        assert_eq!(
+            store
+                .setting_values(settings.map(|(key, _)| key))
+                .expect("read records after startup"),
+            settings.map(|(_, value)| Some(value.to_owned())),
+        );
+
+        let modern_password = argon2id_hash("modern-password").expect("hash");
+        store
+            .set_setting_values_atomic(&[
+                (REMOTE_ACCESS_PASSWORD_HASH_SETTING, &modern_password),
+                (KILL_SWITCH_PIN_HASH_SETTING, "malformed-hash"),
+            ])
+            .expect("seed modern and malformed hashes");
+        warn_legacy_credentials(&mut store, |warning| {
+            panic!("modern or malformed credential: {warning}")
+        })
+        .expect("check modern and malformed hashes");
+        drop(store);
+        std::fs::remove_file(path).expect("cleanup");
+    }
 
     #[test]
     fn late_legacy_migration_cannot_overwrite_a_new_enrollment() {
