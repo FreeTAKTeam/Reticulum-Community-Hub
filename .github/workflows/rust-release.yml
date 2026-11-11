@@ -180,12 +180,14 @@ jobs:
 
       - name: Attach Debian package to GitHub release
         if: github.event_name == 'release' && matrix.platform == 'Linux AMD64' && steps.package.outputs.debian_version != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          # Preserve the qualified files already uploaded to the release draft.
-          overwrite_files: false
-          files: rch/dist/rch-server_*.deb*
-          fail_on_unmatched_files: true
+        shell: pwsh
+        working-directory: rch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          ./scripts/attach-release-assets.ps1 -Repository $env:GITHUB_REPOSITORY `
+            -Tag $env:RELEASE_TAG -Path "dist/rch-server_*.deb*"
 
       - name: Upload server package artifact
         if: github.event_name != 'release'
@@ -198,13 +200,15 @@ jobs:
 
       - name: Attach server package to GitHub release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          # Preserve the qualified files already uploaded to the release draft.
-          overwrite_files: false
-          files: |
-            rch/dist/${{ steps.package.outputs.package_name }}.*
-          fail_on_unmatched_files: true
+        shell: pwsh
+        working-directory: rch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PACKAGE_NAME: ${{ steps.package.outputs.package_name }}
+        run: |
+          ./scripts/attach-release-assets.ps1 -Repository $env:GITHUB_REPOSITORY `
+            -Tag $env:RELEASE_TAG -Path "dist/$env:PACKAGE_NAME.*"
 
   desktop-package:
     if: >-
@@ -319,10 +323,12 @@ jobs:
 
       - name: Attach desktop package to GitHub release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          # Preserve the qualified files already uploaded to the release draft.
-          overwrite_files: false
-          files: |
-            rch/dist/desktop/${{ matrix.artifact }}/*
-          fail_on_unmatched_files: true
+        shell: pwsh
+        working-directory: rch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PACKAGE_NAME: ${{ matrix.artifact }}
+        run: |
+          ./scripts/attach-release-assets.ps1 -Repository $env:GITHUB_REPOSITORY `
+            -Tag $env:RELEASE_TAG -Path "dist/desktop/$env:PACKAGE_NAME/*"
