@@ -16,4 +16,16 @@ The parent reviews the implementation agents' changes independently and owns mer
 - LXMF #756: reviewed authenticated principal/route scoping, monotonic expiry, in-flight pin lifetime, capacity behavior and preserved durable ownership. Required a recognizable expiry response when an ordinary SDK request itself discovers expiry. The implementation and tests cover that case; documentation explicitly limits ordinary-method behavior after another request has already reaped the entry. Durable requests always retain the existing restoration signal. Removed unrelated Windows dependency graph changes from the lockfile repair.
 - RCH #307 integration: required the actual bounded worker to recover the same actor after expiry and advance its durable checkpoint. Standalone evidence must include a real peer delivery for every graceful/abrupt restart incarnation, plus another after reclamation. Historical live-gate filters matching zero tests cannot be counted as delivery evidence.
 
-Final POST decisions, exact heads, CI outcomes and integration results are recorded in EVIDENCE.md once complete.
+## POST
+
+Independent SOL review of integration source `41f4dbb` found no correctness or
+maintainability blockers. All pins identify upstream merge `460fef80`; the
+existing actor/worker restores durable custody without a duplicate recovery
+implementation. A separate evidence review checked the actual same-actor and
+standalone restart logs and narrowed the allocation-log claim to its observed
+signature. The parent incorporated those wording corrections.
+
+[EVIDENCE.md](EVIDENCE.md) records source heads, local integration results and
+the two prerequisite PR outcomes. The final integration PR retains exact-head
+hosted checks, review and merge decisions. GitHub author self-approval is
+unavailable; technical review is recorded without claiming a platform approval.

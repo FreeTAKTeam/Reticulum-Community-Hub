@@ -94,7 +94,11 @@ Today does not include new media/voice/BLE features, broad server refactoring, b
 - [x] Read current roadmap, issue states, merged repairs and repository ownership.
 - [x] Create canonical upstream lifecycle issue #755 and isolated issue branches.
 - [x] Complete PRE review and concrete upstream lifecycle design, including same-actor expiry recovery.
-- [ ] Merge the independently reviewed #231 PR.
-- [ ] Merge the independently reviewed #755 PR.
-- [ ] Pin, verify and merge the #307 integration PR.
-- [ ] Record final evidence, issue status, review/CI outcomes and safe branch cleanup.
+- [x] Merge the independently reviewed #231 PR: [RCH #320](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/pull/320).
+- [x] Merge the independently reviewed #755 PR: [LXMF #756](https://github.com/FreeTAKTeam/LXMF-rs/pull/756).
+- [x] Pin and locally verify the #307 integration against the merged upstream source; see [EVIDENCE.md](EVIDENCE.md).
+
+This is the plan snapshot carried by the integration PR. Its exact-head hosted
+checks, technical review, merge event and final cleanup report are the delivery
+status; they are not inferred from this checklist. Broader incident acceptance
+remains in #307 and the existing resource issues.
