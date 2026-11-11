@@ -55,6 +55,33 @@ describe("telemetry markers", () => {
     expect(markers[0].id).toBe("deadbeef03");
     expect(markers[0].name).toBe("Bravo");
   });
+
+  it.each(["marker.created", "marker.updated", "marker.deleted"])(
+    "does not show RCH %s telemetry as a person",
+    (eventType) => {
+      const store = useTelemetryStore(createPinia());
+      store.applySnapshot([
+        {
+          peer_destination: "marker-id",
+          timestamp: 10,
+          telemetry: {
+            location: { latitude: 1, longitude: 2 },
+            custom: { type_label: "marker", metadata: { object_type: "marker", event_type: eventType } }
+          }
+        },
+        {
+          peer_destination: "person-id",
+          timestamp: 10,
+          telemetry: {
+            location: { latitude: 3, longitude: 4 },
+            custom: { metadata: { object_type: "person" } }
+          }
+        }
+      ]);
+
+      expect(store.markers.map((marker) => marker.id)).toEqual(["person-id"]);
+    }
+  );
 });
 
 describe("telemetry store", () => {
