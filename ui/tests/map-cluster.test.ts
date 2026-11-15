@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { resolveClusterRadius, resolveZoomScale } from "../src/utils/map-cluster";
+import { ICON_PIXEL_RATIO, ICON_RASTER_SIZE, resolveClusterRadius, resolveIconSize } from "../src/utils/map-cluster";
 
 describe("map cluster utilities", () => {
-  it("scales icon size by 10% per zoom level", () => {
-    expect(resolveZoomScale(1)).toBeCloseTo(1, 6);
-    expect(resolveZoomScale(2)).toBeCloseTo(1.1, 6);
-    expect(resolveZoomScale(0)).toBeCloseTo(1 / 1.1, 6);
+  it("keeps marker icons within a standard 18-30 px range at every zoom", () => {
+    const basePx = ICON_RASTER_SIZE / ICON_PIXEL_RATIO;
+    expect(basePx).toBe(24);
+    expect(resolveIconSize(0) * basePx).toBeCloseTo(18, 6);
+    expect(resolveIconSize(3) * basePx).toBeCloseTo(18, 6);
+    expect(resolveIconSize(9) * basePx).toBeCloseTo(24, 6);
+    expect(resolveIconSize(15) * basePx).toBeCloseTo(30, 6);
+    expect(resolveIconSize(22) * basePx).toBeCloseTo(30, 6);
   });
 
   it("returns cluster radius buckets for zoom tiers", () => {
