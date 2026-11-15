@@ -73,6 +73,12 @@ describe("map marker movement", () => {
     page.setupState.finishMarkerDrag();
     await vi.waitFor(() => expect(patch).toHaveBeenCalledWith("/api/markers/marker-id/position", { lat: 3, lon: 4 }));
 
+    // Right after the drop the pointer is still on the marker: the menu stays closed
+    // until the pointer leaves it, like every other radial entry.
+    page.setupState.handleOperatorMarkerHoverMove(markerEvent);
+    await nextTick();
+    expect(root.querySelector(".webmap-marker-radial-menu")).toBeNull();
+    page.setupState.handleOperatorMarkerHoverLeave();
     page.setupState.handleOperatorMarkerHoverMove(markerEvent);
     await nextTick();
     expect(root.querySelector(".webmap-marker-radial-menu")).not.toBeNull();

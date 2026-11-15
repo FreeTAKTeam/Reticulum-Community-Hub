@@ -138,7 +138,7 @@
             type="button"
             class="webmap-marker-radial-center"
             title="Close"
-            @click.stop="closeZoneRadialMenu"
+            @click.stop="handleZoneRadialMenuCenter"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -1010,8 +1010,34 @@ const dismissRadialMenus = () => {
     closeZonePrompt();
   }
 };
+// Radial menus open on hover. Once an entry runs (or the menu is closed), the
+// pointer is usually still over the same marker or zone, so hovering it must not
+// reopen the menu: reopening closes whatever the entry opened (mission picker,
+// rename prompt, compass) before the user can use it. The menu stays closed for
+// that feature until the pointer leaves it, and for every feature while an
+// entry's dialog is open.
+const radialHoverSuppressedFor = ref<string | null>(null);
+const markerRadialKey = (markerId: string) => `marker:${markerId}`;
+const zoneRadialKey = (zoneId: string) => `zone:${zoneId}`;
+const radialFollowUpOpen = computed(
+  () =>
+    Boolean(markerShareId.value) ||
+    markerRenameOpen.value ||
+    markerAssignOpen.value ||
+    zoneAssignOpen.value ||
+    zonePromptOpen.value
+);
+const suppressRadialHover = (key: string) => {
+  radialHoverSuppressedFor.value = key;
+};
+const radialHoverBlocked = (key: string) =>
+  radialFollowUpOpen.value || radialHoverSuppressedFor.value === key;
+
 const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
   if (markerMoveArmId.value || draggingMarkerId.value || zoneMode.value || zoneEditingId.value) {
+    return;
+  }
+  if (radialHoverBlocked(markerRadialKey(markerId))) {
     return;
   }
   const anchored = resolveMarkerScreenPoint(markerId, point);
@@ -1028,6 +1054,9 @@ const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
 };
 const openHoverZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   if (markerMoveArmId.value || draggingMarkerId.value) {
+    return;
+  }
+  if (radialHoverBlocked(zoneRadialKey(zoneId))) {
     return;
   }
   if (zoneRadialMenuZoneId.value === zoneId) {
@@ -1239,6 +1268,12 @@ const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   zoneRadialMenuPoint.value = point;
   renderZones();
 };
+const handleZoneRadialMenuCenter = () => {
+  if (zoneRadialMenuZoneId.value) {
+    suppressRadialHover(zoneRadialKey(zoneRadialMenuZoneId.value));
+  }
+  closeZoneRadialMenu();
+};
 const handleMarkerRadialMenuCenter = () => {
   if (!markerRadialMenuMarkerId.value) {
     return;
@@ -1247,6 +1282,7 @@ const handleMarkerRadialMenuCenter = () => {
     markerRadialMenuPath.value = markerRadialMenuPath.value.slice(0, -1);
     return;
   }
+  suppressRadialHover(markerRadialKey(markerRadialMenuMarkerId.value));
   closeMarkerRadialMenu();
 };
 const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
@@ -1258,6 +1294,7 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     markerRadialMenuPath.value = [...markerRadialMenuPath.value, item.id];
     return;
   }
+  suppressRadialHover(markerRadialKey(markerId));
   if (item.action === "share") {
     markerShareId.value = markerId;
     closeMarkerRadialMenu();
@@ -1702,6 +1739,7 @@ const handleZoneRadialMenuItem = (item: ZoneRadialMenuNode) => {
   if (!zoneId) {
     return;
   }
+  suppressRadialHover(zoneRadialKey(zoneId));
   if (item.action === "rename") {
     closeZoneRadialMenu();
     openZoneRename(zoneId);
@@ -2948,6 +2986,7 @@ const renderZones = () => {
       map.getCanvas().style.cursor = "pointer";
     });
     map.on("mouseleave", "zone-fill", () => {
+      handleZoneHoverLeave();
       if (zoneDraggingVertexIndex.value === null) {
         map.getCanvas().style.cursor = "";
       }
@@ -3018,7 +3057,20 @@ const handleTelemetryMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) =>
   }
 };
 
+const releaseMarkerRadialHover = () => {
+  if (radialHoverSuppressedFor.value?.startsWith("marker:")) {
+    radialHoverSuppressedFor.value = null;
+  }
+};
+
+const handleZoneHoverLeave = () => {
+  if (radialHoverSuppressedFor.value?.startsWith("zone:")) {
+    radialHoverSuppressedFor.value = null;
+  }
+};
+
 const handleOperatorMarkerHoverLeave = () => {
+  releaseMarkerRadialHover();
   clearHoveredOperatorMarker();
   if (!draggingMarkerId.value && mapInstance.value) {
     mapInstance.value.getCanvas().style.cursor = "";
@@ -3347,6 +3399,7 @@ const renderTelemetryMarkers = () => {
     });
     map.on("mousemove", layerId, handleTelemetryMarkerHoverMove);
     map.on("mouseleave", layerId, () => {
+      releaseMarkerRadialHover();
       map.getCanvas().style.cursor = "";
     });
     telemetryIconInteractionReady = true;
