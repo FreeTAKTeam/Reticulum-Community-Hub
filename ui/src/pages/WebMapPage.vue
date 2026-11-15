@@ -17,7 +17,8 @@
             <span class="webmap-marker-reticle-corner webmap-marker-reticle-corner--br"></span>
             <div class="webmap-marker-reticle-ring webmap-marker-reticle-ring--outer"></div>
             <div class="webmap-marker-reticle-ring webmap-marker-reticle-ring--inner"></div>
-            <div class="webmap-marker-reticle-core">
+            <!-- The radial menu's Close button takes the centre while the menu is open. -->
+            <div v-if="!markerRadialMenuMarkerId" class="webmap-marker-reticle-core">
               <div class="webmap-marker-reticle-name">{{ markerReticleLabel }}</div>
               <div class="webmap-marker-reticle-sub">{{ markerReticleSubLabel }}</div>
             </div>
@@ -1135,9 +1136,6 @@ const markerReticleSubLabel = computed(() => {
   }
   if (markerMoveArmId.value && markerMoveArmId.value === markerId) {
     return "Move Armed";
-  }
-  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerId) {
-    return "Command Menu";
   }
   if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerId) {
     return "Compass Active";

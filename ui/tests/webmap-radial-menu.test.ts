@@ -154,4 +154,18 @@ describe("map radial menus", () => {
     expect(document.querySelector(".webmap-zone-radial-menu")).toBeNull();
     expect(page.setupState.zonePromptOpen).toBe(true);
   });
+
+  it("shows only the Close button at the centre of an open menu, with no Command Menu bubble under it", async () => {
+    const { page } = await mountMap();
+    page.setupState.hoveredOperatorMarkerId = "marker-id";
+    page.setupState.hoveredOperatorMarkerPoint = { x: 300, y: 300 };
+    await nextTick();
+    expect(document.querySelector(".webmap-marker-reticle-core")?.textContent).toContain("Marker");
+
+    await hoverMarker(page);
+    expect(radialMenu()).not.toBeNull();
+    expect(document.querySelector(".webmap-marker-reticle-core")).toBeNull();
+    expect(document.body.textContent).not.toContain("Command Menu");
+    expect(document.querySelector(".webmap-marker-radial-center")?.textContent?.trim()).toBe("Close");
+  });
 });
