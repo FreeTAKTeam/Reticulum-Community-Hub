@@ -6,14 +6,8 @@
           <span class="hud-brand-symbol">RCH</span>
           <span class="hud-brand-subtitle">Reticulum Community Hub</span>
         </div>
-        <div class="hud-brand-trace" aria-hidden="true">
-          <svg class="hud-brand-trace-svg" viewBox="0 0 640 40" preserveAspectRatio="none">
-            <path class="hud-brand-trace-fill" :d="brandTraceAreaPath" />
-            <path class="hud-brand-trace-carrier-glow" :d="brandTracePath" />
-            <path class="hud-brand-trace-carrier" :d="brandTracePath" />
-            <path class="hud-brand-trace-fringe" :d="brandTracePath" />
-            <path class="hud-brand-trace-pulse" :d="brandTracePath" />
-          </svg>
+        <div class="hud-brand-trace">
+          <CpuTrace :samples="metrics.cpuSamples.value" :capacity="metrics.cpuCapacity.value" />
         </div>
       </div>
       <div class="hud-banner-status">
@@ -147,67 +141,11 @@
 
       <main class="hud-center">
         <div class="hud-panel hud-telemetry">
-          <div class="hud-panel-header">
-            <div>
-              <div class="hud-panel-title">Global Telemetry Stream</div>
-              <div class="hud-panel-meta">
-                <span>Total: {{ formatNumber(dashboard.status?.telemetry?.total) }}</span>
-                <span>Last ingest: {{ formatTimestamp(dashboard.status?.telemetry?.last_ingest_at) }}</span>
-              </div>
-            </div>
-            <span v-if="isTelemetryStale" class="hud-pill hud-pill--warning">Stale</span>
-          </div>
-          <div class="hud-stream" :style="{ '--bucket-count': bucketCount }">
-            <div class="hud-stream-legend">
-              <span class="hud-legend-item hud-legend-item--ingest">Ingest</span>
-              <span class="hud-legend-item hud-legend-item--motion">Motion</span>
-              <span class="hud-legend-item hud-legend-item--throughput">Transport</span>
-              <span class="hud-legend-window">24H WINDOW</span>
-            </div>
-            <div class="hud-stream-grid hud-stream-grid--ingest">
-              <span
-                v-for="(value, index) in ingestSeries"
-                :key="`ingest-${index}`"
-                class="hud-stream-bar hud-stream-bar--ingest"
-                :style="{ height: `${value}%` }"
-              />
-            </div>
-            <div class="hud-stream-grid hud-stream-grid--motion">
-              <span
-                v-for="(value, index) in motionSeries"
-                :key="`motion-${index}`"
-                class="hud-stream-bar hud-stream-bar--motion"
-                :style="{ height: `${value}%` }"
-              />
-            </div>
-            <div class="hud-stream-grid hud-stream-grid--throughput">
-              <span
-                v-for="(value, index) in throughputSeries"
-                :key="`throughput-${index}`"
-                class="hud-stream-bar hud-stream-bar--throughput"
-                :style="{ height: `${value}%` }"
-              />
-            </div>
-            <div class="hud-stream-grid hud-stream-grid--markers">
-              <span
-                v-for="(value, index) in markerSeries"
-                :key="`marker-${index}`"
-                class="hud-stream-marker"
-                :style="{ opacity: value ? 1 : 0 }"
-              />
-            </div>
-            <div class="hud-stream-axis">
-              <span
-                v-for="(tick, index) in axisTicks"
-                :key="`tick-${index}`"
-                class="hud-stream-tick"
-                :style="{ left: `${tick.left}%` }"
-              >
-                <span class="hud-stream-tick-line" />
-                <span class="hud-stream-tick-label">{{ tick.label }}</span>
-              </span>
-            </div>
-          </div>
+          <MessageTrafficPanel
+            v-model:range="metrics.trafficRange.value"
+            :traffic="metrics.traffic.value"
+            :state="metrics.trafficState.value"
+          />
         </div>
 
         <div class="hud-panel hud-events">
@@ -320,25 +258,23 @@ import { formatTimestamp } from "../utils/format";
 import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
 import { resolveEventFeedMessage, eventIdentityTokens, buildEventCallsignLookup } from "../utils/event-feed";
 import ReticulumClock from "../components/ReticulumClock.vue";
+import CpuTrace from "../components/dashboard/CpuTrace.vue";
+import MessageTrafficPanel from "../components/dashboard/MessageTrafficPanel.vue";
+import { useDashboardMetrics } from "../composables/useDashboardMetrics";
 import type { EventEntry } from "../api/types";
 
 const dashboard = useDashboardStore();
 const toastStore = useToastStore();
 const connectionStore = useConnectionStore();
+const metrics = useDashboardMetrics();
 let pollerId: number | undefined;
 let disposed = false;
 let refreshing = false;
-let telemetrySubscribeTimer: number | undefined;
 const wsClient = ref<WsClient | null>(null);
-const telemetryWsClient = ref<WsClient | null>(null);
 const controlStatus = ref<ControlStatus | null>(null);
 const controlBusy = ref(false);
 const lastSyncMessage = ref("");
-let telemetryTickId: number | undefined;
 let sparklineTickId: number | undefined;
-let brandTraceFrameId: number | undefined;
-let brandTraceLastFrameAt = 0;
-const telemetrySubscribed = ref(false);
 const expandedEvents = ref<Record<string, boolean>>({});
 const eventPage = ref(1);
 
@@ -381,193 +317,8 @@ const apiErrorDetail = (error: unknown): string | undefined => {
   return undefined;
 };
 
-interface TelemetryBucket {
-  count: number;
-  motion: number;
-  throughput: number;
-  markers: number;
-}
-
-const HOURS_RANGE = 24;
-const BUCKET_MINUTES = 15;
-const BUCKET_MS = BUCKET_MINUTES * 60 * 1000;
-const BUCKET_COUNT = (HOURS_RANGE * 60) / BUCKET_MINUTES;
-const RANGE_MS = HOURS_RANGE * 60 * 60 * 1000;
 const EVENT_PAGE_SIZE = 12;
 const CONTROL_SYNC_TIMEOUT_MS = 70_000;
-
-const bucketCount = BUCKET_COUNT;
-const telemetryBuckets = ref<TelemetryBucket[]>([]);
-const bucketStart = ref<number>(0);
-const nowMs = ref(Date.now());
-
-const createEmptyBucket = (): TelemetryBucket => ({
-  count: 0,
-  motion: 0,
-  throughput: 0,
-  markers: 0
-});
-
-const resetBuckets = (anchorMs: number) => {
-  const base = Math.floor((anchorMs - RANGE_MS) / BUCKET_MS) * BUCKET_MS;
-  bucketStart.value = base;
-  telemetryBuckets.value = Array.from({ length: BUCKET_COUNT }, createEmptyBucket);
-};
-
-const shiftWindow = (anchorMs: number) => {
-  if (!bucketStart.value) {
-    resetBuckets(anchorMs);
-    return;
-  }
-  if (anchorMs < bucketStart.value) {
-    resetBuckets(anchorMs);
-    return;
-  }
-  const end = bucketStart.value + RANGE_MS;
-  if (anchorMs < end) {
-    return;
-  }
-  const newStart = Math.floor((anchorMs - RANGE_MS) / BUCKET_MS) * BUCKET_MS;
-  const shift = Math.min(BUCKET_COUNT, Math.floor((newStart - bucketStart.value) / BUCKET_MS));
-  if (shift > 0) {
-    telemetryBuckets.value = telemetryBuckets.value
-      .slice(shift)
-      .concat(Array.from({ length: shift }, createEmptyBucket));
-    bucketStart.value = newStart;
-  }
-};
-
-const toNumber = (value: unknown) => {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-};
-
-const calcMotion = (telemetry: Record<string, unknown>) => {
-  const location = telemetry.location as Record<string, unknown> | undefined;
-  const speed = location ? toNumber(location.speed ?? location.velocity ?? location.v) ?? 0 : 0;
-  const accel = telemetry.acceleration as Record<string, unknown> | number[] | undefined;
-  let accelMag = 0;
-  if (Array.isArray(accel)) {
-    const x = toNumber(accel[0]) ?? 0;
-    const y = toNumber(accel[1]) ?? 0;
-    const z = toNumber(accel[2]) ?? 0;
-    accelMag = Math.sqrt(x * x + y * y + z * z);
-  } else if (accel && typeof accel === "object") {
-    const x = toNumber(accel.x ?? accel.X) ?? 0;
-    const y = toNumber(accel.y ?? accel.Y) ?? 0;
-    const z = toNumber(accel.z ?? accel.Z) ?? 0;
-    accelMag = Math.sqrt(x * x + y * y + z * z);
-  }
-  return Math.max(speed, accelMag);
-};
-
-const calcThroughput = (telemetry: Record<string, unknown>) => {
-  const rns = telemetry.rns_transport as Record<string, unknown> | undefined;
-  if (!rns || typeof rns !== "object") {
-    return 0;
-  }
-  const rx = toNumber(rns.speed_rx ?? rns.speed_rx_inst ?? rns.rxs) ?? 0;
-  const tx = toNumber(rns.speed_tx ?? rns.speed_tx_inst ?? rns.txs) ?? 0;
-  return rx + tx;
-};
-
-const hasMarker = (telemetry: Record<string, unknown>) => {
-  const custom = telemetry.custom as Record<string, unknown> | undefined;
-  if (!custom || typeof custom !== "object") {
-    return false;
-  }
-  const marker = (custom as Record<string, unknown>).marker;
-  if (Array.isArray(marker)) {
-    return marker.some((entry) => Boolean(entry));
-  }
-  return Boolean(marker);
-};
-
-const resolveTimestampMs = (entry: Record<string, unknown>) => {
-  const timestamp = entry.timestamp;
-  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
-    return timestamp * 1000;
-  }
-  const createdAt = entry.created_at;
-  if (typeof createdAt === "string") {
-    const parsed = Date.parse(createdAt);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
-  return Date.now();
-};
-
-const pushTelemetryEntry = (entry: Record<string, unknown>) => {
-  const timestampMs = resolveTimestampMs(entry);
-  shiftWindow(timestampMs);
-  const index = Math.floor((timestampMs - bucketStart.value) / BUCKET_MS);
-  if (index < 0 || index >= BUCKET_COUNT) {
-    return;
-  }
-  const telemetry = (entry.telemetry ?? entry.data ?? {}) as Record<string, unknown>;
-  const bucket = telemetryBuckets.value[index];
-  bucket.count += 1;
-  bucket.motion = Math.max(bucket.motion, calcMotion(telemetry));
-  bucket.throughput = Math.max(bucket.throughput, calcThroughput(telemetry));
-  if (hasMarker(telemetry)) {
-    bucket.markers += 1;
-  }
-};
-
-const ingestSeries = computed(() => {
-  const values = telemetryBuckets.value.map((bucket) => bucket.count);
-  const max = Math.max(1, ...values);
-  return values.map((value) => Math.min(100, (value / max) * 100));
-});
-
-const motionSeries = computed(() => {
-  const values = telemetryBuckets.value.map((bucket) => bucket.motion);
-  const max = Math.max(1, ...values);
-  return values.map((value) => Math.min(100, (value / max) * 100));
-});
-
-const throughputSeries = computed(() => {
-  const values = telemetryBuckets.value.map((bucket) => bucket.throughput);
-  const max = Math.max(1, ...values);
-  return values.map((value) => Math.min(100, (value / max) * 100));
-});
-
-const markerSeries = computed(() => telemetryBuckets.value.map((bucket) => bucket.markers));
-
-const axisTicks = computed(() => {
-  const now = nowMs.value;
-  return Array.from({ length: 5 }, (_, idx) => {
-    const hoursAgo = (4 - idx) * 6;
-    const tickTime = new Date(now - hoursAgo * 60 * 60 * 1000);
-    const label = tickTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return {
-      label,
-      left: (idx / 4) * 100
-    };
-  });
-});
-
-const sendTelemetrySubscribe = () => {
-  if (!telemetryWsClient.value || telemetrySubscribed.value) {
-    return;
-  }
-  telemetryWsClient.value.send({
-    type: "telemetry.subscribe",
-    ts: new Date().toISOString(),
-    data: {
-      since: Math.floor((Date.now() - RANGE_MS) / 1000),
-      follow: true
-    }
-  });
-  telemetrySubscribed.value = true;
-};
 
 const uptime = computed(() => {
   const value = dashboard.status?.uptime;
@@ -577,18 +328,6 @@ const uptime = computed(() => {
   const hours = Math.floor(value / 3600);
   const minutes = Math.floor((value % 3600) / 60);
   return `${hours}h ${minutes}m`;
-});
-
-const isTelemetryStale = computed(() => {
-  const last = dashboard.status?.telemetry?.last_ingest_at;
-  if (!last) {
-    return false;
-  }
-  const lastDate = new Date(last).getTime();
-  if (Number.isNaN(lastDate)) {
-    return false;
-  }
-  return Date.now() - lastDate > 10 * 60 * 1000;
 });
 
 const controlStatusLabel = computed(() => {
@@ -708,111 +447,6 @@ const refreshSparklines = () => {
   missionsSparkline.value = mutateSparkline(missionsSparkline.value);
 };
 
-interface BrandTraceState {
-  values: number[];
-  travel: number;
-  incoming: number;
-  speed: number;
-}
-
-const BRAND_TRACE_WIDTH = 640;
-const BRAND_TRACE_HEIGHT = 40;
-const BRAND_TRACE_POINT_COUNT = 180;
-const BRAND_TRACE_POINT_STEP_X = BRAND_TRACE_WIDTH / (BRAND_TRACE_POINT_COUNT - 1);
-const BRAND_TRACE_ANCHOR_Y = 19.5;
-const BRAND_TRACE_AMPLITUDE = 14.2;
-const BRAND_TRACE_MIN = 0.04;
-const BRAND_TRACE_MAX = 0.96;
-const BRAND_TRACE_MAX_DELTA_SECONDS = 0.065;
-const BRAND_TRACE_SPEED_SLOWDOWN_FACTOR = 0.27;
-
-const brandTracePath = ref("");
-const brandTraceAreaPath = ref("");
-
-const clampBrandTrace = (value: number) => Math.max(BRAND_TRACE_MIN, Math.min(BRAND_TRACE_MAX, value));
-
-const randomBrandTraceSpeed = () => (10 + Math.random() * 8) * BRAND_TRACE_SPEED_SLOWDOWN_FACTOR;
-
-const randomBrandTracePoint = (previous: number) => {
-  const drift = (Math.random() - 0.5) * 0.34;
-  const recoil = (0.5 - previous) * (0.08 + Math.random() * 0.1);
-  const spike = Math.random() < 0.18 ? (Math.random() - 0.5) * (0.72 + Math.random() * 0.36) : 0;
-  const micro = (Math.random() - 0.5) * 0.08;
-  return clampBrandTrace(previous + drift + recoil + spike + micro);
-};
-
-const createBrandTraceSeed = () => {
-  let current = clampBrandTrace(0.5 + (Math.random() - 0.5) * 0.18);
-  return Array.from({ length: BRAND_TRACE_POINT_COUNT }, () => {
-    current = randomBrandTracePoint(current);
-    return current;
-  });
-};
-
-const createBrandTraceState = (): BrandTraceState => {
-  const values = createBrandTraceSeed();
-  const lastValue = values[values.length - 1] ?? 0.5;
-  return {
-    values,
-    travel: 0,
-    incoming: randomBrandTracePoint(lastValue),
-    speed: randomBrandTraceSpeed()
-  };
-};
-
-const brandTraceState = createBrandTraceState();
-
-const toBrandTraceY = (value: number) => {
-  const y = BRAND_TRACE_ANCHOR_Y - (value - 0.5) * BRAND_TRACE_AMPLITUDE * 2;
-  return Math.max(2, Math.min(BRAND_TRACE_HEIGHT - 2, y));
-};
-
-const sampleBrandTraceValue = (state: BrandTraceState, index: number) => {
-  const position = index + state.travel;
-  const baseIndex = Math.floor(position);
-  const blend = position - baseIndex;
-  const current = baseIndex >= 0 && baseIndex < state.values.length ? state.values[baseIndex] : state.incoming;
-  const next = baseIndex + 1 >= 0 && baseIndex + 1 < state.values.length ? state.values[baseIndex + 1] : state.incoming;
-  return current + (next - current) * blend;
-};
-
-const renderBrandTrace = () => {
-  const firstY = toBrandTraceY(sampleBrandTraceValue(brandTraceState, 0)).toFixed(2);
-  let path = `M0.00 ${firstY}`;
-  for (let index = 1; index < BRAND_TRACE_POINT_COUNT; index += 1) {
-    const x = (index * BRAND_TRACE_POINT_STEP_X).toFixed(2);
-    const y = toBrandTraceY(sampleBrandTraceValue(brandTraceState, index)).toFixed(2);
-    path += ` L${x} ${y}`;
-  }
-  brandTracePath.value = path;
-  brandTraceAreaPath.value = `${path} L${BRAND_TRACE_WIDTH.toFixed(2)} ${BRAND_TRACE_HEIGHT.toFixed(2)} L0.00 ${BRAND_TRACE_HEIGHT.toFixed(2)} Z`;
-};
-
-const advanceBrandTrace = (deltaSeconds: number) => {
-  brandTraceState.travel += deltaSeconds * brandTraceState.speed;
-  while (brandTraceState.travel >= 1) {
-    brandTraceState.travel -= 1;
-    brandTraceState.values.shift();
-    brandTraceState.values.push(brandTraceState.incoming);
-    const lastValue = brandTraceState.values[brandTraceState.values.length - 1] ?? 0.5;
-    brandTraceState.incoming = randomBrandTracePoint(lastValue);
-    if (Math.random() < 0.1) {
-      brandTraceState.speed = randomBrandTraceSpeed();
-    }
-  }
-};
-
-const animateBrandTrace = (timestamp: number) => {
-  const deltaSeconds = Math.max(
-    0,
-    Math.min((timestamp - brandTraceLastFrameAt) / 1000, BRAND_TRACE_MAX_DELTA_SECONDS)
-  );
-  brandTraceLastFrameAt = timestamp;
-  advanceBrandTrace(deltaSeconds);
-  renderBrandTrace();
-  brandTraceFrameId = window.requestAnimationFrame(animateBrandTrace);
-};
-
 const refreshControlStatus = async () => {
   controlBusy.value = true;
   try {
@@ -895,12 +529,12 @@ const syncBackend = async () => {
 };
 
 onMounted(async () => {
+  metrics.start();
   try {
   await dashboard.refresh();
   if (disposed) { return; }
   await refreshControlStatus();
   if (disposed) { return; }
-  resetBuckets(Date.now());
   const ws = new WsClient(
     "/events/system",
     (payload) => {
@@ -926,41 +560,6 @@ onMounted(async () => {
   wsClient.value = ws;
   ws.connect();
 
-  const telemetryWs = new WsClient(
-    "/telemetry/stream",
-    (payload) => {
-      if (payload.type === "auth.ok") {
-        sendTelemetrySubscribe();
-        return;
-      }
-      if (payload.type === "telemetry.snapshot") {
-        const entries = (payload.data as { entries?: Record<string, unknown>[] })?.entries ?? [];
-        resetBuckets(Date.now());
-        entries.forEach((entry) => pushTelemetryEntry(entry));
-        return;
-      }
-      if (payload.type === "telemetry.update") {
-        const entry = (payload.data as { entry?: Record<string, unknown> })?.entry ?? payload.data;
-        if (entry && typeof entry === "object") {
-          pushTelemetryEntry(entry as Record<string, unknown>);
-        }
-      }
-    },
-    () => {
-      telemetrySubscribeTimer = window.setTimeout(() => {
-        if (!disposed) { sendTelemetrySubscribe(); }
-      }, 250);
-    }
-  );
-  telemetryWs.connect();
-  telemetryWsClient.value = telemetryWs;
-
-  renderBrandTrace();
-  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    brandTraceLastFrameAt = window.performance.now();
-    brandTraceFrameId = window.requestAnimationFrame(animateBrandTrace);
-  }
-
   pollerId = window.setInterval(() => {
     if (disposed || refreshing) { return; }
     refreshing = true;
@@ -973,11 +572,6 @@ onMounted(async () => {
     refreshSparklines();
   }, SPARKLINE_TICK_MS);
 
-  telemetryTickId = window.setInterval(() => {
-    const now = Date.now();
-    nowMs.value = now;
-    shiftWindow(now);
-  }, 60000);
   } catch (error) {
     if (!disposed) { console.warn("Unable to initialize dashboard", error); toastStore.push("Unable to load dashboard", "danger"); }
   }
@@ -986,22 +580,13 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true;
   wsClient.value?.close();
-  telemetryWsClient.value?.close();
   if (pollerId) {
     window.clearInterval(pollerId);
-  }
-  if (telemetryTickId) {
-    window.clearInterval(telemetryTickId);
   }
   if (sparklineTickId) {
     window.clearInterval(sparklineTickId);
   }
-  if (telemetrySubscribeTimer) { window.clearTimeout(telemetrySubscribeTimer); }
-  if (brandTraceFrameId) {
-    window.cancelAnimationFrame(brandTraceFrameId);
-  }
-  brandTraceFrameId = undefined;
-  brandTraceLastFrameAt = 0;
+  metrics.stop();
 });
 </script>
 

@@ -745,6 +745,36 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
     return jsonResponse(target);
   }
 
+  if (pathname === "/Status/Cpu") {
+    const now = Date.now();
+    return jsonResponse({
+      interval_seconds: 5,
+      capacity: 120,
+      samples: Array.from({ length: 120 }, (_, index) => ({
+        ts_ms: now - (119 - index) * 5000,
+        system_percent: 18 + 12 * Math.sin(index / 9) + (index % 17 === 0 ? 40 : 0),
+        process_percent: 3 + 2 * Math.sin(index / 5)
+      }))
+    });
+  }
+
+  if (pathname === "/Chat/Traffic") {
+    const range = url.searchParams.get("range") ?? "24h";
+    const shape = range === "1h" ? { count: 60, ms: 60_000 } : range === "7d" ? { count: 168, ms: 3_600_000 } : { count: 96, ms: 900_000 };
+    const end = (Math.floor(Date.now() / shape.ms) + 1) * shape.ms;
+    const start = end - shape.count * shape.ms;
+    const buckets = Array.from({ length: shape.count }, (_, index) => {
+      const received = Math.round(6 + 5 * Math.sin(index / 6) + (index % 7));
+      const sent = received * 2 + (index % 5);
+      return { start_ts_ms: start + index * shape.ms, received, sent, failed: index % 11 === 0 ? 2 : 0 };
+    });
+    const totals = buckets.reduce(
+      (sum, bucket) => ({ received: sum.received + bucket.received, sent: sum.sent + bucket.sent, failed: sum.failed + bucket.failed }),
+      { received: 0, sent: 0, failed: 0 }
+    );
+    return jsonResponse({ range, bucket_seconds: shape.ms / 1000, start_ts_ms: start, end_ts_ms: end, totals, buckets });
+  }
+
   if (pathname === "/Chat/Messages") {
     return jsonResponse(mockState.chatMessages);
   }

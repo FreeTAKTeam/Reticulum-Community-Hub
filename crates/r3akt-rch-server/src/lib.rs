@@ -49,6 +49,7 @@ mod chat_scope;
 mod command_persistence;
 use chat_scope::message_scope;
 mod first_run_setup;
+mod host_metrics;
 mod hub_name;
 mod identity_directory;
 mod identity_directory_config;
@@ -73,6 +74,7 @@ mod durable_broker;
 mod runtime_delivery_workers;
 mod runtime_periodic_workers;
 mod websocket_json;
+pub use host_metrics::{CPU_SAMPLE_CAPACITY, CPU_SAMPLE_INTERVAL, CpuSample, spawn_cpu_sampler};
 pub use runtime_delivery_workers::{
     spawn_reticulumd_inbound_worker, spawn_reticulumd_inbound_worker_with_interval,
 };
@@ -213,6 +215,7 @@ pub struct AppState {
     telemetry_events: broadcast::Sender<TelemetryRecord>,
     internal_events: broadcast::Sender<Value>,
     runtime_metrics: Arc<RuntimeMetricCounters>,
+    cpu_samples: host_metrics::CpuSampleRing,
     sqlite_blocking_permits: Arc<tokio::sync::Semaphore>,
     reticulumd_rpc_endpoint: Option<Arc<String>>,
     reticulumd_source: Option<Arc<String>>,
@@ -493,6 +496,7 @@ impl Default for AppState {
             telemetry_events,
             internal_events,
             runtime_metrics: Arc::default(),
+            cpu_samples: Arc::default(),
             sqlite_blocking_permits: Arc::new(tokio::sync::Semaphore::new(8)),
             reticulumd_rpc_endpoint: None,
             reticulumd_source: None,
@@ -2014,6 +2018,7 @@ pub fn create_app_with_state_and_ui_dist_path(state: AppState, ui_dist_path: Pat
 fn create_app_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         .route("/Status", get(status_snapshot))
+        .route("/Status/Cpu", get(host_metrics::cpu_status))
         .route("/diagnostics/runtime", get(runtime_diagnostics))
         .route("/Diagnostics/Runtime", get(runtime_diagnostics))
         .route("/api/v1/auth/validate", get(validate_auth))
@@ -2080,6 +2085,7 @@ fn create_app_router(state: AppState) -> Router {
         )
         .route("/Image/{file_id}/raw", get(retrieve_image_raw))
         .route("/Chat/Messages", get(list_chat_messages))
+        .route("/Chat/Traffic", get(host_metrics::chat_traffic))
         .route(
             "/Chat/Message",
             get(method_not_allowed).post(send_chat_message),
@@ -4104,6 +4110,56 @@ fn openapi_components() -> Value {
                     "files": { "type": "integer" },
                     "images": { "type": "integer" },
                     "telemetry": openapi_schema_ref("TelemetryStats")
+                }
+            },
+            "CpuStatus": {
+                "type": "object",
+                "description": "Ring of recent CPU samples, oldest first.",
+                "properties": {
+                    "interval_seconds": { "type": "integer" },
+                    "capacity": { "type": "integer" },
+                    "samples": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ts_ms": { "type": "integer" },
+                                "system_percent": { "type": "number" },
+                                "process_percent": openapi_nullable(json!({ "type": "number" }))
+                            }
+                        }
+                    }
+                }
+            },
+            "ChatTraffic": {
+                "type": "object",
+                "description": "Message traffic histogram; failed is a subset of sent.",
+                "properties": {
+                    "range": { "type": "string", "enum": ["1h", "24h", "7d"] },
+                    "bucket_seconds": { "type": "integer" },
+                    "start_ts_ms": { "type": "integer" },
+                    "end_ts_ms": { "type": "integer" },
+                    "totals": { "$ref": "#/components/schemas/ChatTrafficCounts" },
+                    "buckets": {
+                        "type": "array",
+                        "items": {
+                            "allOf": [
+                                { "$ref": "#/components/schemas/ChatTrafficCounts" },
+                                {
+                                    "type": "object",
+                                    "properties": { "start_ts_ms": { "type": "integer" } }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "ChatTrafficCounts": {
+                "type": "object",
+                "properties": {
+                    "received": { "type": "integer" },
+                    "sent": { "type": "integer" },
+                    "failed": { "type": "integer" }
                 }
             },
             "TelemetryStats": {
@@ -6342,6 +6398,13 @@ fn openapi_document() -> Value {
             "/Status": {
                 "get": openapi_schema_response_operation(Vec::new(), "Status", "Status snapshot.")
             },
+            "/Status/Cpu": {
+                "get": openapi_schema_response_operation(
+                    Vec::new(),
+                    "CpuStatus",
+                    "Recent machine and server-process CPU samples (Rust server only)."
+                )
+            },
             "/Diagnostics/Runtime": {
                 "get": openapi_operation_aliases(
                     openapi_schema_response_operation(
@@ -6571,6 +6634,13 @@ fn openapi_document() -> Value {
                     ],
                     "ChatMessage",
                     "Chat message list."
+                )
+            },
+            "/Chat/Traffic": {
+                "get": openapi_schema_response_operation(
+                    vec![openapi_query_parameter("range")],
+                    "ChatTraffic",
+                    "Messages received and sent by the hub per time bucket; range is 1h, 24h (default) or 7d (Rust server only)."
                 )
             },
             "/Chat/Message": {
@@ -22856,6 +22926,7 @@ mod tests {
         // `/Command` is a family prefix in the UI; concrete command routes remain explicit.
         const UI_ENDPOINTS: &[&str] = &[
             "/Status",
+            "/Status/Cpu",
             "/Events",
             "/Topic",
             "/Subscriber",
@@ -22864,6 +22935,7 @@ mod tests {
             "/File",
             "/Image",
             "/Chat/Messages",
+            "/Chat/Traffic",
             "/Chat/Message",
             "/Chat/Attachment",
             "/Client",

@@ -171,3 +171,65 @@ fn version_eight_upgrade_preserves_history_and_existing_pending_index() {
     assert_eq!(std::fs::read(backup_path).unwrap(), backup_bytes);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+fn traffic_message(
+    id: &str,
+    created_ts_ms: i64,
+    inbound: bool,
+    state: &str,
+) -> crate::MessageRecord {
+    crate::MessageRecord {
+        message_id: id.into(),
+        topic_id: None,
+        destination: Some("peer".into()),
+        sender: "hub".into(),
+        content: "hello".into(),
+        delivery_mode: crate::DeliveryMode::Targeted,
+        delivery_method: "direct".into(),
+        delivery_policy_reason: String::new(),
+        delivery_state: state.into(),
+        delivery_metadata: if inbound {
+            serde_json::json!({"direction": "inbound"})
+        } else {
+            serde_json::json!({})
+        },
+        created_ts_ms,
+        attachments: Vec::new(),
+    }
+}
+
+#[test]
+fn message_traffic_buckets_received_sent_and_failed() {
+    let mut store = RchSqliteStore::in_memory().unwrap();
+    for message in [
+        traffic_message("before-window", 999, true, "delivered"),
+        traffic_message("in-0", 1_000, true, "delivered"),
+        traffic_message("out-0", 1_050, false, "sent"),
+        traffic_message("out-0-failed", 1_099, false, "failed"),
+        traffic_message("in-2", 1_250, true, "delivered"),
+        traffic_message("out-2", 1_299, false, "delivered"),
+        traffic_message("after-window", 1_300, false, "sent"),
+    ] {
+        store.upsert_message(&message).unwrap();
+    }
+
+    let buckets = store.message_traffic(1_000, 100, 3).unwrap();
+
+    assert_eq!(
+        buckets,
+        vec![
+            super::MessageTrafficBucket {
+                received: 1,
+                sent: 2,
+                failed: 1
+            },
+            super::MessageTrafficBucket::default(),
+            super::MessageTrafficBucket {
+                received: 1,
+                sent: 1,
+                failed: 0
+            },
+        ]
+    );
+    assert!(store.message_traffic(0, 0, 3).is_err());
+}
