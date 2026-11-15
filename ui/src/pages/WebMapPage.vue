@@ -3077,9 +3077,14 @@ const finishMarkerDrag = () => {
   const markerId = draggingMarkerId.value;
   const origin = draggingMarkerOrigin.value;
   const override = markerId ? dragPositions.value.get(markerId) : undefined;
+  const moved = Boolean(
+    markerId && origin && override && (origin.lat !== override.lat || origin.lon !== override.lon)
+  );
   draggingMarkerId.value = null;
   draggingMarkerOrigin.value = null;
-  if (markerId) {
+  // A moved marker keeps its dropped position until the server accepts or rejects
+  // the move; clearing it now would redraw the old position while the save runs.
+  if (markerId && !moved) {
     dragPositions.value.delete(markerId);
   }
   markerMoveArmId.value = null;
@@ -3089,13 +3094,25 @@ const finishMarkerDrag = () => {
   mapInstance.value.getCanvas().style.cursor = "";
   renderOperatorMarkers();
   syncMarkerInteractionAnchors();
-  if (markerId && origin && override) {
-    if (origin.lat !== override.lat || origin.lon !== override.lon) {
-      void markersStore.updateMarkerPosition(markerId, override.lat, override.lon).then(() => {
-        renderOperatorMarkers();
-        syncMarkerInteractionAnchors();
-      });
+  if (moved && markerId && override) {
+    void commitMarkerMove(markerId, override);
+  }
+};
+
+const commitMarkerMove = async (markerId: string, target: { lat: number; lon: number }) => {
+  try {
+    await markersStore.updateMarkerPosition(markerId, target.lat, target.lon);
+  } catch (error) {
+    console.warn(`Unable to move marker ${markerId}`, error);
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
+    toastStore.push(`Unable to move marker${detail}`, "danger");
+  } finally {
+    // Only drop the pending position this save owns; a newer drag replaces it.
+    if (dragPositions.value.get(markerId) === target) {
+      dragPositions.value.delete(markerId);
     }
+    renderOperatorMarkers();
+    syncMarkerInteractionAnchors();
   }
 };
 
