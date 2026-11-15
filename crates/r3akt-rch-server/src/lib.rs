@@ -749,11 +749,7 @@ impl AppState {
         let identity_config = RchServiceIdentityConfig {
             private_key,
             display_name,
-            capabilities: vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-            ],
+            capabilities: rch_identity_announce_capabilities(),
             metadata: BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
         };
         self.lxmf_zmq_data_plane = Some(Arc::new(data_plane));
@@ -9444,6 +9440,23 @@ fn announce_capabilities_snapshot(state: &AppState) -> Value {
         "capabilities": payload,
         "encoded_size_bytes": encoded_size_bytes,
     })
+}
+
+/// Capabilities in the hub's on-air LXMF announce. The hub features after the REM
+/// set let clients tell an RCH hub apart from a REM phone, which announces the REM set only.
+fn rch_identity_announce_capabilities() -> Vec<String> {
+    [
+        "r3akt",
+        "emergencymessages",
+        "telemetry",
+        "topic_broker",
+        "group_chat",
+        "telemetry_relay",
+        "attachments",
+    ]
+    .into_iter()
+    .map(ToString::to_string)
+    .collect()
 }
 
 fn announce_capability_list(state: &AppState) -> Vec<&'static str> {

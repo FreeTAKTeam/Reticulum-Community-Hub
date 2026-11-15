@@ -135,11 +135,7 @@ pub(super) fn update_identity_announce(
     if let Some(data_plane) = state.lxmf_zmq_data_plane.clone() {
         let identity = match data_plane.update_identity_announce(
             display_name,
-            vec![
-                "r3akt".to_string(),
-                "emergencymessages".to_string(),
-                "telemetry".to_string(),
-            ],
+            super::rch_identity_announce_capabilities(),
             BTreeMap::from([("service".to_string(), Value::String("rch".to_string()))]),
         ) {
             Ok(identity) => identity,
@@ -169,4 +165,26 @@ pub(super) fn update_identity_announce(
         return Ok(true);
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod announce_capability_tests {
+    #[test]
+    fn hub_announce_carries_rch_features_beyond_the_rem_set() {
+        let capabilities = super::super::rch_identity_announce_capabilities();
+
+        // REM lists a hub in its picker only when `r3akt` comes with an RCH server feature.
+        assert!(capabilities.iter().any(|capability| capability == "r3akt"));
+        for feature in [
+            "topic_broker",
+            "group_chat",
+            "telemetry_relay",
+            "attachments",
+        ] {
+            assert!(
+                capabilities.iter().any(|capability| capability == feature),
+                "missing {feature}"
+            );
+        }
+    }
 }
