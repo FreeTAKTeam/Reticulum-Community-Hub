@@ -641,6 +641,18 @@ const activeTabTitle = computed(() => {
   return "Routing";
 });
 
+// Declared before the computeds below: useIdentityEnrichment evaluates them during
+// setup, so a later `const` would be in its temporal dead zone when clients are cached.
+const resolveClientDisplayName = (client: { id?: string; display_name?: string }) => {
+  if (client.display_name) {
+    return client.display_name;
+  }
+  if (!client.id) {
+    return undefined;
+  }
+  return identityDisplayNameById.value.get(client.id) ?? identityDisplayNameById.value.get(client.id.toLowerCase());
+};
+
 const filteredClients = computed(() => {
   const filter = clientFilter.value.trim().toLowerCase();
   return usersStore.clients.filter((client) => {
@@ -1487,16 +1499,6 @@ useIdentityEnrichment(computed(() => activeTab.value === "clients"
   ? pagedClients.value.map((client) => client.id ?? "")
   : activeTab.value === "routing" ? routingEntries.value.map((entry) => entry.identity)
   : teamMemberEditorOpen.value ? usersStore.clients.map((client) => client.id ?? "") : []));
-
-const resolveClientDisplayName = (client: { id?: string; display_name?: string }) => {
-  if (client.display_name) {
-    return client.display_name;
-  }
-  if (!client.id) {
-    return undefined;
-  }
-  return identityDisplayNameById.value.get(client.id) ?? identityDisplayNameById.value.get(client.id.toLowerCase());
-};
 
 const handleApiError = (error: unknown, fallback: string) => {
   const apiError = error as ApiError;

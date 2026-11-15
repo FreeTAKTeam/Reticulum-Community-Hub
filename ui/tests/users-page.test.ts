@@ -4,6 +4,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import UsersPage from "../src/pages/UsersPage.vue";
 import { useToastStore } from "../src/stores/toasts";
+import { useUsersStore } from "../src/stores/users";
 
 const { delMock, getMock, postMock, putMock } = vi.hoisted(() => ({
   delMock: vi.fn(),
@@ -148,10 +149,14 @@ const clickClientTypeFilter = async (groupLabel: string, label: string) => {
   await waitForUi();
 };
 
-const mountPage = async (): Promise<MountedPage> => {
+const mountPage = async (prepare?: () => void): Promise<MountedPage> => {
   const root = document.createElement("div");
   document.body.appendChild(root);
   const pinia = createPinia();
+  if (prepare) {
+    setActivePinia(pinia);
+    prepare();
+  }
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/users", component: UsersPage }]
@@ -315,6 +320,14 @@ describe("users page", () => {
     expect(text()).toContain("Bravo Route");
     expect(text()).toContain("route-bravo");
     expect(text()).toContain("Joined");
+  });
+
+  it("mounts when the users store already holds clients from an earlier visit", async () => {
+    page = await mountPage(() => {
+      useUsersStore().clients = [{ id: "client-cached", display_name: "Cached Client" }];
+    });
+    expect(text()).not.toContain("Something went wrong");
+    expect(text()).toContain("Alpha Client");
   });
 
   it("shows successfully loaded clients while identities are still pending", async () => {
