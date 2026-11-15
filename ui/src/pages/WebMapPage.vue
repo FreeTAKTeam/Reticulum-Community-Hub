@@ -624,7 +624,7 @@ import { defaultMarkerName } from "../utils/markers";
 import { getMarkerSymbol } from "../utils/markers";
 import { markerSymbols } from "../utils/markers";
 import { resolveClusterRadius } from "../utils/map-cluster";
-import { resolveZoomScale } from "../utils/map-cluster";
+import { ICON_PIXEL_RATIO, ICON_RASTER_SIZE, resolveIconSize } from "../utils/map-cluster";
 import { loadMdiSvg } from "../utils/mdi-icons";
 import { buildTelemetryIconId } from "../utils/telemetry-icons";
 import { resolveTelemetryIconValue } from "../utils/telemetry-icons";
@@ -2308,10 +2308,6 @@ const resolveCssColor = (name: string, fallback: string) => {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
 };
-const MDI_ICON_PIXEL_SIZE = 24;
-const NAPSG_ICON_PIXEL_SIZE = 91;
-const TELEMETRY_ICON_SCALE = 0.153;
-const NAPSG_ICON_SCALE = (MDI_ICON_PIXEL_SIZE / NAPSG_ICON_PIXEL_SIZE) * TELEMETRY_ICON_SCALE;
 const MARKER_PRIMARY_COLOR = resolveCssColor("--cui-primary", "#00b4ff");
 const MARKER_ICON_COLOR = MARKER_PRIMARY_COLOR;
 const MARKER_ICON_HALO_WIDTH = 1.2;
@@ -2359,19 +2355,12 @@ const markerLabelPaint = {
   "text-halo-width": MARKER_LABEL_HALO_WIDTH
 };
 
-const buildIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
-  const expression: ExpressionSpecification = [
-    "*",
-    ["coalesce", ["get", "iconScale"], TELEMETRY_ICON_SCALE],
-    resolveZoomScale(zoom)
-  ];
-  return expression;
-};
+// Every icon is registered at the same 24 CSS px base (see ICON_RASTER_SIZE), so one
+// zoom-dependent scale applies to MDI, NAPSG and fallback icons alike.
+const buildIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> =>
+  resolveIconSize(zoom);
 
-const buildTelemetryIconSizeExpression = (zoom: number): DataDrivenPropertyValueSpecification<number> => {
-  const expression: ExpressionSpecification = ["*", TELEMETRY_ICON_SCALE, resolveZoomScale(zoom)];
-  return expression;
-};
+const buildTelemetryIconSizeExpression = buildIconSizeExpression;
 
 const applyMarkerLabelVisibility = () => {
   if (!mapInstance.value || !mapReady.value) {
@@ -2512,18 +2501,23 @@ const rasterizeImage = async (url: string) => {
   });
   image.src = url;
   await loadPromise;
-  const width = image.naturalWidth || image.width || 32;
-  const height = image.naturalHeight || image.height || 32;
+  // Fit the source into a fixed square so the on-map size does not depend on the
+  // SVG's intrinsic size, which MDI icons leave to the browser.
+  const sourceWidth = image.naturalWidth || image.width || ICON_RASTER_SIZE;
+  const sourceHeight = image.naturalHeight || image.height || ICON_RASTER_SIZE;
+  const fit = ICON_RASTER_SIZE / Math.max(sourceWidth, sourceHeight);
+  const width = sourceWidth * fit;
+  const height = sourceHeight * fit;
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = ICON_RASTER_SIZE;
+  canvas.height = ICON_RASTER_SIZE;
   const context = canvas.getContext("2d");
   if (!context) {
     throw new Error("Unable to create canvas context for marker icon.");
   }
-  context.clearRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-  return context.getImageData(0, 0, width, height);
+  context.clearRect(0, 0, ICON_RASTER_SIZE, ICON_RASTER_SIZE);
+  context.drawImage(image, (ICON_RASTER_SIZE - width) / 2, (ICON_RASTER_SIZE - height) / 2, width, height);
+  return context.getImageData(0, 0, ICON_RASTER_SIZE, ICON_RASTER_SIZE);
 };
 
 const loadMarkerImage = async (map: maplibregl.Map, id: string, url: string, sdf: boolean) => {
@@ -2534,7 +2528,7 @@ const loadMarkerImage = async (map: maplibregl.Map, id: string, url: string, sdf
   try {
     const imageData = await rasterizeImage(url);
     if (disposed || map !== mapInstance.value) { return; }
-    map.addImage(id, imageData, { sdf });
+    map.addImage(id, imageData, { sdf, pixelRatio: ICON_PIXEL_RATIO });
   } catch (error) {
     console.warn(`Failed to load marker icon ${id} from ${url}.`, error);
   }
@@ -2588,7 +2582,6 @@ const buildOperatorFeatureCollection = () =>
         : symbolInfo?.set === "napsg"
           ? buildMarkerSymbolKey(symbolInfo.set, symbolInfo.id)
           : "marker-fallback";
-      const iconScale = symbolInfo?.set === "napsg" ? NAPSG_ICON_SCALE : TELEMETRY_ICON_SCALE;
       return {
         type: "Feature",
         geometry: {
@@ -2599,7 +2592,6 @@ const buildOperatorFeatureCollection = () =>
           id: marker.id,
           name: marker.name,
           symbol: symbolKey,
-          iconScale,
           color: marker.color
         }
       };
