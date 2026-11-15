@@ -16,7 +16,7 @@
   "dependencies": {
     "@mdi/svg": "^7.4.47",
     "maplibre-gl": "^6.11.2",
-    "markdown-it": "^14.3.2",
+    "markdown-it": "^14.3.3",
     "pinia": "^2.1.7",
     "vue": "^3.4.31",
     "vue-router": "^4.3.2"
