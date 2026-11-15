@@ -42,6 +42,19 @@ persistence and wire-response contract are documented in
 Older decoded-only snapshots require a fresh packed upload before they can be
 served. Live application acceptance remains tracked in issues #258 and #260.
 
+### Dashboard metrics (Rust-only)
+
+Two additive routes feed the dashboard and have no Python 2.9.x equivalent;
+the shared UI treats a 404 as "not reported by this server":
+
+- `GET /Status/Cpu` returns the last ten minutes of machine CPU (and the
+  server process normalised to the machine) sampled every five seconds by
+  `spawn_cpu_sampler`. The ring is in memory and starts empty after a restart.
+- `GET /Chat/Traffic?range=1h|24h|7d` returns messages received and sent by
+  the hub per 1-minute, 15-minute or 1-hour bucket, counted from durable
+  `rch_messages` history (`failed` is the subset of `sent` whose delivery
+  failed). Without SQLite it counts the resident message window.
+
 ## Release Gates
 
 Before switching the GitHub default branch to Rust, the branch must pass:

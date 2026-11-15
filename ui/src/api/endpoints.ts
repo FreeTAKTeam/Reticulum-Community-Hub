@@ -1,5 +1,6 @@
 export const endpoints = {
   status: "/Status",
+  statusCpu: "/Status/Cpu",
   events: "/Events",
   topics: "/Topic",
   subscribers: "/Subscriber",
@@ -8,6 +9,7 @@ export const endpoints = {
   files: "/File",
   images: "/Image",
   chatMessages: "/Chat/Messages",
+  chatTraffic: "/Chat/Traffic",
   chatMessage: "/Chat/Message",
   chatAttachment: "/Chat/Attachment",
   clients: "/Client",

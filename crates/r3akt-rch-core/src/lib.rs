@@ -30,8 +30,8 @@ mod sqlite_command_reads;
 mod sqlite_commands;
 mod sqlite_message_history;
 pub use sqlite_message_history::{
-    ChatHistoryFilter, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT, RECENT_MESSAGE_IDLE_MS,
-    json_resident_bytes,
+    ChatHistoryFilter, MessageTrafficBucket, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT,
+    RECENT_MESSAGE_IDLE_MS, json_resident_bytes,
 };
 pub(crate) use sqlite_values::{sqlite_read_u64, sqlite_read_usize, sqlite_u64};
 mod sqlite_marker_idempotency;

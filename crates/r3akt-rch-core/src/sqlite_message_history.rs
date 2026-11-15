@@ -123,6 +123,16 @@ pub(super) fn write_message(
     Ok(())
 }
 
+/// Message counts for one fixed-width traffic histogram bucket.
+///
+/// `failed` is the subset of `sent` whose delivery state is `failed`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct MessageTrafficBucket {
+    pub received: u64,
+    pub sent: u64,
+    pub failed: u64,
+}
+
 /// Filters preserve the existing chat API's exact string comparisons.
 #[derive(Default)]
 pub struct ChatHistoryFilter<'a> {
@@ -176,6 +186,60 @@ impl RchSqliteStore {
         let mut query = self.connection.prepare(&sql)?;
         let rows = query.query_map(params_from_iter(values), |row| row.get::<_, Vec<u8>>(0))?;
         rows.map(|row| decode_msgpack(&row?)).collect()
+    }
+
+    /// Count durable messages per fixed-width bucket starting at `start_ts_ms`.
+    ///
+    /// Inbound rows count as received; every other row counts as sent by the hub,
+    /// with failed deliveries also counted in `failed`.
+    pub fn message_traffic(
+        &self,
+        start_ts_ms: i64,
+        bucket_ms: i64,
+        bucket_count: usize,
+    ) -> Result<Vec<MessageTrafficBucket>, RchCoreError> {
+        if bucket_ms <= 0 {
+            return Err(RchCoreError::Encode(
+                "message traffic bucket width must be positive".into(),
+            ));
+        }
+        let span = i64::try_from(bucket_count)
+            .ok()
+            .and_then(|count| count.checked_mul(bucket_ms))
+            .ok_or_else(|| RchCoreError::Encode("message traffic window overflows".into()))?;
+        let end_ts_ms = start_ts_ms.saturating_add(span);
+        let mut buckets = vec![MessageTrafficBucket::default(); bucket_count];
+        let mut query = self.connection.prepare(
+            "SELECT (created_ts_ms - ?1) / ?2 AS bucket, \
+                    direction = 'inbound' AS inbound, \
+                    delivery_state = 'failed' AS failed, \
+                    COUNT(*) \
+             FROM rch_messages \
+             WHERE created_ts_ms >= ?1 AND created_ts_ms < ?3 \
+             GROUP BY bucket, inbound, failed",
+        )?;
+        let mut rows = query.query(params![start_ts_ms, bucket_ms, end_ts_ms])?;
+        while let Some(row) = rows.next()? {
+            let index = sqlite_read_usize(row, 0)?;
+            let inbound: bool = row.get(1)?;
+            let failed: bool = row.get(2)?;
+            let count = u64::try_from(row.get::<_, i64>(3)?)
+                .map_err(|e| RchCoreError::Decode(e.to_string()))?;
+            let Some(bucket) = buckets.get_mut(index) else {
+                return Err(RchCoreError::Decode(format!(
+                    "message traffic bucket {index} outside {bucket_count} buckets"
+                )));
+            };
+            if inbound {
+                bucket.received = bucket.received.saturating_add(count);
+            } else {
+                bucket.sent = bucket.sent.saturating_add(count);
+                if failed {
+                    bucket.failed = bucket.failed.saturating_add(count);
+                }
+            }
+        }
+        Ok(buckets)
     }
 
     /// Active dispatch operations are durable, whether or not their parent is resident.
