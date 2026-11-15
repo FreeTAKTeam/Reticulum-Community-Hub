@@ -3,8 +3,8 @@ import { createApp, nextTick, type App } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebMapPage from "../src/pages/WebMapPage.vue";
 
-const { get, patch } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }));
-vi.mock("../src/api/client", () => ({ get, patch, post: vi.fn(), put: vi.fn(), del: vi.fn() }));
+const { get, patch, post } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn() }));
+vi.mock("../src/api/client", () => ({ get, patch, post, put: vi.fn(), del: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class { connect() {} close() {} send() {} } }));
 vi.mock("../src/components/map/SensorGeometryLayer.vue", () => ({ default: { template: "<div />" } }));
 vi.mock("maplibre-gl", () => ({
@@ -161,5 +161,25 @@ describe("map marker movement", () => {
     await vi.waitFor(() => expect(page.setupState.dragPositions.has("marker-id")).toBe(false));
     expect(renderedPosition(page)).toEqual([2, 1]);
     expect(page.setupState.toastStore.messages.at(-1)?.message).toBe("Unable to move marker: offline");
+  });
+
+  it("shows the marker-placement cursor only while placement is armed", async () => {
+    post.mockResolvedValue({ object_destination_hash: "new-marker" });
+    const page = await mountWithMarker();
+    const stage = () => document.querySelector(".webmap-stage")!;
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
+
+    page.setupState.selectMarkerSymbol("friendly");
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(true);
+
+    await page.setupState.createMarkerAt({ lat: 5, lng: 6 });
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
+
+    page.setupState.selectMarkerSymbol("friendly");
+    page.setupState.toggleZoneMode();
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
   });
 });

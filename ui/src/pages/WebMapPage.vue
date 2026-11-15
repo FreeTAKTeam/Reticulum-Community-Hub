@@ -4,7 +4,7 @@
       :marker-name="markersStore.markerIndex.get(markerShareId)?.name ?? 'Marker'"
       @close="markerShareId = null" />
     <section class="webmap-main">
-      <div class="webmap-stage">
+      <div class="webmap-stage" :class="{ 'webmap-stage--placing-marker': markerMode }">
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
         <SensorGeometryLayer :map="mapInstance" />
