@@ -3,8 +3,8 @@ import { createApp, nextTick, type App } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebMapPage from "../src/pages/WebMapPage.vue";
 
-const { get, patch } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }));
-vi.mock("../src/api/client", () => ({ get, patch, post: vi.fn(), put: vi.fn(), del: vi.fn() }));
+const { get, patch, post } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), post: vi.fn() }));
+vi.mock("../src/api/client", () => ({ get, patch, post, put: vi.fn(), del: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class { connect() {} close() {} send() {} } }));
 vi.mock("../src/components/map/SensorGeometryLayer.vue", () => ({ default: { template: "<div />" } }));
 vi.mock("maplibre-gl", () => ({
@@ -73,6 +73,12 @@ describe("map marker movement", () => {
     page.setupState.finishMarkerDrag();
     await vi.waitFor(() => expect(patch).toHaveBeenCalledWith("/api/markers/marker-id/position", { lat: 3, lon: 4 }));
 
+    // Right after the drop the pointer is still on the marker: the menu stays closed
+    // until the pointer leaves it, like every other radial entry.
+    page.setupState.handleOperatorMarkerHoverMove(markerEvent);
+    await nextTick();
+    expect(root.querySelector(".webmap-marker-radial-menu")).toBeNull();
+    page.setupState.handleOperatorMarkerHoverLeave();
     page.setupState.handleOperatorMarkerHoverMove(markerEvent);
     await nextTick();
     expect(root.querySelector(".webmap-marker-radial-menu")).not.toBeNull();
@@ -103,5 +109,77 @@ describe("map marker movement", () => {
     page.setupState.handleOperatorMarkerHoverMove(markerEvent);
     await nextTick();
     expect(root.querySelector(".webmap-marker-radial-menu")).not.toBeNull();
+  });
+
+  const mountWithMarker = async () => {
+    get.mockImplementation(async (path: string) => path === "/api/markers" ? [{
+      object_destination_hash: "marker-id", name: "Marker", position: { lat: 1, lon: 2 }
+    }] : []);
+    const root = document.createElement("div");
+    document.body.append(root);
+    app = createApp(WebMapPage).use(createPinia());
+    const page = app.mount(root).$;
+    await vi.waitFor(() => expect(page.setupState.markersStore.markerIndex.has("marker-id")).toBe(true));
+    return page;
+  };
+
+  const dragMarkerTo = (page: ReturnType<typeof app.mount>["$"], lat: number, lon: number) => {
+    const markerEvent = { features: [{ properties: { id: "marker-id" } }], point: { x: 300, y: 300 } };
+    page.setupState.markerMoveArmId = "marker-id";
+    page.setupState.startMarkerDrag({ ...markerEvent, originalEvent: { button: 0, preventDefault() {} }, preventDefault() {} });
+    page.setupState.handleMarkerDrag({ lngLat: { lat, lng: lon } });
+    page.setupState.finishMarkerDrag();
+  };
+
+  const renderedPosition = (page: ReturnType<typeof app.mount>["$"]) => {
+    const feature = page.setupState.buildOperatorFeatureCollection().features
+      .find((entry: { properties: { id: string } }) => entry.properties.id === "marker-id");
+    return feature?.geometry.coordinates;
+  };
+
+  it("keeps a released marker at its new position while the move is being saved", async () => {
+    let accept!: () => void;
+    patch.mockImplementation(() => new Promise<void>((resolve) => { accept = resolve; }));
+    const page = await mountWithMarker();
+
+    dragMarkerTo(page, 3, 4);
+    await nextTick();
+    expect(patch).toHaveBeenCalledWith("/api/markers/marker-id/position", { lat: 3, lon: 4 });
+    expect(renderedPosition(page)).toEqual([4, 3]);
+
+    accept();
+    await vi.waitFor(() => expect(page.setupState.markersStore.markerIndex.get("marker-id")?.lat).toBe(3));
+    expect(page.setupState.dragPositions.has("marker-id")).toBe(false);
+    expect(renderedPosition(page)).toEqual([4, 3]);
+  });
+
+  it("returns the marker to its saved position and reports when the move fails", async () => {
+    patch.mockRejectedValue(new Error("offline"));
+    const page = await mountWithMarker();
+
+    dragMarkerTo(page, 3, 4);
+    await vi.waitFor(() => expect(page.setupState.dragPositions.has("marker-id")).toBe(false));
+    expect(renderedPosition(page)).toEqual([2, 1]);
+    expect(page.setupState.toastStore.messages.at(-1)?.message).toBe("Unable to move marker: offline");
+  });
+
+  it("shows the marker-placement cursor only while placement is armed", async () => {
+    post.mockResolvedValue({ object_destination_hash: "new-marker" });
+    const page = await mountWithMarker();
+    const stage = () => document.querySelector(".webmap-stage")!;
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
+
+    page.setupState.selectMarkerSymbol("friendly");
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(true);
+
+    await page.setupState.createMarkerAt({ lat: 5, lng: 6 });
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
+
+    page.setupState.selectMarkerSymbol("friendly");
+    page.setupState.toggleZoneMode();
+    await nextTick();
+    expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
   });
 });

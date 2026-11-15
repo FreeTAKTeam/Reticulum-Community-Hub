@@ -4,7 +4,7 @@
       :marker-name="markersStore.markerIndex.get(markerShareId)?.name ?? 'Marker'"
       @close="markerShareId = null" />
     <section class="webmap-main">
-      <div class="webmap-stage">
+      <div class="webmap-stage" :class="{ 'webmap-stage--placing-marker': markerMode }">
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
         <SensorGeometryLayer :map="mapInstance" />
@@ -17,7 +17,8 @@
             <span class="webmap-marker-reticle-corner webmap-marker-reticle-corner--br"></span>
             <div class="webmap-marker-reticle-ring webmap-marker-reticle-ring--outer"></div>
             <div class="webmap-marker-reticle-ring webmap-marker-reticle-ring--inner"></div>
-            <div class="webmap-marker-reticle-core">
+            <!-- The radial menu's Close button takes the centre while the menu is open. -->
+            <div v-if="!markerRadialMenuMarkerId" class="webmap-marker-reticle-core">
               <div class="webmap-marker-reticle-name">{{ markerReticleLabel }}</div>
               <div class="webmap-marker-reticle-sub">{{ markerReticleSubLabel }}</div>
             </div>
@@ -138,7 +139,7 @@
             type="button"
             class="webmap-marker-radial-center"
             title="Close"
-            @click.stop="closeZoneRadialMenu"
+            @click.stop="handleZoneRadialMenuCenter"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -1010,8 +1011,34 @@ const dismissRadialMenus = () => {
     closeZonePrompt();
   }
 };
+// Radial menus open on hover. Once an entry runs (or the menu is closed), the
+// pointer is usually still over the same marker or zone, so hovering it must not
+// reopen the menu: reopening closes whatever the entry opened (mission picker,
+// rename prompt, compass) before the user can use it. The menu stays closed for
+// that feature until the pointer leaves it, and for every feature while an
+// entry's dialog is open.
+const radialHoverSuppressedFor = ref<string | null>(null);
+const markerRadialKey = (markerId: string) => `marker:${markerId}`;
+const zoneRadialKey = (zoneId: string) => `zone:${zoneId}`;
+const radialFollowUpOpen = computed(
+  () =>
+    Boolean(markerShareId.value) ||
+    markerRenameOpen.value ||
+    markerAssignOpen.value ||
+    zoneAssignOpen.value ||
+    zonePromptOpen.value
+);
+const suppressRadialHover = (key: string) => {
+  radialHoverSuppressedFor.value = key;
+};
+const radialHoverBlocked = (key: string) =>
+  radialFollowUpOpen.value || radialHoverSuppressedFor.value === key;
+
 const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
   if (markerMoveArmId.value || draggingMarkerId.value || zoneMode.value || zoneEditingId.value) {
+    return;
+  }
+  if (radialHoverBlocked(markerRadialKey(markerId))) {
     return;
   }
   const anchored = resolveMarkerScreenPoint(markerId, point);
@@ -1028,6 +1055,9 @@ const openHoverMarkerRadialMenu = (markerId: string, point: ScreenPoint) => {
 };
 const openHoverZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   if (markerMoveArmId.value || draggingMarkerId.value) {
+    return;
+  }
+  if (radialHoverBlocked(zoneRadialKey(zoneId))) {
     return;
   }
   if (zoneRadialMenuZoneId.value === zoneId) {
@@ -1106,9 +1136,6 @@ const markerReticleSubLabel = computed(() => {
   }
   if (markerMoveArmId.value && markerMoveArmId.value === markerId) {
     return "Move Armed";
-  }
-  if (markerRadialMenuMarkerId.value && markerRadialMenuMarkerId.value === markerId) {
-    return "Command Menu";
   }
   if (markerCompassMarkerId.value && markerCompassMarkerId.value === markerId) {
     return "Compass Active";
@@ -1239,6 +1266,12 @@ const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   zoneRadialMenuPoint.value = point;
   renderZones();
 };
+const handleZoneRadialMenuCenter = () => {
+  if (zoneRadialMenuZoneId.value) {
+    suppressRadialHover(zoneRadialKey(zoneRadialMenuZoneId.value));
+  }
+  closeZoneRadialMenu();
+};
 const handleMarkerRadialMenuCenter = () => {
   if (!markerRadialMenuMarkerId.value) {
     return;
@@ -1247,6 +1280,7 @@ const handleMarkerRadialMenuCenter = () => {
     markerRadialMenuPath.value = markerRadialMenuPath.value.slice(0, -1);
     return;
   }
+  suppressRadialHover(markerRadialKey(markerRadialMenuMarkerId.value));
   closeMarkerRadialMenu();
 };
 const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
@@ -1258,6 +1292,7 @@ const handleMarkerRadialMenuItem = (item: MarkerRadialMenuNode) => {
     markerRadialMenuPath.value = [...markerRadialMenuPath.value, item.id];
     return;
   }
+  suppressRadialHover(markerRadialKey(markerId));
   if (item.action === "share") {
     markerShareId.value = markerId;
     closeMarkerRadialMenu();
@@ -1702,6 +1737,7 @@ const handleZoneRadialMenuItem = (item: ZoneRadialMenuNode) => {
   if (!zoneId) {
     return;
   }
+  suppressRadialHover(zoneRadialKey(zoneId));
   if (item.action === "rename") {
     closeZoneRadialMenu();
     openZoneRename(zoneId);
@@ -2948,6 +2984,7 @@ const renderZones = () => {
       map.getCanvas().style.cursor = "pointer";
     });
     map.on("mouseleave", "zone-fill", () => {
+      handleZoneHoverLeave();
       if (zoneDraggingVertexIndex.value === null) {
         map.getCanvas().style.cursor = "";
       }
@@ -3018,7 +3055,20 @@ const handleTelemetryMarkerHoverMove = (event: maplibregl.MapLayerMouseEvent) =>
   }
 };
 
+const releaseMarkerRadialHover = () => {
+  if (radialHoverSuppressedFor.value?.startsWith("marker:")) {
+    radialHoverSuppressedFor.value = null;
+  }
+};
+
+const handleZoneHoverLeave = () => {
+  if (radialHoverSuppressedFor.value?.startsWith("zone:")) {
+    radialHoverSuppressedFor.value = null;
+  }
+};
+
 const handleOperatorMarkerHoverLeave = () => {
+  releaseMarkerRadialHover();
   clearHoveredOperatorMarker();
   if (!draggingMarkerId.value && mapInstance.value) {
     mapInstance.value.getCanvas().style.cursor = "";
@@ -3077,9 +3127,14 @@ const finishMarkerDrag = () => {
   const markerId = draggingMarkerId.value;
   const origin = draggingMarkerOrigin.value;
   const override = markerId ? dragPositions.value.get(markerId) : undefined;
+  const moved = Boolean(
+    markerId && origin && override && (origin.lat !== override.lat || origin.lon !== override.lon)
+  );
   draggingMarkerId.value = null;
   draggingMarkerOrigin.value = null;
-  if (markerId) {
+  // A moved marker keeps its dropped position until the server accepts or rejects
+  // the move; clearing it now would redraw the old position while the save runs.
+  if (markerId && !moved) {
     dragPositions.value.delete(markerId);
   }
   markerMoveArmId.value = null;
@@ -3089,13 +3144,25 @@ const finishMarkerDrag = () => {
   mapInstance.value.getCanvas().style.cursor = "";
   renderOperatorMarkers();
   syncMarkerInteractionAnchors();
-  if (markerId && origin && override) {
-    if (origin.lat !== override.lat || origin.lon !== override.lon) {
-      void markersStore.updateMarkerPosition(markerId, override.lat, override.lon).then(() => {
-        renderOperatorMarkers();
-        syncMarkerInteractionAnchors();
-      });
+  if (moved && markerId && override) {
+    void commitMarkerMove(markerId, override);
+  }
+};
+
+const commitMarkerMove = async (markerId: string, target: { lat: number; lon: number }) => {
+  try {
+    await markersStore.updateMarkerPosition(markerId, target.lat, target.lon);
+  } catch (error) {
+    console.warn(`Unable to move marker ${markerId}`, error);
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
+    toastStore.push(`Unable to move marker${detail}`, "danger");
+  } finally {
+    // Only drop the pending position this save owns; a newer drag replaces it.
+    if (dragPositions.value.get(markerId) === target) {
+      dragPositions.value.delete(markerId);
     }
+    renderOperatorMarkers();
+    syncMarkerInteractionAnchors();
   }
 };
 
@@ -3330,6 +3397,7 @@ const renderTelemetryMarkers = () => {
     });
     map.on("mousemove", layerId, handleTelemetryMarkerHoverMove);
     map.on("mouseleave", layerId, () => {
+      releaseMarkerRadialHover();
       map.getCanvas().style.cursor = "";
     });
     telemetryIconInteractionReady = true;
