@@ -3,12 +3,12 @@
     <div class="auth-kicker">Access</div>
     <div id="authorization-setting-title" class="auth-title">Authorization Required</div>
     <p class="auth-copy">
-      When on, identities need a granted capability before the hub accepts their R3AKT commands, including
-      <span class="mono">join</span>. Grant <span class="mono">mission.join</span> to your users first in
-      <RouterLink to="/users">Users</RouterLink>.
+      When on, only registered members can chat with the hub or send it commands. Members are added by an operator
+      in <RouterLink to="/users">Users</RouterLink>; <span class="mono">join</span> over LXMF no longer registers
+      anyone.
     </p>
     <p class="auth-copy auth-copy--note">
-      Plain chat sent to the hub is not gated by this setting.
+      Everyone already listed in Users is a member. Review the list before turning this on.
     </p>
 
     <p v-if="state.kind === 'loading'" class="auth-status" role="status">Loading current setting…</p>
@@ -23,7 +23,7 @@
         type="checkbox"
         class="cui-switch__input"
         :disabled="state.kind === 'saving'"
-        aria-label="Require authorization for R3AKT commands"
+        aria-label="Only accept chat and commands from registered members"
         aria-describedby="authorization-setting-title"
         @change="onToggle"
       />
@@ -35,11 +35,11 @@
 
     <BaseModal :open="confirmOpen" title="Require authorization?" size="sm" @close="confirmOpen = false">
       <p class="auth-modal-copy">
-        Identities without a <span class="mono">mission.join</span> grant will be refused when they send
-        <span class="mono">join</span>, and R3AKT mission and checklist commands will need the matching
-        capability. Existing users who have not been granted these capabilities will lose access to them.
+        Chat and commands from identities that are not listed in Users will be refused, and they will not be added
+        to the list automatically. A <span class="mono">join</span> sent over LXMF will no longer register anyone;
+        add new members from Users.
       </p>
-      <p class="auth-modal-copy">Plain chat sent to the hub is not affected.</p>
+      <p class="auth-modal-copy">Everyone currently listed in Users stays a member.</p>
       <template #footer>
         <div class="auth-modal-actions">
           <BaseButton variant="secondary" @click="confirmOpen = false">Cancel</BaseButton>

@@ -1,10 +1,9 @@
-//! Operator switch for R3AKT command authorization.
+//! Operator switch for hub authorization.
 //!
-//! When enabled, R3AKT mission and checklist commands arriving over LXMF,
-//! including `join`, are accepted only from identities that hold the matching
-//! capability. The setting lives in `rch_settings` and every command
-//! transaction reads it, so a change applies to the next command without a
-//! restart.
+//! When enabled, only registered members (identities an operator added to the
+//! roster from the UI) may chat with the hub or send it commands over LXMF; see
+//! `durable_broker::registration`. The setting lives in `rch_settings` and every
+//! broker transaction reads it, so a change applies without a restart.
 
 use super::{
     ApiError, AppState, Json, State, Value, json, open_r3akt_read_store,
@@ -40,9 +39,9 @@ pub(super) async fn put_setting(
         &state,
         "authorization_required_changed",
         if required {
-            "R3AKT command authorization enabled"
+            "Registered-member authorization enabled"
         } else {
-            "R3AKT command authorization disabled"
+            "Registered-member authorization disabled"
         },
         payload(required),
     );

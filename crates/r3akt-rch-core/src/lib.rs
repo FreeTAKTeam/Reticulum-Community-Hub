@@ -16,6 +16,7 @@
 mod command_scope;
 mod marker_commands;
 mod operation_rights;
+mod registration;
 mod text;
 
 mod sqlite_announces;
@@ -4392,6 +4393,7 @@ impl RchCore {
         }
         if let Some(required_capability) = required_capability(command.command_type.as_str())
             && self.authorization_required
+            && !self.registered_member_allows(command, required_capability)
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
             && !self.authorize_command_operation(command, required_capability)
         {
@@ -4523,6 +4525,7 @@ impl RchCore {
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
             && self.authorization_required
+            && !self.registered_member_allows(command, required_capability)
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
             && !self.authorize_identity_operation(
                 &command.source.rns_identity,
@@ -13534,21 +13537,21 @@ mod tests {
     }
 
     #[test]
-    fn mission_join_leave_and_events_use_python_rch_capabilities() {
+    fn mission_commands_admit_capability_grants_and_registered_members() {
         let mut core = RchCore::new();
         core.set_authorization_required(true);
 
+        // Unregistered identities need a capability, as in Python RCH.
         let join_rejected = core.handle_mission_sync_command(&command("mission.join", json!({})));
         core.grant_identity_capability("abcdef", "mission.join");
         let join_accepted = core.handle_mission_sync_command(&command("mission.join", json!({})));
-        let events_rejected =
-            core.handle_mission_sync_command(&command("mission.events.list", json!({})));
-        core.grant_identity_capability("abcdef", "mission.audit.read");
+        // A registered member needs no per-command grant...
         let events_accepted =
             core.handle_mission_sync_command(&command("mission.events.list", json!({})));
+        // ...but an operator's explicit deny still refuses that operation.
+        core.revoke_operation_right("identity", "abcdef", "mission.leave", "global", "")
+            .expect("deny leave");
         let leave_rejected = core.handle_mission_sync_command(&command("mission.leave", json!({})));
-        core.grant_identity_capability("abcdef", "mission.leave");
-        let leave_accepted = core.handle_mission_sync_command(&command("mission.leave", json!({})));
 
         assert_eq!(
             join_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
@@ -13559,20 +13562,12 @@ mod tests {
             "result"
         );
         assert_eq!(
-            events_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.audit.read"
-        );
-        assert_eq!(
             events_accepted[1].results_field().expect("result")["status"],
             "result"
         );
         assert_eq!(
             leave_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
             "mission.leave"
-        );
-        assert_eq!(
-            leave_accepted[1].results_field().expect("result")["status"],
-            "result"
         );
     }
 

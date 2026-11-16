@@ -1,5 +1,5 @@
 use super::{
-    DeserializeOwned, MissionCommandEnvelope, RchCore, RchCoreError, ReadSet,
+    DeserializeOwned, MissionCommandEnvelope, OptionalExtension, RchCore, RchCoreError, ReadSet,
     checklist_required_capability, decode_msgpack, normalize_hash, params_from_iter,
     required_capability,
 };
@@ -183,7 +183,24 @@ impl ReadSet<'_> {
         Ok(())
     }
 
+    /// Reads the operator's authorization switch into this read set.
+    pub(super) fn load_authorization(&mut self) -> Result<(), RchCoreError> {
+        self.authorization = Some(
+            self.connection
+                .query_row(
+                    "SELECT setting_value='true' FROM rch_settings WHERE setting_key='authorization_required'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(false),
+        );
+        Ok(())
+    }
+
     pub fn source(&mut self, source: &str) -> Result<(), RchCoreError> {
+        // Inbound admission checks registration before the sender is recorded.
+        self.load_authorization()?;
         let r = self;
         let source = normalize_hash(Some(source));
         select!(

@@ -324,12 +324,12 @@ fn recent_message_hydration_bounds_bytes_and_chat_keeps_evicted_history() {
 fn scoped_staged_membership_loads_persisted_subject_denies() {
     let mut core = scoped_fixture();
     core.set_authorization_required(true);
-    core.grant_operation_right("identity", "abcdef", "mission.write", "global", "")
+    core.grant_operation_right("identity", "abcdef", "mission.registry.mission.write", "global", "")
         .expect("identity grant");
     core.revoke_operation_right(
         "team_member",
         "sqlite-member",
-        "mission.write",
+        "mission.registry.mission.write",
         "global",
         "",
     )

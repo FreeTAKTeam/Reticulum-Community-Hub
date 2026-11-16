@@ -123,7 +123,7 @@ impl RchSqliteStore {
         Ok(())
     }
 
-    /// Whether R3AKT mission/checklist commands require a capability grant.
+    /// Whether only registered members may chat with the hub or send it commands.
     /// An absent setting is the documented default (`false`); any stored value
     /// other than `true`/`false` is reported instead of being treated as off.
     pub fn authorization_required(&self) -> Result<bool, RchCoreError> {

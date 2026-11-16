@@ -55,6 +55,9 @@ fn apply_envelope_payload(
         unit.diagnose_rejection("inbound identity is banned or blackholed");
         return Ok(());
     }
+    if !super::registration::admitted(unit, event, envelope, bootstrap, published)? {
+        return Ok(());
+    }
     fn allowed(core: &mut RchCore, destination: &str, allowlist: Option<&HashSet<String>>) -> bool {
         let key = normalize_identity_key(destination);
         !core
