@@ -32,6 +32,7 @@ export const endpoints = {
   r3aktTeams: "/api/r3akt/teams",
   r3aktTeamMembers: "/api/r3akt/team-members",
   emergencyActionMessages: "/api/EmergencyActionMessage",
+  r3aktAuthorizationSetting: "/api/r3akt/settings/authorization",
   r3aktRightsDefinitions: "/api/r3akt/rights/definitions",
   r3aktRightsSubjects: "/api/r3akt/rights/subjects",
   r3aktRightsGrants: "/api/r3akt/rights/grants",

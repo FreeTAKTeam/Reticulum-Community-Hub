@@ -879,3 +879,47 @@ fn plain_lxmf_join_replays_recent_topic_chat_from_other_senders() {
         ]
     );
 }
+
+#[test]
+fn plain_lxmf_join_requires_grant_when_authorization_is_required() {
+    let state = durable_inbound_test_state(&temp_db(), "hub-source");
+    let source = "77b2539b72259af927e48c0f90721767";
+    let join = |dedupe: &str| {
+        let topic = r3akt_protocol::Topic::new("direct");
+        r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: "/join".to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        )
+        .with_dedupe_key(dedupe)
+    };
+    let replies = |state: &crate::AppState| {
+        state
+            .messages
+            .read()
+            .expect("messages")
+            .iter()
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>()
+    };
+    r3akt_rch_core::RchSqliteStore::open(state_db(&state))
+        .expect("store")
+        .set_authorization_required(true)
+        .expect("enable authorization");
+
+    apply_envelope(&state, &join("unauthorized-join-1"));
+    assert_eq!(replies(&state), ["Capability 'mission.join' is required"]);
+
+    r3akt_rch_core::RchSqliteStore::open(state_db(&state))
+        .expect("store")
+        .set_operation_right("identity", source, "mission.join", "global", "", true)
+        .expect("grant join");
+    apply_envelope(&state, &join("authorized-join-2"));
+    assert_eq!(replies(&state).last().map(String::as_str), Some("joined"));
+}

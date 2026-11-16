@@ -104,6 +104,8 @@
                 </label>
               </section>
 
+              <AuthorizationSettingCard />
+
               <section class="focus-card focus-card--hint">
                 <div class="focus-kicker">Workflow</div>
                 <div class="focus-title">Recommended Sequence</div>
@@ -202,6 +204,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
+import AuthorizationSettingCard from "../components/AuthorizationSettingCard.vue";
 import BaseButton from "../components/BaseButton.vue";
 import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
 import ReticulumConfigEditor from "../components/ReticulumConfigEditor.vue";

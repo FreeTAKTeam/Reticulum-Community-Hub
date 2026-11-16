@@ -4393,7 +4393,7 @@ impl RchCore {
         if let Some(required_capability) = required_capability(command.command_type.as_str())
             && self.authorization_required
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-            && !self.has_mission_access_operation(command, required_capability)
+            && !self.authorize_command_operation(command, required_capability)
         {
             return vec![MissionSyncResponse::results(
                 Self::rejected_result_with_capabilities(
@@ -4524,6 +4524,11 @@ impl RchCore {
             checklist_required_capability(command.command_type.as_str())
             && self.authorization_required
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.authorize_identity_operation(
+                &command.source.rns_identity,
+                required_capability,
+                None,
+            )
             && !self.has_checklist_access_operation(command, required_capability)
         {
             return vec![MissionSyncResponse::results(

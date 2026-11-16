@@ -44,6 +44,7 @@ mod attachment_io;
 mod attachment_persistence;
 mod auth;
 mod auth_throttle;
+mod authorization_setting;
 mod browser_security;
 mod chat_scope;
 mod command_persistence;
@@ -2202,6 +2203,10 @@ fn create_app_router(state: AppState) -> Router {
             get(get_checklist)
                 .patch(patch_checklist)
                 .delete(delete_checklist),
+        )
+        .route(
+            "/api/r3akt/settings/authorization",
+            get(authorization_setting::get_setting).put(authorization_setting::put_setting),
         )
         .route(
             "/api/r3akt/capabilities/{identity}",
@@ -5731,6 +5736,11 @@ fn openapi_components() -> Value {
                 "required": ["content"],
                 "additionalProperties": true
             },
+            "R3aktAuthorizationSetting": {
+                "type": "object",
+                "properties": { "authorization_required": { "type": "boolean" } },
+                "required": ["authorization_required"]
+            },
             "R3aktCapabilityGrantRequest": {
                 "type": "object",
                 "properties": {
@@ -6949,6 +6959,14 @@ fn openapi_document() -> Value {
                     "R3aktChecklistTaskCellRequest",
                     "R3aktChecklist",
                     "Updated checklist."
+                )
+            },
+            "/api/r3akt/settings/authorization": {
+                "get": openapi_schema_response_operation(vec![], "R3aktAuthorizationSetting", "Authorization setting."),
+                "put": openapi_operation(
+                    vec![],
+                    Some(openapi_json_request_body("R3aktAuthorizationSetting")),
+                    openapi_validation_responses("Saved authorization setting.", openapi_schema_ref("R3aktAuthorizationSetting"))
                 )
             },
             "/api/r3akt/capabilities/{identity}": {
@@ -20726,6 +20744,7 @@ mod tests {
             "R3aktMissionChangeUpsertRequest",
             "R3aktLogEntry",
             "R3aktLogEntryUpsertRequest",
+            "R3aktAuthorizationSetting",
             "R3aktCapabilityGrantRequest",
             "R3aktCapabilityGrant",
             "R3aktCapabilityState",
@@ -23154,6 +23173,8 @@ mod tests {
                 "/api/r3akt/assignments/{assignment_uid}/assets/{asset_uid}",
                 "put",
             ),
+            ("/api/r3akt/settings/authorization", "get"),
+            ("/api/r3akt/settings/authorization", "put"),
             ("/api/r3akt/capabilities/{identity}", "get"),
             ("/api/r3akt/capabilities/{identity}/{capability}", "delete"),
             ("/api/r3akt/capabilities/{identity}/{capability}", "put"),
