@@ -1030,14 +1030,14 @@ impl AppState {
                     })
                     .collect(),
             ));
+            let sqlite_backed = state.sqlite_path.is_some();
             state.identity_states = Arc::new(RwLock::new(
                 snapshot
                     .identity_states
                     .into_iter()
-                    .map(|identity_state| {
-                        let record = IdentityStatusRecord::from(identity_state);
-                        (record.identity_key(), record)
-                    })
+                    .map(IdentityStatusRecord::from)
+                    .filter(|record| !sqlite_backed || record.is_moderated())
+                    .map(|record| (record.identity_key(), record))
                     .collect(),
             ));
             state.markers = Arc::new(RwLock::new(
@@ -1464,6 +1464,12 @@ pub struct IdentityStatusRecord {
 }
 
 impl IdentityStatusRecord {
+    /// Only moderated identities affect runtime decisions; with SQLite the rest
+    /// stay in the store instead of one resident entry per announcing peer (#242).
+    fn is_moderated(&self) -> bool {
+        self.is_banned || self.is_blackholed
+    }
+
     fn identity_key(&self) -> String {
         normalize_identity_key(&self.identity).unwrap_or_else(|| self.identity.clone())
     }
@@ -2825,7 +2831,9 @@ fn record_announce_identity_states_in(
     };
     for record in committed {
         let record = IdentityStatusRecord::from(record);
-        identity_states.insert(record.identity_key(), record);
+        if state.sqlite_path.is_none() || record.is_moderated() {
+            identity_states.insert(record.identity_key(), record);
+        }
     }
     drop(identity_states);
     Ok(())
@@ -18360,13 +18368,23 @@ fn legacy_identity_payload(
         None
     };
     let client_records = client_records_for_state(&state)?;
-    let mut records = state
-        .identity_states
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
+    // With SQLite the store is authoritative; memory caches only moderated rows.
+    let mut records = if let Some(path) = &state.sqlite_path {
+        RchSqliteStore::open_read_only(path.as_ref())
+            .and_then(|store| store.load_identity_states())
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .into_iter()
+            .map(IdentityStatusRecord::from)
+            .collect::<Vec<_>>()
+    } else {
+        state
+            .identity_states
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
     // Only listed identities need display records. Include actual clients so
     // voice owners absent from the identity-state list still suppress aliases.
@@ -18515,7 +18533,11 @@ async fn upsert_identity_status(
             store.patch_identity_state(&key, is_banned, is_blackholed, record.updated_ts_ms)
         })?);
     }
-    identity_states.insert(key, record.clone());
+    if state.sqlite_path.is_none() || record.is_moderated() {
+        identity_states.insert(key, record.clone());
+    } else {
+        identity_states.remove(&key);
+    }
     drop(identity_states);
     let annotations = match rem_annotations_for_client_identities(&state, &[record.identity_key()])
     {

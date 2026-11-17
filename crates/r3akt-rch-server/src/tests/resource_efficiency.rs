@@ -294,3 +294,37 @@ fn client_roster_indexed_annotations_preserve_shared_alias_source_precedence_and
     drop(state);
     std::fs::remove_dir_all(directory).expect("cleanup");
 }
+
+#[test]
+fn sqlite_identity_states_keep_only_moderated_records_resident() {
+    let (state, directory) = fixture();
+    import_reticulumd_announce_batch(&state, &[announce(10)], false).expect("import");
+    // #242: the announcing peer is durable but not one resident entry per peer.
+    assert!(state.identity_states.read().expect("states").is_empty());
+    let store = RchSqliteStore::open_read_only(directory.join("state.db")).expect("store");
+    assert_eq!(store.load_identity_states().expect("durable").len(), 1);
+    drop(store);
+    let moderated = with_required_core_store_write(&state, |store| {
+        store.patch_identity_state("target", Some(true), None, 1)
+    })
+    .map(IdentityStatusRecord::from)
+    .expect("ban");
+    state
+        .identity_states
+        .write()
+        .expect("states")
+        .insert(moderated.identity_key(), moderated.clone());
+    assert!(outbound_identity_blocked(&state, "TARGET"));
+    // A later announce keeps the moderation decision resident and authoritative.
+    import_reticulumd_announce_batch(&state, &[announce(11)], false).expect("re-import");
+    assert!(
+        state
+            .identity_states
+            .read()
+            .expect("states")
+            .contains_key("target")
+    );
+    assert!(outbound_identity_blocked(&state, "target"));
+    drop(state);
+    std::fs::remove_dir_all(directory).expect("cleanup");
+}
