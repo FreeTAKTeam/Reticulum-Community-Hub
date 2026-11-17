@@ -80,6 +80,12 @@ pub fn from_api_value(value: &Value, local_id: String) -> Result<MarkerRecord, M
         notes: text(value, "notes").map(str::to_string),
         created_ts_ms: timestamp(value, "created_at")?,
         updated_ts_ms: timestamp(value, "updated_at")?,
+        picture: value
+            .get("picture")
+            .filter(|picture| !picture.is_null())
+            .map(|picture| serde_json::from_value(picture.clone()))
+            .transpose()
+            .map_err(|_| MarkerError::Picture)?,
     })
 }
 

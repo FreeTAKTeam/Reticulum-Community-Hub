@@ -18,8 +18,10 @@ use thiserror::Error;
 mod commands;
 mod fields;
 pub mod teams;
-pub use commands::{encode_commands, encode_commands_for_team};
-pub use fields::{FIELD_COMMANDS, FIELD_EVENT, FIELD_GROUP, FIELD_RESULTS};
+pub use commands::{
+    encode_commands, encode_commands_for_team, encode_commands_for_team_with_image,
+};
+pub use fields::{FIELD_COMMANDS, FIELD_EVENT, FIELD_GROUP, FIELD_IMAGE, FIELD_RESULTS};
 const MECP_PREFIX: &str = "MECP/";
 
 #[derive(Debug, Error)]
@@ -551,11 +553,14 @@ pub fn decode_events(bytes: &[u8]) -> Result<Vec<EventEnvelope>, RchProfileError
 }
 
 fn decode_field<T: DeserializeOwned>(bytes: &[u8], field: i64) -> Result<T, RchProfileError> {
-    let mut fields: BTreeMap<i64, serde_json::Value> =
+    // rmpv first: other fields may hold binary data (FIELD_IMAGE) that JSON cannot.
+    let mut fields: BTreeMap<i64, rmpv::Value> =
         rmp_serde::from_slice(bytes).map_err(|error| RchProfileError::Decode(error.to_string()))?;
     let value = fields
         .remove(&field)
         .ok_or(RchProfileError::MissingField(field))?;
+    let value =
+        serde_json::to_value(value).map_err(|error| RchProfileError::Decode(error.to_string()))?;
     serde_json::from_value(value).map_err(|error| RchProfileError::Decode(error.to_string()))
 }
 

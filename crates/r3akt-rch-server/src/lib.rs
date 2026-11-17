@@ -30819,6 +30819,7 @@ mod tests {
                         notes: Some("optimized".to_string()),
                         created_ts_ms: 1_778_000_000_000,
                         updated_ts_ms: 1_778_000_000_000,
+                        picture: None,
                     },
                     "source-destination",
                 ),

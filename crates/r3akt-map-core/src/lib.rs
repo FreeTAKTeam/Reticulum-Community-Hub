@@ -26,6 +26,7 @@ pub mod bytes;
 pub mod camera_ground;
 pub mod idempotency;
 pub mod marker;
+pub mod marker_picture;
 pub mod marker_wire;
 pub mod msgpack;
 pub mod replica;

@@ -145,6 +145,37 @@ Receivers rebuild the marker with `r3akt_map_core::replica::from_api_value`
 are no tombstones, so a delete can be undone by an older replica that
 arrives later.
 
+### Picture markers
+
+A picture marker ([r3akt-uas #19](https://github.com/FreeTAKTeam/r3akt-uas/issues/19))
+is one LXMF message built with
+`r3akt_profile_rch::encode_commands_for_team_with_image(commands, team, Some(("jpg", thumbnail)))`:
+field `0x09` holds `mission.marker.create` with `marker_type`, `symbol` and
+`category` set to `picture`, a client-supplied `object_destination_hash`
+(required for pictures) and a `picture` object
+(`thumbnail{media_type,width,height,sha256}`, optional `captured_at`,
+`camera{lat,lon,altitude_m,altitude_reference,heading_deg,gimbal_pitch_deg,gimbal_yaw_deg}`
+with unknown values omitted, and `crop` `centre` or `ai_box`); field `0x0B`
+is the TEAM UID and standard `FIELD_IMAGE` (`0x06`) is `["jpg", <thumbnail bytes>]`.
+The picture ID is that message's LXMF message ID (64 hex characters). RCH
+rejects a create whose thumbnail does not match `picture.thumbnail.sha256`,
+stores the thumbnail, adds `picture.message_id` to the marker's API value
+and relays field `0x06` with the `mission.marker.created` event to the TEAM
+(never back to the sender). REM decodes the relay with
+`r3akt_map_core::marker_picture::decode_relay`, which drops a thumbnail whose
+digest does not match.
+
+`mission.marker.picture.upload` (`object_destination_hash`, `message_id`,
+`media_type`, `width`, `height`, `sha256`, plus field `0x06`, no `0x0B`)
+stores the reduced image on RCH only. It is accepted only from the marker's
+writer, with matching SHA-256, after the marker message; otherwise the result
+is rejected with `unauthorized`, `invalid_payload`, `unknown_picture` or
+`conflict`. `mission.marker.picture.get` (`message_id`, optional `0x0B`) is
+answered to the requester only in `0x0A` with `result.status` `ok` (plus
+`sha256`, `media_type`, `width`, `height`, `size` and field `0x06`),
+`pending`, `unavailable`, or `unauthorized` when the requester may not read
+markers (`mission.marker.list` rules, including TEAM scope).
+
 ### Explicit delivery to Sideband, Columba and REM
 
 In the Rust server's map, select a marker, choose **Send**, and enter the

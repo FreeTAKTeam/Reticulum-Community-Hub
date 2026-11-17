@@ -43,7 +43,7 @@ mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
 mod sqlite_values;
-pub use sqlite_commands::{CommandDelta, RchCommandTransaction};
+pub use sqlite_commands::{CommandDelta, MarkerPictureRow, RchCommandTransaction};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
 
@@ -455,6 +455,7 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "r3s_sensor_origins",
     "r3s_marker_writers",
     "r3s_relay_metadata",
+    "rch_marker_pictures",
     "rch_markers",
     "rch_zones",
     "rch_missions",
@@ -4366,6 +4367,47 @@ impl RchCore {
         outcome
     }
 
+    /// The rejection `handle_mission_sync_command` would answer before applying
+    /// `command` (unknown command, TEAM scope, payload scope or capability).
+    #[must_use]
+    pub fn mission_command_rejection(
+        &self,
+        command: &MissionCommandEnvelope,
+    ) -> Option<MissionSyncResponse> {
+        if !is_supported_mission_command(command.command_type.as_str()) {
+            return Some(MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "unknown_command",
+                format!("Unsupported mission command '{}'", command.command_type),
+            )));
+        }
+        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+            return Some(rejection);
+        }
+        if let Some(reason) = self.command_scope_error(command) {
+            return Some(MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "invalid_payload",
+                reason,
+            )));
+        }
+        if let Some(required_capability) = required_capability(command.command_type.as_str())
+            && self.authorization_required
+            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.has_mission_access_operation(command, required_capability)
+        {
+            return Some(MissionSyncResponse::results(
+                Self::rejected_result_with_capabilities(
+                    command,
+                    "unauthorized",
+                    format!("Capability '{required_capability}' is required"),
+                    vec![required_capability.to_string()],
+                ),
+            ));
+        }
+        None
+    }
+
     pub fn handle_mission_sync_command(
         &mut self,
         command: &MissionCommandEnvelope,
@@ -4373,36 +4415,8 @@ impl RchCore {
         if command.command_type.starts_with("rem.registry.") {
             return self.handle_rem_registry_sync_command(command);
         }
-        if !is_supported_mission_command(command.command_type.as_str()) {
-            return vec![MissionSyncResponse::results(Self::rejected_result(
-                command,
-                "unknown_command",
-                format!("Unsupported mission command '{}'", command.command_type),
-            ))];
-        }
-        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+        if let Some(rejection) = self.mission_command_rejection(command) {
             return vec![rejection];
-        }
-        if let Some(reason) = self.command_scope_error(command) {
-            return vec![MissionSyncResponse::results(Self::rejected_result(
-                command,
-                "invalid_payload",
-                reason,
-            ))];
-        }
-        if let Some(required_capability) = required_capability(command.command_type.as_str())
-            && self.authorization_required
-            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-            && !self.has_mission_access_operation(command, required_capability)
-        {
-            return vec![MissionSyncResponse::results(
-                Self::rejected_result_with_capabilities(
-                    command,
-                    "unauthorized",
-                    format!("Capability '{required_capability}' is required"),
-                    vec![required_capability.to_string()],
-                ),
-            )];
         }
 
         let mut responses = vec![MissionSyncResponse::results(Self::accepted_result(command))];

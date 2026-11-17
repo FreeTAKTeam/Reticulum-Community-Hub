@@ -98,3 +98,4 @@ mod broadcast_history;
 mod chat;
 mod commands;
 mod media;
+mod pictures;

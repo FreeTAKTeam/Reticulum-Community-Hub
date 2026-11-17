@@ -115,7 +115,8 @@ fn catalog_json_is_unchanged() {
         {"id": "infrastructure", "set": "mdi", "mdi": "office-building", "description": "Infrastructure", "tak": null, "category": "infrastructure"},
         {"id": "medic", "set": "mdi", "mdi": "hospital", "description": "Medic", "tak": null, "category": "medical"},
         {"id": "alert", "set": "mdi", "mdi": "alert", "description": "Alert", "tak": null, "category": "incident"},
-        {"id": "task", "set": "mdi", "mdi": "clipboard-check", "description": "Task", "tak": null, "category": "task"}
+        {"id": "task", "set": "mdi", "mdi": "clipboard-check", "description": "Task", "tak": null, "category": "task"},
+        {"id": "picture", "set": "mdi", "mdi": "image", "description": "Picture", "tak": null, "category": "picture"}
     ]);
     assert_eq!(symbols::catalog_json(), legacy);
 }
