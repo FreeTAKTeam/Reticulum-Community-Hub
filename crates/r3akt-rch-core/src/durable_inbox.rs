@@ -4,6 +4,7 @@ mod lease;
 mod pending_indexes;
 #[cfg(test)]
 mod pending_lookup_tests;
+mod status_counts;
 pub use lease::RchConsumerLease;
 
 use super::{RchCoreError, RchSqliteStore};
@@ -474,7 +475,19 @@ impl RchSqliteStore {
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        let counts:(i64,i64,i64,i64)=self.connection.query_row("SELECT COALESCE(SUM(status='stored'),0),COALESCE(SUM(status='applied'),0),COALESCE(SUM(status='rejected'),0),COALESCE(SUM(status='upgrade_required'),0) FROM rch_broker_inbox",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+        let count = |status: &str| -> Result<i64, RchCoreError> {
+            Ok(self.connection.query_row(
+                "SELECT COALESCE((SELECT rows FROM rch_broker_inbox_status_counts WHERE status=?1),0)",
+                [status],
+                |r| r.get(0),
+            )?)
+        };
+        let counts = (
+            count("stored")?,
+            count("applied")?,
+            count("rejected")?,
+            count("upgrade_required")?,
+        );
         let dispatch: i64 = self.connection.query_row(
             "SELECT COUNT(*) FROM rch_broker_dispatch WHERE state='pending'",
             [],

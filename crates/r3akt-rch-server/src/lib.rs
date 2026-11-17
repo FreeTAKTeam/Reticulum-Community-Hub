@@ -224,7 +224,7 @@ pub struct AppState {
     lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
     broker_consumer_lease: Option<Arc<Mutex<r3akt_rch_core::RchConsumerLease>>>,
     broker_work_gate: Arc<RwLock<()>>,
-    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 3]>,
+    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 4]>,
     broker_lane_errors: Arc<RwLock<[Option<String>; 4]>>,
     rch_service_identity_config: Option<Arc<RchServiceIdentityConfig>>,
     identity_announce_update_error: Arc<RwLock<Option<String>>>,
@@ -2559,8 +2559,20 @@ fn record_reticulumd_inbound_worker_event_error(state: &AppState, error: String)
     }
 }
 
+#[cfg(test)]
 fn import_reticulumd_announce_batch(
     state: &AppState,
+    announces: &[ReticulumdAnnounceRecord],
+    touch_unchanged_records: bool,
+) -> Result<(usize, Option<String>), ApiError> {
+    import_reticulumd_announce_batch_in(state, None, announces, touch_unchanged_records)
+}
+
+/// `store` lets the durable announce lane reuse its long-lived connection
+/// instead of opening read, admin and write connections for each page (#242).
+fn import_reticulumd_announce_batch_in(
+    state: &AppState,
+    mut store: Option<&mut RchSqliteStore>,
     announces: &[ReticulumdAnnounceRecord],
     touch_unchanged_records: bool,
 ) -> Result<(usize, Option<String>), ApiError> {
@@ -2575,7 +2587,12 @@ fn import_reticulumd_announce_batch(
         .iter()
         .filter_map(|announce| normalize_identity_key(&announce.peer))
         .collect::<Vec<_>>();
-    snapshot.identity_announces = load_identity_announce_records(state, &destinations)?;
+    snapshot.identity_announces = match store.as_deref() {
+        Some(store) => store
+            .load_identity_announces_by_destination_hashes(&destinations)
+            .map_err(|error| ApiError::Internal(error.to_string()))?,
+        None => load_identity_announce_records(state, &destinations)?,
+    };
     let touch_ts_ms = unix_now_ms();
     let updated_records = {
         let mut core = RchCore::from_snapshot(snapshot.clone())
@@ -2700,8 +2717,13 @@ fn import_reticulumd_announce_batch(
     };
     records_to_touch.extend(updated_records);
     if !records_to_touch.is_empty() {
-        persist_identity_announce_records(state, &records_to_touch)?;
-        record_announce_identity_states(state, &records_to_touch)?;
+        match store.as_deref_mut() {
+            Some(store) => store
+                .upsert_identity_announces(&records_to_touch)
+                .map_err(|error| ApiError::Internal(error.to_string()))?,
+            None => persist_identity_announce_records(state, &records_to_touch)?,
+        }
+        record_announce_identity_states_in(state, store, &records_to_touch)?;
     }
     Ok((imported, last_id))
 }
@@ -2757,6 +2779,14 @@ fn record_announce_identity_states(
     state: &AppState,
     announces: &[r3akt_rch_core::IdentityAnnounceRecord],
 ) -> Result<(), ApiError> {
+    record_announce_identity_states_in(state, None, announces)
+}
+
+fn record_announce_identity_states_in(
+    state: &AppState,
+    store: Option<&mut RchSqliteStore>,
+    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
+) -> Result<(), ApiError> {
     let mut identity_states = state
         .identity_states
         .write()
@@ -2784,7 +2814,11 @@ fn record_announce_identity_states(
         candidates.insert(identity, CoreIdentityStateRecord::from(candidate));
     }
     let candidates = candidates.into_values().collect::<Vec<_>>();
-    let committed = if state.sqlite_path.is_some() {
+    let committed = if let Some(store) = store {
+        store
+            .ensure_identity_states(&candidates)
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else if state.sqlite_path.is_some() {
         with_required_core_store_write(state, |store| store.ensure_identity_states(&candidates))?
     } else {
         candidates
@@ -35310,7 +35344,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "9");
+        assert_eq!(payload["persistence"]["schema_version"], "10");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

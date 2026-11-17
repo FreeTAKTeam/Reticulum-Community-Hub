@@ -485,7 +485,7 @@ async fn broker_workers_reuse_store_connections_across_idle_polls_and_join() {
     .await
     .unwrap();
 
-    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 4);
     {
         let lane_errors = state.broker_lane_errors.read().unwrap();
         assert!(lane_errors.iter().all(Option::is_none), "{lane_errors:?}");
@@ -508,14 +508,14 @@ async fn broker_workers_reuse_store_connections_across_idle_polls_and_join() {
         "purge must release idle worker connections before unlinking the database"
     );
     assert!(!rch_path.exists(), "purge must unlink the database");
-    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 4);
 
     request_runtime_exit(&state);
     tokio::time::timeout(Duration::from_secs(3), owner)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 3);
+    assert_eq!(store_open_count(&rch_path), opened_before_spawn + 4);
     assert!(
         !rch_path.exists(),
         "workers must not recreate the purged database"
