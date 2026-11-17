@@ -468,40 +468,6 @@ impl RchSqliteStore {
     }
 }
 
-impl RchSqliteStore {
-    pub fn durable_broker_diagnostics(&self) -> Result<Value, RchCoreError> {
-        let (inbox_bytes, outbox_bytes): (i64, i64) = self.connection.query_row(
-            "SELECT inbox_bytes,outbox_bytes FROM rch_broker_profile",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let count = |status: &str| -> Result<i64, RchCoreError> {
-            Ok(self.connection.query_row(
-                "SELECT COALESCE((SELECT rows FROM rch_broker_inbox_status_counts WHERE status=?1),0)",
-                [status],
-                |r| r.get(0),
-            )?)
-        };
-        let counts = (
-            count("stored")?,
-            count("applied")?,
-            count("rejected")?,
-            count("upgrade_required")?,
-        );
-        let dispatch: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM rch_broker_dispatch WHERE state='pending'",
-            [],
-            |r| r.get(0),
-        )?;
-        let sqlite: String = self
-            .connection
-            .query_row("SELECT sqlite_version()", [], |r| r.get(0))?;
-        Ok(
-            serde_json::json!({"inbox_bytes":inbox_bytes,"outbox_bytes":outbox_bytes,"pending":counts.0,"applied":counts.1,"rejected":counts.2,"upgrade_required":counts.3,"pending_dispatch":dispatch,"sqlite_version":sqlite,"durability":"WAL/FULL","writer_version":1}),
-        )
-    }
-}
-
 fn length(value: usize) -> Result<i64, RchCoreError> {
     i64::try_from(value).map_err(|e| RchCoreError::Encode(e.to_string()))
 }
