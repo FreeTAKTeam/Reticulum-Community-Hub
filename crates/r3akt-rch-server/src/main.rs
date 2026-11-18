@@ -1685,13 +1685,13 @@ mod tests {
 
     #[test]
     fn api_port_availability_reports_busy_port_like_python_gateway() {
-        let listener = std::net::TcpListener::bind((super::DEFAULT_HOST, 0)).expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        assert!(!super::is_api_port_available(super::DEFAULT_HOST, port));
-
-        drop(listener);
-        assert!(super::is_api_port_available(super::DEFAULT_HOST, port));
+        assert!((0..20).any(|_| {
+            let listener = std::net::TcpListener::bind((super::DEFAULT_HOST, 0)).expect("listener");
+            let port = listener.local_addr().expect("local addr").port();
+            assert!(!super::is_api_port_available(super::DEFAULT_HOST, port));
+            drop(listener); // A parallel test may take the freed port; retry on fresh ones.
+            super::is_api_port_available(super::DEFAULT_HOST, port)
+        }));
     }
 
     #[test]
