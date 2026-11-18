@@ -58,10 +58,10 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
 The current testing candidate is
-[v3.0.0-preview.38](docs/release-notes-v3.0.0-preview.38.md), a Linux AMD64
-server prerelease for DigitalOcean evaluation. It pairs LXMF-rs SDK 0.16.2-rc.1
+[v3.0.0-preview.41](docs/release-notes-v3.0.0-preview.41.md), a Linux AMD64
+server prerelease. It pairs LXMF-rs SDK 0.16.2-rc.2-linux
 with a daemon built from the same immutable source revision
-`9908a7ef8360db30bb352ca372d70b4d07fbba8b`.
+`4dc89a4afd54b8653ee9236b62d5d1f720b484bf`.
 The existing release workflow builds the complete Linux AMD64 server archive
 and a Debian installer using Debian 12 (Bookworm) and Rust 1.99.1;
 other server platforms and desktop packages are outside this candidate's scope.

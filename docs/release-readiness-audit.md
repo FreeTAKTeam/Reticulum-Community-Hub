@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.41 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.41 pairs SDK and daemon v0.16.2-rc.2-linux at `4dc89a4afd54b8653ee9236b62d5d1f720b484bf` and includes RCH changes merged through #343. See [the preview.41 notes](release-notes-v3.0.0-preview.41.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
 ## Preview.38 matched daemon recovery candidate
 
 Preview.38 pairs SDK and daemon v0.16.2-rc.1 at `9908a7ef8360db30bb352ca372d70b4d07fbba8b` and includes the merged session-recovery and legacy-credential warning fixes. See [the preview.38 notes](release-notes-v3.0.0-preview.38.md). Candidate package, real preview.37 upgrade, restart and local peer delivery verification must complete before publication. Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
