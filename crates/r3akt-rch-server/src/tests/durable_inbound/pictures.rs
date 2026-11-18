@@ -3,24 +3,24 @@
 
 use super::*;
 
-const TEAM: &str = "d6b6e188b910d6bdd24d04b7a7ec5444";
+pub(super) const TEAM: &str = "d6b6e188b910d6bdd24d04b7a7ec5444";
 const OTHER_TEAM: &str = "43341e5c822d99857fa6e8641f2ca9c0";
-const DRONE_ID: &str = "11111111111111111111111111111111";
-const DRONE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub(super) const DRONE_ID: &str = "11111111111111111111111111111111";
+pub(super) const DRONE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MATE_ID: &str = "22222222222222222222222222222222";
-const MATE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+pub(super) const MATE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OUTSIDER_ID: &str = "33333333333333333333333333333333";
 const OUTSIDER: &str = "cccccccccccccccccccccccccccccccc";
-const MARKER: &str = "0123456789abcdef0123456789abcdef";
+pub(super) const MARKER: &str = "0123456789abcdef0123456789abcdef";
 const PICTURE: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
-const THUMB: &[u8] = &[0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
+pub(super) const THUMB: &[u8] = &[0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
 const REDUCED: &[u8] = &[0xff, 0xd8, 0xff, 0xe0, 9, 8, 7, 6, 5];
 
-fn sha(bytes: &[u8]) -> String {
+pub(super) fn sha(bytes: &[u8]) -> String {
     r3akt_map_core::marker_picture::sha256_hex(bytes)
 }
 
-fn state() -> crate::AppState {
+pub(super) fn state() -> crate::AppState {
     let setup = |command_type: &str, args: Value| r3akt_profile_rch::MissionCommandEnvelope {
         command_id: format!("setup-{command_type}-{args}"),
         source: r3akt_profile_rch::RchSource::new("setup-source"),
@@ -109,7 +109,7 @@ fn result_of(requests: &[Value], destination: &str) -> Value {
         .unwrap_or_else(|| panic!("no result for {destination}: {requests:#?}"))
 }
 
-fn create_args(thumbnail_sha: &str) -> Value {
+pub(super) fn create_args(thumbnail_sha: &str) -> Value {
     json!({
         "object_destination_hash": MARKER,
         "marker_type": "picture", "symbol": "picture", "category": "picture",

@@ -1,5 +1,6 @@
 use super::*;
 mod command_alias;
+mod command_claim;
 mod outgoing;
 use command_alias::command_alias;
 pub(super) use outgoing::outgoing;
@@ -92,14 +93,7 @@ fn apply_envelope_payload(
         let command = command_alias(&command);
         let mission = mission_sync_command_from_reticulumd(envelope, &command);
         let logical = format!("command:{}", mission.command_id);
-        if !unit
-            .claim_logical_input(
-                envelope.source.as_str(),
-                &logical,
-                &json!({"name":command.name,"args":command.args}),
-            )
-            .map_err(storage)?
-        {
+        if !command_claim::claim_command(unit, envelope, &logical, &command)? {
             return Ok(());
         }
         if command.name.starts_with("mission.marker.picture.") {
