@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+pub use crate::marker_picture::MarkerPicture;
 use crate::symbols;
 use crate::time::iso8601_from_unix_ms;
 
@@ -26,6 +27,10 @@ pub struct MarkerRecord {
     pub notes: Option<String>,
     pub created_ts_ms: i64,
     pub updated_ts_ms: i64,
+    /// Picture metadata of a `picture` marker; absent on stored rows that
+    /// predate it, so the stored layout stays readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<MarkerPicture>,
 }
 
 /// Validation failures. Display strings are part of the RCH API contract.
@@ -43,6 +48,8 @@ pub enum MarkerError {
     Longitude,
     #[error("object_destination_hash must be 32 hexadecimal characters")]
     Identifier,
+    #[error("picture must be a valid picture object")]
+    Picture,
 }
 
 /// A validated WGS 84 position.
@@ -186,6 +193,7 @@ impl MarkerRecord {
             notes: draft.notes,
             created_ts_ms: now_ms,
             updated_ts_ms: now_ms,
+            picture: None,
         }
     }
 
@@ -207,7 +215,7 @@ impl MarkerRecord {
     #[must_use]
     pub fn api_value(&self) -> Value {
         let updated_at = iso8601_from_unix_ms(self.updated_ts_ms);
-        json!({
+        let mut value = json!({
             "object_destination_hash": self.object_destination_hash,
             "origin_rch": self.origin_rch,
             "type": self.marker_type,
@@ -219,6 +227,10 @@ impl MarkerRecord {
             "time": updated_at,
             "created_at": iso8601_from_unix_ms(self.created_ts_ms),
             "updated_at": updated_at,
-        })
+        });
+        if let Some(picture) = &self.picture {
+            value["picture"] = serde_json::to_value(picture).unwrap_or(Value::Null);
+        }
+        value
     }
 }

@@ -12,6 +12,7 @@ fn sensor_error(error: sensors::StoreError) -> RchCoreError {
 pub(crate) fn initialize(connection: &Connection) -> Result<(), RchCoreError> {
     sensors::ensure_schema(connection).map_err(sensor_error)?;
     connection.execute_batch("CREATE TABLE IF NOT EXISTS r3s_marker_writers(origin_id TEXT PRIMARY KEY,writer_id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS r3s_relay_metadata(origin_id TEXT NOT NULL,destination TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(origin_id,destination));")?;
+    super::marker_pictures::initialize(connection)?;
     Ok(())
 }
 impl RchSqliteStore {

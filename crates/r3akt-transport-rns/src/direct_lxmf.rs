@@ -91,6 +91,7 @@ pub(super) fn direct_lxmf_message_payloads(
                 {
                     args.insert("_rem_team_uid".into(), JsonValue::String(team_uid.into()));
                 }
+                picture_args(&mut command, fields, message);
                 decoded.envelopes.push(ProtocolEnvelope::new(
                     NodeId::new(source),
                     Destination::Node(NodeId::new(local_source)),
@@ -129,6 +130,39 @@ pub(super) fn direct_lxmf_message_payloads(
         }
     }
     decoded
+}
+
+/// Picture markers (r3akt-uas #19): the hub needs the message's `FIELD_IMAGE`
+/// and its LXMF message ID (the picture ID), so both join the command args.
+fn picture_args(
+    command: &mut r3akt_protocol::Command,
+    fields: Option<&serde_json::Map<String, JsonValue>>,
+    message: &JsonValue,
+) {
+    use r3akt_map_core::marker_picture as picture;
+    if command.name != "mission.marker.create" && command.name != picture::UPLOAD_COMMAND {
+        return;
+    }
+    let Some(args) = command.args.as_object_mut() else {
+        return;
+    };
+    // Only the transport may set these, never the sender's own args.
+    args.remove("_lxmf_image");
+    args.remove("_lxmf_message_id");
+    if let Some((format, data)) = fields
+        .and_then(|f| optional_field_value(f, &[picture::FIELD_IMAGE_KEY]))
+        .and_then(picture::image_field)
+    {
+        use base64::Engine as _;
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        args.insert(
+            "_lxmf_image".into(),
+            serde_json::json!([format, format!("base64:{data}")]),
+        );
+    }
+    if let Some(id) = message.get("id").and_then(JsonValue::as_str) {
+        args.insert("_lxmf_message_id".into(), JsonValue::String(id.into()));
+    }
 }
 
 fn decode_origin_sensors(

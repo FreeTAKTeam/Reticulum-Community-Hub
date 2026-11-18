@@ -102,6 +102,12 @@ fn apply_envelope_payload(
         {
             return Ok(());
         }
+        if command.name.starts_with("mission.marker.picture.") {
+            let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
+            return super::marker_picture::handle(
+                unit, event, envelope, &mission, reply, published,
+            );
+        }
         unit.prepare_command(&mission).map_err(storage)?;
         if command.name.starts_with("mission.marker.")
             && let Some(id) = mission
@@ -209,6 +215,7 @@ fn apply_envelope_payload(
                 .and_then(Value::as_str)
                 == Some("rejected")
         });
+        let mut relay_image = None;
         if !rejected
             && command.name == "mission.marker.create"
             && let Some(id) = mission
@@ -222,6 +229,9 @@ fn apply_envelope_payload(
         {
             unit.record_sensor_marker_writer(id, envelope.source.as_str())
                 .map_err(storage)?;
+            let id = r3akt_map_core::marker::object_destination_hash(id)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            relay_image = super::marker_picture::stage_thumbnail(unit, envelope, &mission, &id)?;
         }
         if rejected {
             unit.restore_domain(checkpoint).map_err(storage)?;
@@ -305,13 +315,20 @@ fn apply_envelope_payload(
                     .event_field()
                     .and_then(|e| e["event_type"].as_str());
                 let content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
+                let mut relay_fields = fields.clone();
+                if let (Some(image), Some(map)) = (&relay_image, relay_fields.as_object_mut()) {
+                    map.insert(
+                        r3akt_map_core::marker_picture::FIELD_IMAGE_KEY.into(),
+                        image.clone(),
+                    );
+                }
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,
                         event,
                         destination,
                         &content,
-                        fields.clone(),
+                        relay_fields.clone(),
                         envelope.timestamp.timestamp_millis(),
                     )?);
                 }

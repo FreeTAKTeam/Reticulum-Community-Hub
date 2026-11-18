@@ -67,6 +67,7 @@ pub const CATALOG: &[MarkerSymbol] = &[
     mdi("medic", "hospital", "Medic", "medical"),
     mdi("alert", "alert", "Alert", "incident"),
     mdi("task", "clipboard-check", "Task", "task"),
+    mdi("picture", "image", "Picture", "picture"),
 ];
 
 /// Alternative spellings accepted on input and their canonical symbol IDs.
@@ -101,6 +102,8 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("warning", "alert"),
     ("mission", "task"),
     ("assignment", "task"),
+    ("photo", "picture"),
+    ("image", "picture"),
 ];
 
 /// The catalog as the RCH `/api/markers/symbols` JSON array.
