@@ -1685,13 +1685,22 @@ mod tests {
 
     #[test]
     fn api_port_availability_reports_busy_port_like_python_gateway() {
-        let listener = std::net::TcpListener::bind((super::DEFAULT_HOST, 0)).expect("listener");
-        let port = listener.local_addr().expect("local addr").port();
-
-        assert!(!super::is_api_port_available(super::DEFAULT_HOST, port));
-
-        drop(listener);
-        assert!(super::is_api_port_available(super::DEFAULT_HOST, port));
+        // A freed ephemeral port can be taken by a parallel test (a listener
+        // on port 0 or a client connection's local port) before it is probed
+        // again. Busy detection is asserted on every attempt; release
+        // detection must succeed on at least one fresh port.
+        const ATTEMPTS: usize = 20;
+        let released = (0..ATTEMPTS).any(|_| {
+            let listener = std::net::TcpListener::bind((super::DEFAULT_HOST, 0)).expect("listener");
+            let port = listener.local_addr().expect("local addr").port();
+            assert!(!super::is_api_port_available(super::DEFAULT_HOST, port));
+            drop(listener);
+            super::is_api_port_available(super::DEFAULT_HOST, port)
+        });
+        assert!(
+            released,
+            "no released port was reported available in {ATTEMPTS} attempts"
+        );
     }
 
     #[test]
