@@ -185,21 +185,19 @@ fn arbitrary_short_headers_never_panic() {
 
 #[test]
 fn opaque_optional_slots_do_not_count_as_failed_announces() {
-    let rejections = Rejections::default();
+    let decoder = Decoder::default();
+    let rejections = &decoder.rejections;
     let opaque = [0xdd, 0x41, 0xdc, 0xc1, 0x48];
     let mut array = vec![0x94, 0xc0, 0xc0];
     array.extend(binary_slot(&opaque));
     array.extend(rmp_serde::to_vec(&opaque.to_vec()).unwrap());
-    assert!(decode_hex_with_rejections(&hex(&array), &rejections).is_empty());
+    assert!(decoder.decode_hex(&hex(&array)).is_empty());
     assert_eq!(rejections.total.load(Ordering::Relaxed), 0);
 
     // Several unrelated slots before real capabilities must remain a success.
     array[0] = 0x95;
     array.extend(rmp_serde::to_vec_named(&json!({"caps": ["r3akt"]})).unwrap());
-    assert_eq!(
-        decode_hex_with_rejections(&hex(&array), &rejections),
-        vec!["r3akt"]
-    );
+    assert_eq!(decoder.decode_hex(&hex(&array)), vec!["r3akt"]);
     assert_eq!(rejections.total.load(Ordering::Relaxed), 0);
 
     // A malformed outer document counts once, regardless of its slot contents.
@@ -208,7 +206,7 @@ fn opaque_optional_slots_do_not_count_as_failed_announces() {
         .iter()
         .enumerate()
     {
-        assert!(decode_hex_with_rejections(input, &rejections).is_empty());
+        assert!(decoder.decode_hex(input).is_empty());
         assert_eq!(rejections.total.load(Ordering::Relaxed), (index + 1) as u64);
     }
 }
@@ -252,4 +250,102 @@ fn concurrent_rejections_share_one_log_window_without_losing_counts() {
     });
     assert_eq!(rejections.total.load(Ordering::Relaxed), 16);
     assert_eq!(rejections.record_at(100 + LOG_INTERVAL_SECONDS), Some(17));
+}
+
+/// Opaque app data from other applications (#349): sanitized shapes, not
+/// production payloads. A one-byte scalar followed by more bytes is how a
+/// non-UTF-8 name or arbitrary binary data looks to a `MessagePack` parser.
+const OPAQUE_SAMPLES: &[&[u8]] = &[
+    b"Caf\xe9 relay",                // Latin-1 display name
+    &[0x12, 0x9f, 0x00, 0xfe, 0x44], // binary led by a positive fixint
+    &[0xf3, 0x01, 0x02],             // binary led by a negative fixint
+    &[0xc0, 0xff, 0xff],             // binary led by nil
+    &[0xc3, 0xff],                   // binary led by a boolean
+    &[0xcd, 0x01, 0x02, 0x03, 0xff], // fixed-width integer with trailing bytes
+    &[0xd4, 0x01, 0x02, 0x03],       // extension with trailing bytes
+    &[0xc1, 0x00, 0x01],             // never-used marker
+];
+
+#[test]
+fn issue_349_non_capability_app_data_is_opaque_not_malformed() {
+    let decoder = Decoder::default();
+    for sample in OPAQUE_SAMPLES {
+        assert_eq!(decode(sample), Err(DecodeError::Opaque), "{sample:02x?}");
+        assert!(decoder.decode_hex(&hex(sample)).is_empty());
+    }
+    let calls = OPAQUE_SAMPLES.len() as u64;
+    assert_eq!(decoder.rejections.total.load(Ordering::Relaxed), 0);
+    assert_eq!(decoder.opaque_total.load(Ordering::Relaxed), calls);
+    assert_eq!(decoder.opaque_distinct.load(Ordering::Relaxed), calls);
+}
+
+#[test]
+fn issue_349_recognised_documents_keep_strict_validation() {
+    let decoder = Decoder::default();
+    let mut deep = vec![0x91; MAX_DEPTH + 1];
+    deep.push(0xc0);
+    let mut broad = vec![0xdc, 0x10, 0x00];
+    broad.extend(std::iter::repeat_n(0xc0, MAX_ITEMS));
+    let cases: [(Vec<u8>, DecodeError); 7] = [
+        (vec![0x92, 0xa1, b'x'], DecodeError::Malformed), // truncated array
+        (vec![0x91, 0xc0, 0x00], DecodeError::Malformed), // array with trailing data
+        (vec![0xa5, b'r', b'3'], DecodeError::Malformed), // truncated string
+        (vec![0xc4, 0x05, 0x00], DecodeError::Malformed), // truncated binary
+        (vec![0x81, 0xc0], DecodeError::Malformed),       // map missing its value
+        (deep, DecodeError::Depth),
+        (broad, DecodeError::Items),
+    ];
+    for (index, (bytes, error)) in cases.iter().enumerate() {
+        assert_eq!(decode(bytes), Err(*error), "case {index}");
+        assert!(decoder.decode_hex(&hex(bytes)).is_empty());
+    }
+    assert_eq!(
+        decoder.decode_hex(&"aa".repeat(MAX_APP_DATA_BYTES + 1)),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        decoder.rejections.total.load(Ordering::Relaxed),
+        cases.len() as u64 + 1
+    );
+    assert_eq!(decoder.opaque_total.load(Ordering::Relaxed), 0);
+    // Capability formats are unchanged.
+    let packed = rmp_serde::to_vec_named(&json!({"caps": ["R3AKT"]})).unwrap();
+    assert_eq!(decoder.decode_hex(&hex(&packed)), vec!["r3akt"]);
+    assert_eq!(decoder.decode_hex(&hex(b"r3akt")), vec!["r3akt"]);
+}
+
+#[test]
+fn issue_349_replayed_app_data_is_parsed_once_and_counted_distinctly() {
+    let decoder = Decoder::default();
+    let malformed = hex(&[0x92, 0xa1, b'x']);
+    let opaque = hex(OPAQUE_SAMPLES[1]);
+    let packed = hex(&rmp_serde::to_vec_named(&json!({"caps": ["r3akt"]})).unwrap());
+    // A restart replays every peer's latest announce, then sweeps repeat it.
+    for _ in 0..100 {
+        assert!(decoder.decode_hex(&malformed).is_empty());
+        assert!(decoder.decode_hex(&opaque).is_empty());
+        assert_eq!(decoder.decode_hex(&packed), vec!["r3akt"]);
+    }
+    assert_eq!(decoder.calls.load(Ordering::Relaxed), 300);
+    assert_eq!(decoder.cache_hits.load(Ordering::Relaxed), 297);
+    assert_eq!(decoder.rejections.total.load(Ordering::Relaxed), 100);
+    assert_eq!(decoder.rejected_distinct.load(Ordering::Relaxed), 1);
+    assert_eq!(decoder.opaque_total.load(Ordering::Relaxed), 100);
+    assert_eq!(decoder.opaque_distinct.load(Ordering::Relaxed), 1);
+    let diagnostics = decoder.diagnostics();
+    assert_eq!(diagnostics["cache_entries"], 3);
+    assert_eq!(diagnostics["rejected_distinct_total"], 1);
+    // Diagnostics carry counts only, never payloads.
+    assert!(!diagnostics.to_string().contains(&malformed));
+}
+
+#[test]
+fn issue_349_outcome_cache_is_bounded() {
+    let decoder = Decoder::default();
+    for value in 0..=MAX_CACHED_OUTCOMES {
+        let packed = rmp_serde::to_vec(&json!([format!("cap{value}")])).unwrap();
+        decoder.decode_hex(&hex(&packed));
+    }
+    assert_eq!(decoder.cache_resets.load(Ordering::Relaxed), 1);
+    assert_eq!(decoder.cache.lock().unwrap().len(), 1);
 }
