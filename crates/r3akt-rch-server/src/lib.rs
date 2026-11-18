@@ -224,7 +224,7 @@ pub struct AppState {
     lxmf_zmq_data_plane: Option<Arc<ZmqDataPlane>>,
     broker_consumer_lease: Option<Arc<Mutex<r3akt_rch_core::RchConsumerLease>>>,
     broker_work_gate: Arc<RwLock<()>>,
-    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 3]>,
+    durable_broker_worker_stores: Arc<[Mutex<Option<RchSqliteStore>>; 4]>,
     broker_lane_errors: Arc<RwLock<[Option<String>; 4]>>,
     rch_service_identity_config: Option<Arc<RchServiceIdentityConfig>>,
     identity_announce_update_error: Arc<RwLock<Option<String>>>,
@@ -1030,14 +1030,14 @@ impl AppState {
                     })
                     .collect(),
             ));
+            let sqlite_backed = state.sqlite_path.is_some();
             state.identity_states = Arc::new(RwLock::new(
                 snapshot
                     .identity_states
                     .into_iter()
-                    .map(|identity_state| {
-                        let record = IdentityStatusRecord::from(identity_state);
-                        (record.identity_key(), record)
-                    })
+                    .map(IdentityStatusRecord::from)
+                    .filter(|record| !sqlite_backed || record.is_moderated())
+                    .map(|record| (record.identity_key(), record))
                     .collect(),
             ));
             state.markers = Arc::new(RwLock::new(
@@ -1464,6 +1464,12 @@ pub struct IdentityStatusRecord {
 }
 
 impl IdentityStatusRecord {
+    /// Only moderated identities affect runtime decisions; with SQLite the rest
+    /// stay in the store instead of one resident entry per announcing peer (#242).
+    fn is_moderated(&self) -> bool {
+        self.is_banned || self.is_blackholed
+    }
+
     fn identity_key(&self) -> String {
         normalize_identity_key(&self.identity).unwrap_or_else(|| self.identity.clone())
     }
@@ -2559,8 +2565,20 @@ fn record_reticulumd_inbound_worker_event_error(state: &AppState, error: String)
     }
 }
 
+#[cfg(test)]
 fn import_reticulumd_announce_batch(
     state: &AppState,
+    announces: &[ReticulumdAnnounceRecord],
+    touch_unchanged_records: bool,
+) -> Result<(usize, Option<String>), ApiError> {
+    import_reticulumd_announce_batch_in(state, None, announces, touch_unchanged_records)
+}
+
+/// `store` lets the durable announce lane reuse its long-lived connection
+/// instead of opening read, admin and write connections for each page (#242).
+fn import_reticulumd_announce_batch_in(
+    state: &AppState,
+    mut store: Option<&mut RchSqliteStore>,
     announces: &[ReticulumdAnnounceRecord],
     touch_unchanged_records: bool,
 ) -> Result<(usize, Option<String>), ApiError> {
@@ -2575,7 +2593,12 @@ fn import_reticulumd_announce_batch(
         .iter()
         .filter_map(|announce| normalize_identity_key(&announce.peer))
         .collect::<Vec<_>>();
-    snapshot.identity_announces = load_identity_announce_records(state, &destinations)?;
+    snapshot.identity_announces = match store.as_deref() {
+        Some(store) => store
+            .load_identity_announces_by_destination_hashes(&destinations)
+            .map_err(|error| ApiError::Internal(error.to_string()))?,
+        None => load_identity_announce_records(state, &destinations)?,
+    };
     let touch_ts_ms = unix_now_ms();
     let updated_records = {
         let mut core = RchCore::from_snapshot(snapshot.clone())
@@ -2700,8 +2723,13 @@ fn import_reticulumd_announce_batch(
     };
     records_to_touch.extend(updated_records);
     if !records_to_touch.is_empty() {
-        persist_identity_announce_records(state, &records_to_touch)?;
-        record_announce_identity_states(state, &records_to_touch)?;
+        match store.as_deref_mut() {
+            Some(store) => store
+                .upsert_identity_announces(&records_to_touch)
+                .map_err(|error| ApiError::Internal(error.to_string()))?,
+            None => persist_identity_announce_records(state, &records_to_touch)?,
+        }
+        record_announce_identity_states_in(state, store, &records_to_touch)?;
     }
     Ok((imported, last_id))
 }
@@ -2757,6 +2785,14 @@ fn record_announce_identity_states(
     state: &AppState,
     announces: &[r3akt_rch_core::IdentityAnnounceRecord],
 ) -> Result<(), ApiError> {
+    record_announce_identity_states_in(state, None, announces)
+}
+
+fn record_announce_identity_states_in(
+    state: &AppState,
+    store: Option<&mut RchSqliteStore>,
+    announces: &[r3akt_rch_core::IdentityAnnounceRecord],
+) -> Result<(), ApiError> {
     let mut identity_states = state
         .identity_states
         .write()
@@ -2784,14 +2820,20 @@ fn record_announce_identity_states(
         candidates.insert(identity, CoreIdentityStateRecord::from(candidate));
     }
     let candidates = candidates.into_values().collect::<Vec<_>>();
-    let committed = if state.sqlite_path.is_some() {
+    let committed = if let Some(store) = store {
+        store
+            .ensure_identity_states(&candidates)
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+    } else if state.sqlite_path.is_some() {
         with_required_core_store_write(state, |store| store.ensure_identity_states(&candidates))?
     } else {
         candidates
     };
     for record in committed {
         let record = IdentityStatusRecord::from(record);
-        identity_states.insert(record.identity_key(), record);
+        if state.sqlite_path.is_none() || record.is_moderated() {
+            identity_states.insert(record.identity_key(), record);
+        }
     }
     drop(identity_states);
     Ok(())
@@ -18326,13 +18368,23 @@ fn legacy_identity_payload(
         None
     };
     let client_records = client_records_for_state(&state)?;
-    let mut records = state
-        .identity_states
-        .read()
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
+    // With SQLite the store is authoritative; memory caches only moderated rows.
+    let mut records = if let Some(path) = &state.sqlite_path {
+        RchSqliteStore::open_read_only(path.as_ref())
+            .and_then(|store| store.load_identity_states())
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .into_iter()
+            .map(IdentityStatusRecord::from)
+            .collect::<Vec<_>>()
+    } else {
+        state
+            .identity_states
+            .read()
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     records.sort_by(|left, right| left.identity_key().cmp(&right.identity_key()));
     // Only listed identities need display records. Include actual clients so
     // voice owners absent from the identity-state list still suppress aliases.
@@ -18481,7 +18533,11 @@ async fn upsert_identity_status(
             store.patch_identity_state(&key, is_banned, is_blackholed, record.updated_ts_ms)
         })?);
     }
-    identity_states.insert(key, record.clone());
+    if state.sqlite_path.is_none() || record.is_moderated() {
+        identity_states.insert(key, record.clone());
+    } else {
+        identity_states.remove(&key);
+    }
     drop(identity_states);
     let annotations = match rem_annotations_for_client_identities(&state, &[record.identity_key()])
     {
@@ -35311,7 +35367,7 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["persistence"]["configured"], true);
         assert_eq!(payload["persistence"]["backend"], "sqlite");
-        assert_eq!(payload["persistence"]["schema_version"], "9");
+        assert_eq!(payload["persistence"]["schema_version"], "10");
         assert!(
             payload["persistence"]["path"]
                 .as_str()

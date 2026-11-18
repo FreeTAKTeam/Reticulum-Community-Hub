@@ -85,7 +85,9 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
             let consumer = consumer.clone();
             owners.spawn(async move {
                 let mut failures = 0u32;
-                let announce_cursor = Arc::new(std::sync::Mutex::new(None));
+                let announce_cursor = Arc::new(std::sync::Mutex::new(
+                    announce_sync::AnnounceSweep::default(),
+                ));
                 loop {
                     if state.runtime_exit.is_requested() {
                         break;
@@ -105,9 +107,6 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                         let task_cursor = announce_cursor.clone();
                         // Keep the completion owner: an external timeout must not detach a database write.
                         let result = tokio::task::spawn_blocking(move || {
-                            if lane == 3 {
-                                return announce_sync::poll(&task_state, &task_cursor);
-                            }
                             let _quiescence = task_state
                                 .broker_work_gate
                                 .read()
@@ -128,7 +127,8 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                                 0 => intake_with_store(&task_state, &task_consumer, store)
                                     .map(|()| false),
                                 1 => apply_with_store(&task_state, &task_consumer, store),
-                                _ => dispatch_with_store(&task_state, store),
+                                2 => dispatch_with_store(&task_state, store),
+                                _ => announce_sync::poll(&task_state, &task_cursor, store),
                             }
                         })
                         .await;
