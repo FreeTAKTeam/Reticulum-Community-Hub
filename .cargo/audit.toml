@@ -1,0 +1,12 @@
+# cargo-audit configuration, read by `cargo audit` from the repository root
+# (see the Dependency Audit job in .github/workflows/rust-pr-quality.yml).
+# Every ignore is reviewed: record why it is accepted and when to revisit it.
+
+[advisories]
+ignore = [
+    # chrono is unmaintained (informational, no fixed upgrade). RCH uses its
+    # clock, serde and std features for timestamps only; there is no known
+    # vulnerability. Accepted 2026-11-18; replace chrono or revisit when a
+    # maintained successor or a security advisory appears.
+    "RUSTSEC-2026-0543",
+]

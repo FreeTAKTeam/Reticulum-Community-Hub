@@ -68,6 +68,32 @@ Restore a coherent pair or perform an explicitly reviewed recovery. Do not
 point old binaries at migrated databases; rollback uses pre-cutover backups
 and reconciliation of work admitted after that backup.
 
+### Command claims and replayed commands
+
+Each applied command claims `(source, command_id)` with a fingerprint of its
+name and arguments. A replay with the same content is skipped. A reused command
+ID with different content stops ordered application with `durable recovery
+required: logical input identifier conflicts with committed content`.
+
+The transport adds `_lxmf_message_id` to `mission.marker.create` and
+`mission.marker.picture.upload`. That ID belongs to one delivery, not to the
+command, so it is excluded from the fingerprint. Preview.41 included it, so a
+marker command that a sender retried under a new LXMF message ID stopped the
+inbox ([#351](https://github.com/FreeTAKTeam/Reticulum-Community-Hub/issues/351)).
+The fixed server still accepts older claims. Preview.40 claims match the
+arguments without transport-added `_lxmf_*` keys. Preview.41 claims match the
+message ID of one of the source's committed `lxmf:<message id>` claims. A
+matching claim is rebound once to the current fingerprint and the source
+gets a log line. Content that matches no scheme still reports the conflict.
+
+Rollout for an inbox stalled by #351: stop RCH and back up its database. Then
+start the fixed server on the same database without recovery flags, deleting
+claims, or editing inbox rows. Ordered application resumes at the stalled
+position. The replayed command is applied as a duplicate, with no marker,
+relay, or reply. The queued inbound, outbound, and receipt events then drain
+in order. Confirm in `/diagnostics/runtime` that the broker lane error clears
+and the applied position reaches the stored position.
+
 Full daemon contract, limits and recovery details are maintained in LXMF-rs:
 [OPERATIONS.md](https://github.com/FreeTAKTeam/LXMF-rs/blob/c45a5113807fdf5618b55d4e6ba7f598c3eaafe7/docs/goals/zmq-rch-durable-broker/OPERATIONS.md).
 Local socket, SQLite, crash and paired-worker tests do not establish hardware
