@@ -271,6 +271,24 @@ fn valid_upload_survives_bad_and_unsupported_metadata_and_all_queries_run() {
         .unwrap();
     assert!(diagnostic.message.contains("malformed") && diagnostic.message.contains("unsupported"));
     assert!(!diagnostic.message.contains("private-value"));
+    // The event feed names who sent the bad command and which message it was.
+    assert_eq!(diagnostic.metadata["source"], PEER.to_ascii_lowercase());
+    assert_eq!(diagnostic.metadata["message_id"], "mixed");
+    let request = snapshot
+        .system_events
+        .iter()
+        .find(|e| e.event_type == "telemetry_request")
+        .unwrap();
+    assert_eq!(request.metadata["peer"], PEER);
+    let handled = snapshot
+        .system_events
+        .iter()
+        .find(|e| e.event_type == "durable_broker_handled")
+        .unwrap();
+    assert_eq!(handled.message, "inbound");
+    assert_eq!(handled.metadata["source"], PEER.to_ascii_lowercase());
+    assert_eq!(handled.metadata["message_id"], "mixed");
+    assert_eq!(handled.metadata["position"], 1);
     std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]

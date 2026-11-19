@@ -195,6 +195,8 @@ export const useDashboardStore = defineStore("dashboard", () => {
   const usersStore = useUsersStore();
   const status = ref<StatusResponse | null>(null);
   const activeMissions = ref<number | null>(null);
+  /** Mission names by UID, so the event feed can name missions in registry events. */
+  const missionNames = ref<Map<string, string>>(new Map());
   const events = ref<EventEntry[]>([]);
   const teamMembers = ref<TeamMemberRecord[]>([]);
   const loading = ref(false);
@@ -227,7 +229,13 @@ export const useDashboardStore = defineStore("dashboard", () => {
       assertCurrent();
 
       if (missionResponse.status === "fulfilled") {
-        activeMissions.value = unwrapApiList<MissionRaw>(missionResponse.value).filter(isActiveMission).length;
+        const missions = unwrapApiList<MissionRaw>(missionResponse.value);
+        activeMissions.value = missions.filter(isActiveMission).length;
+        missionNames.value = new Map(
+          missions
+            .map((mission) => [String(mission.uid ?? "").trim(), String(mission.mission_name ?? "").trim()] as const)
+            .filter(([uid, name]) => uid && name)
+        );
       } else {
         activeMissions.value = null;
       }
@@ -259,6 +267,7 @@ export const useDashboardStore = defineStore("dashboard", () => {
   return {
     status,
     activeMissions,
+    missionNames,
     events,
     eventCallsignLookup,
     loading,
