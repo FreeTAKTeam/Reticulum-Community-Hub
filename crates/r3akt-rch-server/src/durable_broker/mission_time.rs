@@ -1,6 +1,6 @@
 //! `mission.time` (`/time [mission_uid]`): a plain-text LXMF reply with the
 //! time left until a mission's `expiration`; without an id, the newest mission.
-use super::envelope::outgoing;
+use super::envelope::reply_text;
 use super::{
     ApiError, InboxEvent, OutboundMessageRecord, ProtocolEnvelope, RchCommandTransaction, Value,
     command_arg_text_with_position, json, storage,
@@ -54,15 +54,7 @@ pub(super) fn reply(
             },
         }
     };
-    published.push(outgoing(
-        unit,
-        event,
-        envelope.source.as_str(),
-        &text,
-        json!({}),
-        envelope.timestamp.timestamp_millis(),
-    )?);
-    Ok(())
+    reply_text(unit, event, envelope, &text, published)
 }
 
 fn mission_time_text(

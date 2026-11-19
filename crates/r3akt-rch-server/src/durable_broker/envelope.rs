@@ -3,7 +3,7 @@ mod command_alias;
 mod command_claim;
 mod outgoing;
 use command_alias::command_alias;
-pub(super) use outgoing::outgoing;
+pub(super) use outgoing::{outgoing, reply_text};
 
 pub(super) fn apply_envelope(
     unit: &mut RchCommandTransaction<'_>,
@@ -80,15 +80,8 @@ fn apply_envelope_payload(
             );
         }
         if command.name.eq_ignore_ascii_case("help") {
-            published.push(outgoing(
-                unit,
-                event,
-                envelope.source.as_str(),
-                &plain_lxmf_help_reply(),
-                json!({}),
-                envelope.timestamp.timestamp_millis(),
-            )?);
-            return Ok(());
+            let help = plain_lxmf_help_reply();
+            return outgoing::reply_text(unit, event, envelope, help, published);
         }
         let command = command_alias(&command);
         let mission = mission_sync_command_from_reticulumd(envelope, &command);
