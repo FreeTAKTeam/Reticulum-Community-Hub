@@ -173,6 +173,17 @@ fn answer(
                 }
             }
         }
+        library::ITEM_FETCH_COMMAND => {
+            let item = find(items, &mission.args).filter(|item| {
+                library::permits(item, Right::Read, &mut |uid, right| {
+                    auth.allowed(uid, right)
+                })
+            });
+            match item {
+                None => rejected(mission, "not_found", "no such Library item"),
+                Some(item) => fetch(auth.unit, envelope, mission, &item)?,
+            }
+        }
         _ => rejected(mission, "unknown_command", "Unsupported Library command"),
     };
     match auth.failure {
@@ -205,4 +216,131 @@ pub(super) fn handle(
         envelope.timestamp.timestamp_millis(),
     )?);
     Ok(())
+}
+
+/// The LXMF delivery Destination of an identity hash: it binds the
+/// `rpp_identity` the caller claims to the source the hub authenticated.
+fn lxmf_delivery_destination(identity_hash: &[u8; 16]) -> [u8; 16] {
+    use sha2::Digest as _;
+    let name = sha2::Sha256::digest(b"lxmf.delivery");
+    let mut material = [0u8; 26];
+    material[..10].copy_from_slice(&name[..10]);
+    material[10..].copy_from_slice(identity_hash);
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&sha2::Sha256::digest(material)[..16]);
+    out
+}
+
+fn fetch(
+    unit: &mut RchCommandTransaction<'_>,
+    envelope: &ProtocolEnvelope,
+    mission: &MissionCommandEnvelope,
+    item: &LibraryItem,
+) -> Result<Response, ApiError> {
+    let identity: Option<[u8; 16]> = mission
+        .args
+        .get("rpp_identity")
+        .and_then(Value::as_str)
+        .and_then(|text| hex::decode(text).ok())
+        .and_then(|bytes| bytes.try_into().ok());
+    let Some(identity) = identity else {
+        return Ok(rejected(
+            mission,
+            "invalid_payload",
+            "rpp_identity is required",
+        ));
+    };
+    if hex::encode(lxmf_delivery_destination(&identity))
+        != envelope.source.as_str().to_ascii_lowercase()
+    {
+        return Ok(rejected(
+            mission,
+            "unauthorized",
+            "rpp_identity does not match the sender",
+        ));
+    }
+    let Some(rpp) = crate::library_rpp::library_rpp() else {
+        return Ok(rejected(
+            mission,
+            "rpp_unavailable",
+            "this hub does not serve RPP",
+        ));
+    };
+    let file_id = item.legacy_file_id.unwrap_or_default();
+    let Some(record) = unit.library_attachment(file_id).map_err(storage)? else {
+        return Ok(rejected(mission, "not_found", "no such Library item"));
+    };
+    let path = std::path::PathBuf::from(&record.path);
+    let shared = if let Some(package) = unit.library_rpp_package(file_id).map_err(storage)? {
+        crate::library_rpp::shared_package(
+            &package.package_token,
+            package.manifest,
+            package.publication,
+        )
+    } else {
+        {
+            let shared = rpp
+                .node
+                .prepare_file(&path, &record.name, record.media_type.as_deref())
+                .map_err(|error| ApiError::Internal(format!("library package: {error}")))?;
+            unit.set_library_rpp_package(&r3akt_rch_core::LibraryRppPackage {
+                file_id,
+                package_token: shared.package_token.to_vec(),
+                manifest: shared.manifest.clone(),
+                publication: shared.publication.clone(),
+            })
+            .map_err(storage)?;
+            Some(shared)
+        }
+    };
+    let Some(shared) = shared else {
+        return Ok(rejected(mission, "internal", "stored package is corrupt"));
+    };
+    let reference = package_reference(rpp, &shared)?;
+    unit.set_library_rpp_reference(file_id, &reference.0, &reference.1)
+        .map_err(storage)?;
+    rpp.serve(shared, path, identity);
+    Ok(completed(
+        mission,
+        json!({
+            "status": "ok",
+            "item_id": item.item_id,
+            "name": record.name,
+            "media_type": record.media_type,
+            "size": record.size,
+            "rpp": reference.0,
+            "content_sha256": reference.1,
+        }),
+    ))
+}
+
+fn package_reference(
+    rpp: &crate::library_rpp::LibraryRpp,
+    shared: &rpp_core::rns_share::SharedPackage,
+) -> Result<(library::RppReference, String), ApiError> {
+    let invalid =
+        |error: rpp_core::RppError| ApiError::Internal(format!("library package: {error}"));
+    let owner = rpp.node.me();
+    let publication =
+        rpp_core::publication::Publication::verify(&shared.publication, &owner).map_err(invalid)?;
+    let binding = rpp_core::OwnerBinding {
+        owner,
+        package_destination: rpp.node.package_destination(shared),
+        manifest_destination: publication.manifest_destination,
+    };
+    let manifest =
+        rpp_core::VerifiedManifest::verify(&shared.manifest, &binding).map_err(invalid)?;
+    let file = manifest
+        .manifest
+        .files
+        .first()
+        .ok_or_else(|| ApiError::Internal("empty package".into()))?;
+    Ok((
+        library::RppReference {
+            package_destination: hex::encode(binding.package_destination),
+            file_destination: hex::encode(file.destination),
+            manifest_hash: hex::encode(manifest.hash),
+        },
+        hex::encode(file.digest),
+    ))
 }

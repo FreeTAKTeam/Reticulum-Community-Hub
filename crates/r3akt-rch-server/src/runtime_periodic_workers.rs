@@ -4,10 +4,14 @@ use super::{
     unix_now_ms,
 };
 
+/// Starts the hub's network-presence workers: identity announces and, when
+/// `RCH_RPP_TCP` is set, the Mission Library RPP sidecar (which announces its
+/// own Package Destinations).
 pub fn spawn_rch_identity_announce_worker(
     state: AppState,
     announce_interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
+    let _library_rpp = crate::library_rpp::spawn_library_rpp(state.clone());
     tokio::spawn(async move {
         if announce_interval.is_zero() {
             return;

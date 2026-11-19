@@ -24,7 +24,12 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), RchCoreError> {
             package_destination TEXT NOT NULL,
             file_destination TEXT NOT NULL,
             manifest_hash TEXT NOT NULL,
-            content_sha256 TEXT NOT NULL);",
+            content_sha256 TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS rch_library_rpp_packages(
+            file_id INTEGER PRIMARY KEY,
+            package_token BLOB NOT NULL,
+            manifest BLOB NOT NULL,
+            publication BLOB NOT NULL);",
     )?;
     Ok(())
 }
@@ -194,5 +199,93 @@ impl RchCommandTransaction<'_> {
             ],
         )?;
         Ok(true)
+    }
+}
+
+/// A signed one-file RPP Package published for an attachment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryRppPackage {
+    pub file_id: u64,
+    pub package_token: Vec<u8>,
+    pub manifest: Vec<u8>,
+    pub publication: Vec<u8>,
+}
+
+fn load_packages(
+    connection: &Connection,
+    only: Option<u64>,
+) -> Result<Vec<LibraryRppPackage>, RchCoreError> {
+    let mut statement = connection.prepare(
+        "SELECT file_id, package_token, manifest, publication FROM rch_library_rpp_packages
+         WHERE ?1 IS NULL OR file_id = ?1",
+    )?;
+    let only = only.map(signed).transpose()?;
+    let rows = statement.query_map(params![only], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })?;
+    let mut packages = Vec::new();
+    for row in rows {
+        let (id, package_token, manifest, publication) = row?;
+        packages.push(LibraryRppPackage {
+            file_id: file_id(id)?,
+            package_token,
+            manifest,
+            publication,
+        });
+    }
+    Ok(packages)
+}
+
+impl RchSqliteStore {
+    /// Every published Package, to serve again after restart.
+    ///
+    /// # Errors
+    /// Storage failures.
+    pub fn library_rpp_packages(&self) -> Result<Vec<LibraryRppPackage>, RchCoreError> {
+        load_packages(&self.connection, None)
+    }
+}
+
+impl RchCommandTransaction<'_> {
+    /// The Package already published for an attachment, if any.
+    ///
+    /// # Errors
+    /// Storage failures.
+    pub fn library_rpp_package(&self, id: u64) -> Result<Option<LibraryRppPackage>, RchCoreError> {
+        Ok(load_packages(&self.transaction, Some(id))?
+            .into_iter()
+            .next())
+    }
+
+    /// Records a newly signed Package for an attachment.
+    ///
+    /// # Errors
+    /// Storage failures.
+    pub fn set_library_rpp_package(&self, package: &LibraryRppPackage) -> Result<(), RchCoreError> {
+        self.transaction.execute(
+            "INSERT OR REPLACE INTO rch_library_rpp_packages(file_id, package_token, manifest, publication)
+             VALUES(?1, ?2, ?3, ?4)",
+            params![signed(package.file_id)?, package.package_token, package.manifest, package.publication],
+        )?;
+        Ok(())
+    }
+
+    /// The stored attachment record (path, name, media type).
+    ///
+    /// # Errors
+    /// Storage or decode failures.
+    pub fn library_attachment(
+        &self,
+        id: u64,
+    ) -> Result<Option<FileAttachmentRecord>, RchCoreError> {
+        let payload: Option<Vec<u8>> = self
+            .transaction
+            .query_row(
+                "SELECT payload FROM rch_file_attachments WHERE file_id = ?1 AND category IN ('file','image')",
+                params![signed(id)?],
+                |row| row.get(0),
+            )
+            .optional()?;
+        payload.map(|bytes| decode_msgpack(&bytes)).transpose()
     }
 }

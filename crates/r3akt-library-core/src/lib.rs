@@ -17,6 +17,10 @@ pub use query::{LibraryPage, LibraryQuery, Right, permits};
 pub const LIST_COMMAND: &str = "mission.library.list";
 /// Returns one authorized item by `item_id` or `file_id`.
 pub const ITEM_GET_COMMAND: &str = "mission.library.item.get";
+/// Asks the hub to make one authorized item available over RPP; the result
+/// carries its Package Destination. Args: `item_id` or `file_id`, and the
+/// caller's `rpp_identity` (identity hash, checked against the LXMF source).
+pub const ITEM_FETCH_COMMAND: &str = "mission.library.item.fetch";
 /// Links an item to a mission (publish right on that mission).
 pub const ITEM_LINK_COMMAND: &str = "mission.library.item.link";
 

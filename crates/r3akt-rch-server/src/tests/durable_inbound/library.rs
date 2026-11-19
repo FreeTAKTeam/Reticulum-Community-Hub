@@ -32,6 +32,11 @@ fn attachment(
 }
 
 fn state() -> crate::AppState {
+    state_for(READER)
+}
+
+/// Fixture whose read-only alpha subscriber is the LXMF source `reader`.
+fn state_for(reader: &str) -> crate::AppState {
     let setup = |command_type: &str, args: Value| r3akt_profile_rch::MissionCommandEnvelope {
         command_id: format!("setup-{command_type}-{args}"),
         source: r3akt_profile_rch::RchSource::new("setup-source"),
@@ -51,7 +56,7 @@ fn state() -> crate::AppState {
     }
     // RCH authorizes the LXMF source hash a command arrives from.
     for (identity, role) in [
-        (READER, "MISSION_READONLY_SUBSCRIBER"),
+        (reader, "MISSION_READONLY_SUBSCRIBER"),
         (EDITOR, "MISSION_SUBSCRIBER"),
     ] {
         core.handle_command(&setup(
@@ -271,4 +276,79 @@ async fn rest_library_shares_the_catalog_and_keeps_legacy_routes() {
     let body = legacy.into_body().collect().await.expect("body").to_bytes();
     let legacy: Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(legacy[0]["FileID"], 1, "legacy bare array sorted by FileID");
+}
+
+/// LXMF delivery Destination for an identity hash, as REM's source.
+fn delivery_destination(identity: [u8; 16]) -> String {
+    use sha2::Digest as _;
+    let name = sha2::Sha256::digest(b"lxmf.delivery");
+    let mut material = [0u8; 26];
+    material[..10].copy_from_slice(&name[..10]);
+    material[10..].copy_from_slice(&identity);
+    hex::encode(&sha2::Sha256::digest(material)[..16])
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn item_fetch_binds_identity_and_prepares_a_signed_package() {
+    let rpp_identity = [0x42u8; 16];
+    let source = delivery_destination(rpp_identity);
+    let state = state_for(&source);
+    let db = state
+        .sqlite_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .expect("db");
+    let file = db.with_extension("plan.pdf");
+    std::fs::write(&file, b"%PDF-1.7 mission plan").expect("file");
+    RchSqliteStore::open(&db)
+        .expect("store")
+        .upsert_file_attachment(&FileAttachmentRecord {
+            path: file.to_string_lossy().into_owned(),
+            ..attachment(1, "plan.pdf", "file", "application/pdf", 10)
+        })
+        .expect("path");
+    let me = (source.as_str(), READER_ID);
+    let args = json!({"item_id": "rch:1", "rpp_identity": hex::encode(rpp_identity)});
+
+    let spoofed = json!({"item_id": "rch:1", "rpp_identity": "11".repeat(16)});
+    let spoofed = command(&state, "f1", me, "mission.library.item.fetch", spoofed);
+    assert_eq!(
+        spoofed["reason_code"], "unauthorized",
+        "identity must match the LXMF source"
+    );
+    let hidden = json!({"item_id": "rch:3", "rpp_identity": hex::encode(rpp_identity)});
+    let hidden = command(&state, "f2", me, "mission.library.item.fetch", hidden);
+    assert_eq!(hidden["reason_code"], "not_found", "bravo stays hidden");
+
+    crate::library_rpp::install_for_tests().await;
+    let fetched = command(&state, "f3", me, "mission.library.item.fetch", args.clone());
+    assert_eq!(fetched["result"]["status"], "ok", "{fetched:#}");
+    assert_eq!(
+        fetched["result"]["rpp"]["manifest_hash"]
+            .as_str()
+            .map(str::len),
+        Some(64)
+    );
+    assert_eq!(
+        fetched["result"]["content_sha256"],
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+            b"%PDF-1.7 mission plan"
+        ))
+    );
+    let again = command(&state, "f4", me, "mission.library.item.fetch", args);
+    assert_eq!(
+        again["result"]["rpp"], fetched["result"]["rpp"],
+        "one Package per file"
+    );
+    let listed = command(
+        &state,
+        "f5",
+        me,
+        "mission.library.list",
+        json!({"kind": "file"}),
+    );
+    assert_eq!(
+        listed["result"]["items"][0]["rpp"], fetched["result"]["rpp"],
+        "catalog shows RPP ref"
+    );
 }

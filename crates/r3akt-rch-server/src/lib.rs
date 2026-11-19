@@ -48,6 +48,7 @@ mod browser_security;
 mod chat_scope;
 mod command_persistence;
 mod library_routes;
+mod library_rpp;
 use chat_scope::message_scope;
 mod first_run_setup;
 mod host_metrics;

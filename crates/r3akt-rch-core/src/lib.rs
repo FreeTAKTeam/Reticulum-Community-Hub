@@ -43,7 +43,9 @@ mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
 mod sqlite_values;
-pub use sqlite_commands::{CommandDelta, MarkerPictureRow, RchCommandTransaction};
+pub use sqlite_commands::{
+    CommandDelta, LibraryRppPackage, MarkerPictureRow, RchCommandTransaction,
+};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
 
@@ -458,6 +460,7 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "rch_marker_pictures",
     "rch_library_mission_files",
     "rch_library_rpp_refs",
+    "rch_library_rpp_packages",
     "rch_markers",
     "rch_zones",
     "rch_missions",
@@ -10002,6 +10005,7 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
             | "mission.marker.list"
             | "mission.library.list"
             | "mission.library.item.get"
+            | "mission.library.item.fetch"
             | "mission.library.item.link"
             | "mission.marker.create"
             | "mission.marker.position.patch"
@@ -10124,9 +10128,10 @@ pub fn required_capability(command_type: &str) -> Option<&'static str> {
             Some("mission.leave")
         }
         "mission.users" | "mission.events.list" => Some("mission.audit.read"),
-        "mission.marker.list" | "mission.library.list" | "mission.library.item.get" => {
-            Some("mission.content.read")
-        }
+        "mission.marker.list"
+        | "mission.library.list"
+        | "mission.library.item.get"
+        | "mission.library.item.fetch" => Some("mission.content.read"),
         "mission.marker.create"
         | "mission.library.item.link"
         | "mission.marker.position.patch"
