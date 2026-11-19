@@ -144,7 +144,12 @@ pub(super) fn apply_with_store(
                             event_type: format!("lxmf_{kind}_diagnostic"),
                             message: diagnostic,
                             timestamp_ms: event.created_at.saturating_mul(1000),
-                            metadata: json!({"position":event.position,"valid_payloads":decoded.envelopes.len()}),
+                            metadata: json!({
+                                "position": event.position,
+                                "valid_payloads": decoded.envelopes.len(),
+                                "source": message.get("source").and_then(Value::as_str).map(normalize_identity_key),
+                                "message_id": message.get("id").and_then(Value::as_str),
+                            }),
                         }).map_err(storage)?;
                     }
                     if let Some(first) = decoded.envelopes.first() {
@@ -201,7 +206,7 @@ pub(super) fn apply_with_store(
         event_type: "durable_broker_handled".into(),
         message: event.event_type.clone(),
         timestamp_ms: event.created_at.saturating_mul(1000),
-        metadata: json!({"position":event.position}),
+        metadata: broker_event_metadata(&event, &published),
     };
     unit.stage_system_event(&system_event).map_err(storage)?;
     let delta = unit.commit_delta().map_err(storage)?;
@@ -338,4 +343,41 @@ fn publish_delta<T: Clone + PartialEq, U>(
     for id in prior.keys() {
         map.remove(id);
     }
+}
+
+/// Who and what a handled broker step was about, so the event feed can name the
+/// peer instead of showing only the queue position.
+fn broker_event_metadata(
+    event: &r3akt_rch_core::InboxEvent,
+    published: &[OutboundMessageRecord],
+) -> Value {
+    let payload = &event.payload;
+    let text = |pointer: &str| payload.pointer(pointer).and_then(Value::as_str);
+    let message_id = text("/message_id").or_else(|| text("/message/id"));
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("position".into(), json!(event.position));
+    if let Some(id) = message_id {
+        metadata.insert("message_id".into(), json!(id));
+    }
+    if let Some(status) = text("/status") {
+        metadata.insert("status".into(), json!(status));
+    }
+    match event.event_type.as_str() {
+        "inbound" | "bootstrap_message" => {
+            if let Some(source) = text("/message/source") {
+                metadata.insert("source".into(), json!(normalize_identity_key(source)));
+            }
+        }
+        "outbound" | "receipt" => {
+            let destination = message_id
+                .and_then(|id| published.iter().find(|record| record.message_id == id))
+                .and_then(|record| record.destination.clone())
+                .or_else(|| text("/message/destination").map(str::to_string));
+            if let Some(destination) = destination {
+                metadata.insert("destination".into(), json!(destination));
+            }
+        }
+        _ => {}
+    }
+    Value::Object(metadata)
 }

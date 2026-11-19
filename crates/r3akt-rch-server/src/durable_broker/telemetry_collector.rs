@@ -230,7 +230,7 @@ pub(super) fn reply(
         event_type: "telemetry_request".into(),
         message: "Telemetry collector snapshot served".into(),
         timestamp_ms: event.created_at.saturating_mul(1000),
-        metadata: json!({"entry_count":count,"unavailable_records":skipped}),
+        metadata: json!({"entry_count":count,"unavailable_records":skipped,"peer":envelope.source.as_str()}),
     })
     .map_err(storage)?;
     Ok(())
@@ -262,7 +262,7 @@ fn failure_reply(
         event_type: "telemetry_request".into(),
         message: content.into(),
         timestamp_ms: event.created_at.saturating_mul(1000),
-        metadata: json!({"status":status}),
+        metadata: json!({"status":status,"peer":envelope.source.as_str()}),
     })
     .map_err(storage)
 }

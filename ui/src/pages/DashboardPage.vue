@@ -149,67 +149,15 @@
         </div>
 
         <div class="hud-panel hud-events">
-          <div class="hud-panel-header hud-panel-header--compact">
-            <div class="hud-panel-title">Event Feed</div>
-            <span class="hud-panel-subtitle">Realtime system activity</span>
-          </div>
-          <div class="hud-events-body">
-            <div v-if="!dashboard.events.length" class="hud-empty">No events yet.</div>
-            <template v-else>
-              <table class="hud-events-table">
-                <thead>
-                  <tr>
-                    <th>Event</th>
-                    <th>Type</th>
-                    <th>Time</th>
-                    <th class="hud-events-cell--action">Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template v-for="event in pagedEvents" :key="eventRowKey(event)">
-                    <tr class="hud-events-row">
-                      <td class="hud-events-cell hud-events-cell--message">
-                        <span class="hud-event-title">{{ eventFeedMessage(event) }}</span>
-                      </td>
-                      <td class="hud-events-cell hud-events-cell--meta">
-                        <span class="hud-event-tag">{{ event.category }}</span>
-                      </td>
-                      <td class="hud-events-cell hud-events-cell--time">
-                        {{ formatTimestamp(event.created_at) }}
-                      </td>
-                      <td class="hud-events-cell hud-events-cell--action">
-                        <button
-                          type="button"
-                          class="hud-events-toggle"
-                          :disabled="!hasMetadata(event.metadata)"
-                          @click="toggleEventDetails(eventRowKey(event))"
-                        >
-                          <span>{{ isEventExpanded(eventRowKey(event)) ? "Hide" : "Details" }}</span>
-                          <span
-                            class="hud-events-toggle-icon"
-                            :class="{ 'hud-events-toggle-icon--open': isEventExpanded(eventRowKey(event)) }"
-                          />
-                        </button>
-                      </td>
-                    </tr>
-                    <tr v-if="isEventExpanded(eventRowKey(event))" class="hud-events-details-row">
-                      <td colspan="4">
-                        <div class="hud-events-details">
-                          <BaseFormattedOutput class="hud-event-json" :value="event.metadata" />
-                        </div>
-                      </td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-              <BasePagination
-                v-model:page="eventPage"
-                class="hud-events-pagination"
-                :page-size="EVENT_PAGE_SIZE"
-                :total="dashboard.events.length"
-              />
+          <EventFeedPanel
+            :events="dashboard.events"
+            :identities="dashboard.eventCallsignLookup"
+            :missions="dashboard.missionNames"
+          >
+            <template #title>
+              <div class="hud-panel-title">Event Feed</div>
             </template>
-          </div>
+          </EventFeedPanel>
         </div>
       </main>
 
@@ -243,25 +191,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import BaseButton from "../components/BaseButton.vue";
-import BaseFormattedOutput from "../components/BaseFormattedOutput.vue";
-import BasePagination from "../components/BasePagination.vue";
 import OnlineHelpLauncher from "../components/OnlineHelpLauncher.vue";
 import { get, post } from "../api/client";
 import type { ApiError } from "../api/client";
 import { endpoints } from "../api/endpoints";
 import { WsClient } from "../api/ws";
-import { EVENT_FEED_MAX_EVENTS, eventEntryKey, useDashboardStore } from "../stores/dashboard";
+import { EVENT_FEED_MAX_EVENTS, useDashboardStore } from "../stores/dashboard";
 import { useConnectionStore } from "../stores/connection";
 import { useToastStore } from "../stores/toasts";
 import { formatNumber } from "../utils/format";
-import { formatTimestamp } from "../utils/format";
-import { useIdentityEnrichment } from "../composables/useIdentityEnrichment";
-import { resolveEventFeedMessage, eventIdentityTokens, buildEventCallsignLookup } from "../utils/event-feed";
 import ReticulumClock from "../components/ReticulumClock.vue";
 import CpuTrace from "../components/dashboard/CpuTrace.vue";
 import MessageTrafficPanel from "../components/dashboard/MessageTrafficPanel.vue";
 import { useDashboardMetrics } from "../composables/useDashboardMetrics";
-import type { EventEntry } from "../api/types";
+import EventFeedPanel from "../components/dashboard/EventFeedPanel.vue";
 
 const dashboard = useDashboardStore();
 const toastStore = useToastStore();
@@ -275,8 +218,6 @@ const controlStatus = ref<ControlStatus | null>(null);
 const controlBusy = ref(false);
 const lastSyncMessage = ref("");
 let sparklineTickId: number | undefined;
-const expandedEvents = ref<Record<string, boolean>>({});
-const eventPage = ref(1);
 
 interface ControlStatus {
   status?: string;
@@ -317,7 +258,6 @@ const apiErrorDetail = (error: unknown): string | undefined => {
   return undefined;
 };
 
-const EVENT_PAGE_SIZE = 12;
 const CONTROL_SYNC_TIMEOUT_MS = 70_000;
 
 const uptime = computed(() => {
@@ -370,45 +310,6 @@ const wsChipClass = computed(() => {
   return "hud-chip--idle";
 });
 
-const hasMetadata = (value?: Record<string, unknown>) => {
-  if (!value) {
-    return false;
-  }
-  return Object.keys(value).length > 0;
-};
-
-const eventRowKey = (event: EventEntry) => eventEntryKey(event);
-
-const eventPageCount = computed(() => Math.max(1, Math.ceil(dashboard.events.length / EVENT_PAGE_SIZE)));
-
-const pagedEvents = computed(() => {
-  const start = (eventPage.value - 1) * EVENT_PAGE_SIZE;
-  return dashboard.events.slice(start, start + EVENT_PAGE_SIZE);
-});
-
-watch(eventPageCount, (pageCount) => {
-  if (eventPage.value > pageCount) {
-    eventPage.value = pageCount;
-  }
-});
-
-const identityDirectory = useIdentityEnrichment(computed(() => eventIdentityTokens(pagedEvents.value)));
-const eventFeedMessage = (event: EventEntry) => {
-  const lookup = new Map(dashboard.eventCallsignLookup);
-  const enriched = buildEventCallsignLookup({ identities: [...identityDirectory.cache.values()].filter((entry): entry is import("../api/types").IdentityEntry => entry !== null) });
-  enriched.forEach((name, id) => { if (!lookup.has(id)) { lookup.set(id, name); } });
-  identityDirectory.cache.forEach((entry, requestKey) => {
-    const name = entry?.id ? enriched.get(entry.id.trim().toLowerCase()) : undefined;
-    if (name && !lookup.has(requestKey)) { lookup.set(requestKey, name); }
-  });
-  return resolveEventFeedMessage(event, lookup);
-};
-
-const isEventExpanded = (key: string) => Boolean(expandedEvents.value[key]);
-
-const toggleEventDetails = (key: string) => {
-  expandedEvents.value[key] = !expandedEvents.value[key];
-};
 
 const SPARKLINE_COUNT = 12;
 const SPARKLINE_MIN = 9;
