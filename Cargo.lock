@@ -1540,6 +1540,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "r3akt-library-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "r3akt-map-core"
 version = "0.1.0"
 dependencies = [
@@ -1613,6 +1621,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "csv",
+ "r3akt-library-core",
  "r3akt-map-core",
  "r3akt-mesh-delivery",
  "r3akt-profile-rch",
@@ -1636,6 +1645,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "http-body-util",
+ "r3akt-library-core",
  "r3akt-map-core",
  "r3akt-profile-rch",
  "r3akt-protocol",

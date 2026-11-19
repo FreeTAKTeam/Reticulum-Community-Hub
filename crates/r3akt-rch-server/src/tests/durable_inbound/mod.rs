@@ -97,6 +97,7 @@ fn single(mut requests: Vec<Value>) -> Value {
 mod broadcast_history;
 mod chat;
 mod commands;
+mod library;
 mod marker_replay;
 mod media;
 mod pictures;

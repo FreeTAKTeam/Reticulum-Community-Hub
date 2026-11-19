@@ -70,7 +70,7 @@ pub(super) fn state() -> crate::AppState {
 }
 
 /// Sends one command message and returns the broker requests it produced.
-fn send(
+pub(super) fn send(
     state: &crate::AppState,
     id: &str,
     source: &str,
@@ -100,7 +100,7 @@ fn send(
         .collect()
 }
 
-fn result_of(requests: &[Value], destination: &str) -> Value {
+pub(super) fn result_of(requests: &[Value], destination: &str) -> Value {
     requests
         .iter()
         .filter(|r| r["destination"] == destination)

@@ -92,6 +92,10 @@ fn apply_envelope_payload(
         if command.name == "mission.time" {
             return super::mission_time::reply(unit, event, envelope, &mission, published);
         }
+        if command.name.starts_with("mission.library.") {
+            let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
+            return super::library::handle(unit, event, envelope, &mission, reply, published);
+        }
         if command.name.starts_with("mission.marker.picture.") {
             let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
             return super::marker_picture::handle(

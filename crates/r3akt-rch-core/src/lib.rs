@@ -456,6 +456,8 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "r3s_marker_writers",
     "r3s_relay_metadata",
     "rch_marker_pictures",
+    "rch_library_mission_files",
+    "rch_library_rpp_refs",
     "rch_markers",
     "rch_zones",
     "rch_missions",
@@ -9998,6 +10000,9 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
             | "mission.users"
             | "mission.events.list"
             | "mission.marker.list"
+            | "mission.library.list"
+            | "mission.library.item.get"
+            | "mission.library.item.link"
             | "mission.marker.create"
             | "mission.marker.position.patch"
             | "mission.marker.patch"
@@ -10119,8 +10124,11 @@ pub fn required_capability(command_type: &str) -> Option<&'static str> {
             Some("mission.leave")
         }
         "mission.users" | "mission.events.list" => Some("mission.audit.read"),
-        "mission.marker.list" => Some("mission.content.read"),
+        "mission.marker.list" | "mission.library.list" | "mission.library.item.get" => {
+            Some("mission.content.read")
+        }
         "mission.marker.create"
+        | "mission.library.item.link"
         | "mission.marker.position.patch"
         | "mission.marker.patch"
         | "mission.marker.delete" => Some("mission.content.write"),

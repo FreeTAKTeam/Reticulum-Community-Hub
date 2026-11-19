@@ -1,6 +1,7 @@
 mod sensor_telemetry;
 pub(crate) use sensor_telemetry::initialize;
 mod broker_application;
+mod library;
 mod marker_pictures;
 pub use marker_pictures::MarkerPictureRow;
 mod broker_delivery;
