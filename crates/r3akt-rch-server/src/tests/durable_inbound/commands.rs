@@ -879,3 +879,50 @@ fn plain_lxmf_join_replays_recent_topic_chat_from_other_senders() {
         ]
     );
 }
+
+#[test]
+fn plain_lxmf_time_replies_with_latest_or_named_mission_time_left() {
+    let state = durable_inbound_test_state(&temp_db(), "hub-source");
+    let source = "77b2539b72259af927e48c0f90721767";
+    crate::r3akt_command(
+        &state,
+        "mission.registry.mission.upsert",
+        json!({"uid": "m-old", "mission_name": "Old", "expiration": "2000-01-01T00:00:00Z"}),
+    )
+    .expect("seed old mission");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    crate::r3akt_command(
+        &state,
+        "mission.registry.mission.upsert",
+        json!({"uid": "m-new", "mission_name": "New", "expiration": "2999-01-01T00:00:00Z"}),
+    )
+    .expect("seed new mission");
+    let send = |id: &str, body: &str| {
+        apply_daemon_messages(
+            &state,
+            json!([{"id": id, "source": source, "content": body, "fields": {}, "timestamp": 1_778_369_178, "title": ""}]),
+        )
+    };
+
+    send("time-latest", "/time");
+    send("time-named", "\\time m-old");
+    send("time-missing", "/time nope");
+
+    let contents = pending_broker_requests(&state_db(&state))
+        .into_iter()
+        .map(|request| request["content"].as_str().expect("content").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(contents.len(), 3, "{contents:?}");
+    assert!(
+        contents[0].starts_with("Mission New: ") && contents[0].contains("remaining"),
+        "{contents:?}"
+    );
+    assert!(
+        contents[1].starts_with("Mission Old ended ") && contents[1].contains("ago"),
+        "{contents:?}"
+    );
+    assert!(
+        contents[2].contains("unavailable") || contents[2].contains("not found"),
+        "{contents:?}"
+    );
+}

@@ -110,6 +110,12 @@ The durable path keeps the Python 2.9.x northbound and chat contract:
   `/resume`, `/nick`, `/users`, also sent as `FIELD_COMMANDS` entries) answer
   with one plain-text line. `/join` replays up to ten recent inbound messages
   on that topic from other senders.
+- `/time [mission_id]` (also `mission.time` as a `FIELD_COMMANDS` entry)
+  answers the sender with the time left until that mission's RFC 3339
+  `expiration`, for example
+  `Mission Rescue: 2 days, 3 hours remaining (ends 2026-11-21 13:01 UTC)`.
+  Without an id it uses the most recently created mission. It needs the same
+  `mission.registry.mission.read` right as the registry read.
 - Relays are labelled with the sender's nickname, else its announced display
   name, else an 8-character identity prefix. Rejected chat (empty or over the
   length limit) is answered with `message rejected: <reason>`.

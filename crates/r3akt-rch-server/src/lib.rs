@@ -3039,6 +3039,7 @@ fn plain_lxmf_help_reply() -> &'static str {
 /resume - receive group relays again\n\
 /nick <name> - set your display name\n\
 /users - list joined users\n\
+/time [mission_id] - time left in a mission (default: latest)\n\
 /help - show this help\n\
 Legacy backslash commands still work, for example \\join or \\help."
 }
@@ -8974,6 +8975,7 @@ const LEGACY_SOUTHBOUND_COMMANDS: &[&str] = &[
 const MISSION_SYNC_COMMANDS: &[&str] = &[
     "mission.join",
     "mission.leave",
+    "mission.time",
     "mission.events.list",
     "mission.marker.list",
     "mission.marker.create",
