@@ -96,6 +96,9 @@ fn apply_envelope_payload(
         if !command_claim::claim_command(unit, envelope, &logical, &command)? {
             return Ok(());
         }
+        if command.name == "mission.time" {
+            return super::mission_time::reply(unit, event, envelope, &mission, published);
+        }
         if command.name.starts_with("mission.marker.picture.") {
             let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
             return super::marker_picture::handle(

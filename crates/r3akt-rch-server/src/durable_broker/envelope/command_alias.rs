@@ -10,6 +10,7 @@ pub(super) fn command_alias(command: &r3akt_protocol::Command) -> r3akt_protocol
         "resume" => "mission.resume",
         "nick" | "nickname" => "mission.nick",
         "users" => "mission.users",
+        "time" | "missiontime" => "mission.time",
         "createtopic" | "create_topic" => "topic.create",
         "subscribetopic" | "subscribe_topic" => "topic.subscribe",
         "publishmessage" => "mission.message.send",

@@ -335,6 +335,7 @@ mod chat_presentation;
 mod envelope;
 mod inbound_attachments;
 mod marker_picture;
+mod mission_time;
 mod outbound;
 #[cfg(test)]
 use application::apply;
