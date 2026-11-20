@@ -314,7 +314,13 @@ fn get(
     let (Some(file_id), Some(format), Some(sha256)) =
         (row.image_file_id, &row.image_format, &row.image_sha256)
     else {
-        return Ok(completed(mission, status("pending"), None));
+        // A recorded hash without a file means the image was uploaded, then deleted (#365).
+        let state = if row.image_sha256.is_some() {
+            "unavailable"
+        } else {
+            "pending"
+        };
+        return Ok(completed(mission, status(state), None));
     };
     let Some(bytes) = unit.attachment_bytes(file_id).map_err(storage)? else {
         return Ok(completed(mission, status("unavailable"), None));
