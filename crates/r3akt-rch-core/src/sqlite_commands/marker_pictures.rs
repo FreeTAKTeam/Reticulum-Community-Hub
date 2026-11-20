@@ -5,6 +5,13 @@ use super::super::Connection;
 use super::{RchCommandTransaction, RchCoreError, params};
 use rusqlite::OptionalExtension;
 
+/// The next attachment file ID: above every ID ever issued, not just the
+/// current maximum, so a deleted file's ID is never handed out again (#365).
+/// `MAX(file_id)` still counts when a database wipe cleared the mark.
+pub(crate) const NEXT_FILE_ATTACHMENT_ID_SQL: &str = "SELECT MAX(
+    COALESCE((SELECT file_id FROM rch_file_attachment_high_water WHERE id = 1), 0),
+    COALESCE((SELECT MAX(file_id) FROM rch_file_attachments), 0)) + 1";
+
 pub(crate) fn initialize(connection: &Connection) -> Result<(), RchCoreError> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS rch_marker_pictures(
@@ -16,7 +23,36 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), RchCoreError> {
             image_sha256 TEXT,
             image_media_type TEXT,
             image_width INTEGER,
-            image_height INTEGER);",
+            image_height INTEGER);
+        -- Every insert raises the mark, whichever code path wrote the row.
+        CREATE TABLE IF NOT EXISTS rch_file_attachment_high_water(
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            file_id INTEGER NOT NULL);
+        INSERT OR IGNORE INTO rch_file_attachment_high_water(id, file_id)
+            SELECT 1, COALESCE(MAX(file_id), 0) FROM rch_file_attachments;
+        CREATE TRIGGER IF NOT EXISTS rch_file_attachments_high_water
+        AFTER INSERT ON rch_file_attachments BEGIN
+            INSERT INTO rch_file_attachment_high_water(id, file_id) VALUES(1, NEW.file_id)
+            ON CONFLICT(id) DO UPDATE SET file_id = MAX(file_id, excluded.file_id);
+        END;
+        -- A deleted file leaves its picture without that file, never with another's.
+        CREATE TRIGGER IF NOT EXISTS rch_file_attachments_clear_pictures
+        AFTER DELETE ON rch_file_attachments BEGIN
+            UPDATE rch_marker_pictures SET thumbnail_file_id = NULL
+                WHERE thumbnail_file_id = OLD.file_id;
+            UPDATE rch_marker_pictures SET image_file_id = NULL
+                WHERE image_file_id = OLD.file_id;
+        END;
+        -- Repair hubs where a reused ID already points at another picture's file:
+        -- a picture's own files are named picture-<message_id>[-thumbnail].<format>.
+        UPDATE rch_marker_pictures SET thumbnail_file_id = NULL
+            WHERE thumbnail_file_id IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM rch_file_attachments f WHERE f.file_id = thumbnail_file_id
+                AND instr(f.payload, CAST('picture-' || message_id AS BLOB)) > 0);
+        UPDATE rch_marker_pictures SET image_file_id = NULL
+            WHERE image_file_id IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM rch_file_attachments f WHERE f.file_id = image_file_id
+                AND instr(f.payload, CAST('picture-' || message_id AS BLOB)) > 0);",
     )?;
     Ok(())
 }
@@ -147,5 +183,85 @@ impl RchCommandTransaction<'_> {
             )
             .optional()
             .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod file_id_reuse_tests {
+    use super::super::super::{FileAttachmentRecord, RchSqliteStore};
+
+    fn file(name: &str) -> FileAttachmentRecord {
+        FileAttachmentRecord {
+            file_id: 0,
+            name: name.into(),
+            path: String::new(),
+            category: "image".into(),
+            size: 1,
+            media_type: None,
+            topic_id: None,
+            created_ts_ms: 0,
+            updated_ts_ms: 0,
+        }
+    }
+
+    fn picture_files(store: &RchSqliteStore, message_id: &str) -> (Option<i64>, Option<i64>) {
+        store
+            .connection
+            .query_row(
+                "SELECT thumbnail_file_id,image_file_id FROM rch_marker_pictures WHERE message_id=?1",
+                [message_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("picture row")
+    }
+
+    #[test]
+    fn deleted_file_ids_are_not_reused_and_pictures_never_point_at_another_file() {
+        let directory = std::env::temp_dir().join(format!("rch-file-ids-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).expect("dir");
+        let mut store = RchSqliteStore::open(directory.join("state.db")).expect("store");
+        let thumb = store
+            .insert_file_attachment_with_next_id(file("picture-aa-thumbnail.jpg"))
+            .expect("thumbnail")
+            .file_id;
+        let image = store
+            .insert_file_attachment_with_next_id(file("picture-aa.jpg"))
+            .expect("image")
+            .file_id;
+        store
+            .connection
+            .execute(
+                "INSERT INTO rch_marker_pictures(message_id,object_destination_hash,thumbnail_file_id,image_file_id,image_sha256) VALUES('aa','m',?1,?2,'h')",
+                [super::super::super::sqlite_u64(thumb).expect("id"), super::super::super::sqlite_u64(image).expect("id")],
+            )
+            .expect("picture");
+
+        // Deleting the highest file clears the reference and retires its ID.
+        store
+            .delete_file_attachment(image, "image")
+            .expect("delete");
+        assert_eq!(picture_files(&store, "aa"), (Some(1), None));
+        assert_eq!(store.next_file_attachment_id().expect("next"), image + 1);
+
+        let unit = store.begin_outbound_application().expect("unit");
+        let staged = unit
+            .stage_attachment(file("picture-bb-thumbnail.jpg"), b"x")
+            .expect("stage")
+            .file_id;
+        unit.commit().expect("commit");
+        assert_eq!(staged, image + 1);
+
+        // Repair: a reference to another picture's file is cleared on open.
+        store
+            .connection
+            .execute(
+                "UPDATE rch_marker_pictures SET image_file_id=?1 WHERE message_id='aa'",
+                [super::super::super::sqlite_u64(staged).expect("id")],
+            )
+            .expect("corrupt");
+        super::initialize(&store.connection).expect("repair");
+        assert_eq!(picture_files(&store, "aa"), (Some(1), None));
+        drop(store);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

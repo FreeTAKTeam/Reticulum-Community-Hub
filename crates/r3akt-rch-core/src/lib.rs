@@ -1985,12 +1985,11 @@ impl RchSqliteStore {
     }
 
     pub fn next_file_attachment_id(&self) -> Result<u64, RchCoreError> {
-        let max_id = self.connection.query_row(
-            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
-            [],
-            |row| sqlite_read_u64(row, 0),
-        )?;
-        Ok(max_id.saturating_add(1))
+        Ok(self
+            .connection
+            .query_row(sqlite_commands::NEXT_FILE_ATTACHMENT_ID_SQL, [], |row| {
+                sqlite_read_u64(row, 0)
+            })?)
     }
 
     pub fn upsert_file_attachment(
@@ -2015,12 +2014,10 @@ impl RchSqliteStore {
         mut record: FileAttachmentRecord,
     ) -> Result<FileAttachmentRecord, RchCoreError> {
         let transaction = self.connection.transaction()?;
-        let max_id = transaction.query_row(
-            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
-            [],
-            |row| sqlite_read_u64(row, 0),
-        )?;
-        record.file_id = max_id.saturating_add(1);
+        record.file_id =
+            transaction.query_row(sqlite_commands::NEXT_FILE_ATTACHMENT_ID_SQL, [], |row| {
+                sqlite_read_u64(row, 0)
+            })?;
         transaction.execute(
             "INSERT INTO rch_file_attachments (file_id, category, payload, topic_id)
              VALUES (?1, ?2, ?3, ?4)",

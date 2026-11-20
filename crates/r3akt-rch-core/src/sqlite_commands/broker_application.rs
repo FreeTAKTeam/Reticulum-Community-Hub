@@ -371,16 +371,20 @@ impl RchCommandTransaction<'_> {
             ));
         }
         super::super::durable_inbox::admit_effect_bytes(&self.transaction, bytes.len())?;
+        record.file_id = self.transaction.query_row(
+            super::marker_pictures::NEXT_FILE_ATTACHMENT_ID_SQL,
+            [],
+            |row| super::super::sqlite_read_u64(row, 0),
+        )?;
         self.transaction.execute(
-            "INSERT INTO rch_file_attachments(category,payload,topic_id) VALUES(?1,?2,?3)",
+            "INSERT INTO rch_file_attachments(file_id,category,payload,topic_id) VALUES(?1,?2,?3,?4)",
             params![
+                super::super::sqlite_u64(record.file_id)?,
                 record.category,
                 encode_msgpack(&record)?,
                 normalize_topic_id(record.topic_id.as_deref())
             ],
         )?;
-        record.file_id = u64::try_from(self.transaction.last_insert_rowid())
-            .map_err(|e| RchCoreError::Decode(e.to_string()))?;
         record.path = format!("rch-db:{}", record.file_id);
         self.transaction.execute(
             "UPDATE rch_file_attachments SET payload=?1 WHERE file_id=?2",
