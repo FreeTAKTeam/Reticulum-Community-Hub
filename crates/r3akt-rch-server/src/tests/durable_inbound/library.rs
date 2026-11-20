@@ -352,3 +352,66 @@ async fn item_fetch_binds_identity_and_prepares_a_signed_package() {
         "catalog shows RPP ref"
     );
 }
+
+/// Production regression: attachments kept in the database (`rch-db:N`) are
+/// packaged from their stored bytes, and a file the hub cannot read is
+/// rejected instead of erroring, which held the whole inbox behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn item_fetch_packages_database_bytes_and_rejects_unreadable_files() {
+    let rpp_identity = [0x43u8; 16];
+    let source = delivery_destination(rpp_identity);
+    let state = state_for(&source);
+    let db = state
+        .sqlite_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .expect("db");
+    let picture = b"\xff\xd8\xff\xe0 marker picture";
+    let mut store = RchSqliteStore::open(&db).expect("store");
+    store
+        .upsert_file_attachment(&FileAttachmentRecord {
+            path: "rch-db:2".into(),
+            ..attachment(2, "site.jpg", "image", "image/jpeg", 20)
+        })
+        .expect("blob record");
+    store
+        .upsert_file_attachment(&FileAttachmentRecord {
+            path: "RTH_Store/files/plan.pdf".into(),
+            ..attachment(1, "plan.pdf", "file", "application/pdf", 10)
+        })
+        .expect("missing record");
+    drop(store);
+    rusqlite::Connection::open(&db)
+        .expect("db")
+        .execute(
+            "INSERT INTO rch_broker_attachment_bytes(file_id, bytes) VALUES(2, ?1)",
+            [picture.as_slice()],
+        )
+        .expect("bytes");
+    crate::library_rpp::install_for_tests().await;
+    let me = (source.as_str(), READER_ID);
+    let fetch = |id: &str, item: &str| {
+        command(
+            &state,
+            id,
+            me,
+            "mission.library.item.fetch",
+            json!({"item_id": item, "rpp_identity": hex::encode(rpp_identity)}),
+        )
+    };
+
+    let missing = fetch("b1", "rch:1");
+    assert_eq!(
+        (missing["status"].as_str(), missing["reason_code"].as_str()),
+        (Some("rejected"), Some("file_unavailable")),
+        "{missing:#}"
+    );
+    let blob = fetch("b2", "rch:2");
+    assert_eq!(blob["result"]["status"], "ok", "inbox kept going: {blob:#}");
+    assert_eq!(
+        blob["result"]["content_sha256"],
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(picture))
+    );
+    let again = fetch("b3", "rch:2");
+    assert_eq!(again["result"]["rpp"], blob["result"]["rpp"], "copied once");
+}
