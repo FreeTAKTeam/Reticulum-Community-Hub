@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.44 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.44 moves SDK and daemon 0.16.2-rc.2-linux to `0940abb2ab0ea540c8c0d94283304e1c07b8e002` (ZeroMQ fair-queue fix, #363) and adds monotonic attachment file IDs with picture-reference cleanup (#365). See [the preview.44 notes](release-notes-v3.0.0-preview.44.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
 ## Preview.43 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
 
 Preview.43 keeps SDK and daemon 0.16.2-rc.2-linux at `d9595383b253b1c5022ab5abeacd39ea60b132dd` and adds the Mission Library RPP fetch fix from #361 (database-kept attachments, no inbox stall on unreadable files). See [the preview.43 notes](release-notes-v3.0.0-preview.43.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
