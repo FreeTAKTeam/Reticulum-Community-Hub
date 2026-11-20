@@ -334,6 +334,7 @@ mod application;
 mod chat_presentation;
 mod envelope;
 mod inbound_attachments;
+mod library;
 mod marker_picture;
 mod mission_time;
 mod outbound;

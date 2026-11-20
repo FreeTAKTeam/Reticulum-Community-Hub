@@ -47,6 +47,8 @@ mod auth_throttle;
 mod browser_security;
 mod chat_scope;
 mod command_persistence;
+mod library_routes;
+mod library_rpp;
 use chat_scope::message_scope;
 mod first_run_setup;
 mod host_metrics;
@@ -2079,6 +2081,7 @@ fn create_app_router(state: AppState) -> Router {
             get(method_not_allowed).post(rollback_reticulum_config_text),
         )
         .route("/File", get(list_files))
+        .route("/Library", get(library_routes::list_library))
         .route(
             "/File/{file_id}",
             get(retrieve_file).patch(patch_file).delete(delete_file),

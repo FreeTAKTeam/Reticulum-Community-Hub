@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/r3akt-identity",
+    "crates/r3akt-library-core",
     "crates/r3akt-map-core",
     "crates/r3akt-protocol",
     "crates/r3akt-profile-rch",
@@ -25,6 +26,7 @@ repository = "https://github.com/FreeTAKTeam/Reticulum-Community-Hub"
 [workspace.dependencies]
 toml = "0.8.23"
 r3akt-identity = { path = "crates/r3akt-identity" }
+r3akt-library-core = { path = "crates/r3akt-library-core" }
 r3akt-map-core = { path = "crates/r3akt-map-core" }
 r3akt-protocol = { path = "crates/r3akt-protocol" }
 r3akt-shared-mesh-delivery = { package = "r3akt-mesh-delivery", git = "https://github.com/FreeTAKTeam/R3AKTClient.git", rev = "e705533f8549f8556b1939da4731f233ea2e1b89" }
@@ -35,11 +37,14 @@ r3akt-rch-server = { path = "crates/r3akt-rch-server" }
 r3akt-tak-connector = { path = "crates/r3akt-tak-connector" }
 r3akt-transport-rns = { path = "crates/r3akt-transport-rns" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
-rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "4dc89a4afd54b8653ee9236b62d5d1f720b484bf", version = "0.16.2-rc.2-linux" }
-rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "4dc89a4afd54b8653ee9236b62d5d1f720b484bf", version = "0.16.2-rc.2-linux" }
-lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "4dc89a4afd54b8653ee9236b62d5d1f720b484bf", version = "0.16.2-rc.2-linux", default-features = false, features = ["std"] }
-lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "4dc89a4afd54b8653ee9236b62d5d1f720b484bf", version = "0.16.2-rc.2-linux", default-features = false, features = ["zmq-pipeline-backend"] }
+rns-core = { package = "reticulum-rs-core", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux" }
+rns-rpc = { package = "reticulum-rs-rpc", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux" }
+lxmf = { package = "lxmf-wire", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux", default-features = false, features = ["std"] }
+rpp-core = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux", features = ["rns"] }
+rns-transport = { package = "reticulum-rs-transport", git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux" }
+lxmf-sdk = { git = "https://github.com/FreeTAKTeam/LXMF-rs.git", rev = "d9595383b253b1c5022ab5abeacd39ea60b132dd", version = "0.16.2-rc.2-linux", default-features = false, features = ["zmq-pipeline-backend"] }
 base64 = "0.22"
+hex = "0.4"
 argon2 = "0.5"
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde", "std"] }
 axum = { version = "0.8", features = ["ws", "multipart"] }
