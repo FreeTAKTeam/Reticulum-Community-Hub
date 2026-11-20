@@ -64,6 +64,12 @@ node (for example a reticulumd `TCPServerInterface`), with an identity kept in
 3. grants that identity alone, serves the Package and answers with the RPP
    reference and `content_sha256`. REM then pulls and verifies it.
 
+Attachments whose bytes are kept in the database (`rch-db:N`, such as marker
+pictures received over LXMF) are copied once into `rch_rpp_files/` next to the
+database and packaged from there. A file the hub cannot read (missing, or not
+readable by the service user) answers `file_unavailable` and is logged; it never
+holds the inbox.
+
 Without `RCH_RPP_TCP` the command answers `rpp_unavailable`. Uploads keep the
 8 MiB HTTP limit; RPP does not change it. Legacy attachments become RPP
 objects only when first fetched. Grants are in memory: after a restart a REM

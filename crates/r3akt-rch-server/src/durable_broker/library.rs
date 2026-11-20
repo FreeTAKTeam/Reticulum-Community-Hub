@@ -270,7 +270,28 @@ fn fetch(
     let Some(record) = unit.library_attachment(file_id).map_err(storage)? else {
         return Ok(rejected(mission, "not_found", "no such Library item"));
     };
-    let path = std::path::PathBuf::from(&record.path);
+    let path = rpp.source_path(file_id, &record.path);
+    // A file that cannot be read is answered, never retried: an error here
+    // would hold every later message in the inbox behind this one.
+    let unreadable = |error: &dyn std::fmt::Display| {
+        eprintln!(
+            "library rpp: file {file_id} at {} is not readable: {error}",
+            path.display()
+        );
+        rejected(
+            mission,
+            "file_unavailable",
+            "the Library file is not readable on this hub",
+        )
+    };
+    if record.path.starts_with("rch-db:") {
+        let Some(bytes) = unit.attachment_bytes(file_id).map_err(storage)? else {
+            return Ok(unreadable(&"no stored bytes"));
+        };
+        if let Err(error) = rpp.write_blob(&path, &bytes) {
+            return Ok(unreadable(&error));
+        }
+    }
     let shared = if let Some(package) = unit.library_rpp_package(file_id).map_err(storage)? {
         crate::library_rpp::shared_package(
             &package.package_token,
@@ -279,10 +300,14 @@ fn fetch(
         )
     } else {
         {
-            let shared = rpp
-                .node
-                .prepare_file(&path, &record.name, record.media_type.as_deref())
-                .map_err(|error| ApiError::Internal(format!("library package: {error}")))?;
+            let shared =
+                match rpp
+                    .node
+                    .prepare_file(&path, &record.name, record.media_type.as_deref())
+                {
+                    Ok(shared) => shared,
+                    Err(error) => return Ok(unreadable(&error)),
+                };
             unit.set_library_rpp_package(&r3akt_rch_core::LibraryRppPackage {
                 file_id,
                 package_token: shared.package_token.to_vec(),

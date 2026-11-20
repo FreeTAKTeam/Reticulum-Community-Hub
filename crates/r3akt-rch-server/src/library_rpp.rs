@@ -15,11 +15,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const IDENTITY_FILE: &str = "rch_rpp_identity";
+/// Holds copies of attachments kept in the database (`rch-db:N`), because
+/// RPP builds and serves Packages from files.
+const BLOB_DIR: &str = "rch_rpp_files";
 
 pub(crate) struct LibraryRpp {
     pub(crate) node: Arc<ShareNode>,
     handle: tokio::runtime::Handle,
     served: Mutex<HashSet<[u8; 16]>>,
+    blob_dir: PathBuf,
 }
 
 // shortcut: one sidecar per process (RCH runs one hub per process); move it
@@ -43,6 +47,29 @@ pub(crate) fn shared_package(
 }
 
 impl LibraryRpp {
+    /// The file an attachment is packaged from: its own path, or for bytes
+    /// kept in the database, the copy under `blob_dir`.
+    pub(crate) fn source_path(&self, file_id: u64, record_path: &str) -> PathBuf {
+        if record_path.starts_with("rch-db:") {
+            self.blob_dir.join(file_id.to_string())
+        } else {
+            PathBuf::from(record_path)
+        }
+    }
+
+    /// Writes a database-kept attachment to `path` once (attachments are
+    /// immutable per file id), via a temporary file so a crash leaves no
+    /// partial copy behind.
+    pub(crate) fn write_blob(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if path.exists() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.blob_dir)?;
+        let partial = path.with_extension("partial");
+        std::fs::write(&partial, bytes)?;
+        std::fs::rename(&partial, path)
+    }
+
     /// Makes a prepared Package reachable once; later calls only grant.
     pub(crate) fn serve(&'static self, shared: SharedPackage, path: PathBuf, recipient: [u8; 16]) {
         self.node.allow(&shared, recipient);
@@ -104,10 +131,12 @@ pub(crate) fn spawn_library_rpp(state: AppState) -> Option<tokio::task::JoinHand
             TcpClient::spawn,
         );
         let node = ShareNode::start(transport, identity, system_clock, |_| {}).await;
+        let blob_dir = identity_path.with_file_name(BLOB_DIR);
         let rpp = LIBRARY_RPP.get_or_init(|| LibraryRpp {
             node,
             handle: tokio::runtime::Handle::current(),
             served: Mutex::default(),
+            blob_dir,
         });
         // Grants are per fetch; a REM fetching again after restart is re-granted.
         let packages = RchSqliteStore::open_read_only(&database)
@@ -134,7 +163,7 @@ pub(crate) fn spawn_library_rpp(state: AppState) -> Option<tokio::task::JoinHand
                                 .flatten()
                         })
                 })
-                .map(|record| PathBuf::from(record.path));
+                .map(|record| rpp.source_path(package.file_id, &record.path));
             if let Some(path) = path
                 && rpp
                     .served
@@ -170,5 +199,6 @@ pub(crate) async fn install_for_tests() -> &'static LibraryRpp {
         node,
         handle: tokio::runtime::Handle::current(),
         served: Mutex::default(),
+        blob_dir: std::env::temp_dir().join(format!("{BLOB_DIR}-{}", uuid::Uuid::new_v4())),
     })
 }
