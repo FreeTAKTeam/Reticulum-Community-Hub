@@ -149,7 +149,22 @@ pub(super) fn spawn(state: AppState, interval: Duration) -> tokio::task::JoinHan
                             record_reticulumd_inbound_worker_event_error(&state, error.clone());
                         }
                         match state.broker_lane_errors.write() {
-                            Ok(mut errors) => errors[lane] = error,
+                            Ok(mut errors) => {
+                                // Log transitions only, so a stuck lane is visible without flooding (#363).
+                                if errors[lane] != error {
+                                    let name =
+                                        ["intake", "application", "dispatch", "announces"][lane];
+                                    match &error {
+                                        Some(error) => {
+                                            eprintln!(
+                                                "durable broker {name} lane failing: {error}"
+                                            );
+                                        }
+                                        None => eprintln!("durable broker {name} lane recovered"),
+                                    }
+                                }
+                                errors[lane] = error;
+                            }
                             Err(error) => {
                                 eprintln!("broker lane error state poisoned: {error}");
                             }
