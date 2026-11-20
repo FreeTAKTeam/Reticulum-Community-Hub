@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.42 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.42 pairs SDK and daemon 0.16.2-rc.2-linux at `d9595383b253b1c5022ab5abeacd39ea60b132dd` (LXMF-rs main with RPP 0.3 and RDO owner binding) and includes RCH changes merged through #359. See [the preview.42 notes](release-notes-v3.0.0-preview.42.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
 ## Preview.41 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
 
 Preview.41 pairs SDK and daemon v0.16.2-rc.2-linux at `4dc89a4afd54b8653ee9236b62d5d1f720b484bf` and includes RCH changes merged through #343. See [the preview.41 notes](release-notes-v3.0.0-preview.41.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
