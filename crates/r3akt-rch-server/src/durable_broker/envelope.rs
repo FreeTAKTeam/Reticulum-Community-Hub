@@ -309,13 +309,10 @@ fn apply_envelope_payload(
                     .event_field()
                     .and_then(|e| e["event_type"].as_str());
                 let content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
-                let mut relay_fields = fields.clone();
-                if let (Some(image), Some(map)) = (&relay_image, relay_fields.as_object_mut()) {
-                    map.insert(
-                        r3akt_map_core::marker_picture::FIELD_IMAGE_KEY.into(),
-                        image.clone(),
-                    );
-                }
+                let relay_fields = match &relay_image {
+                    Some(image) => super::marker_picture::with_image(&fields, image)?,
+                    None => fields.clone(),
+                };
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,

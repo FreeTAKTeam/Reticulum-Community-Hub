@@ -6,11 +6,48 @@ use super::{
     ApiError, FileAttachmentRecord, InboxEvent, OutboundMessageRecord, ProtocolEnvelope,
     RchCommandTransaction, Value, json, rem_team_routing, storage,
 };
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use r3akt_map_core::marker_picture as picture;
 use r3akt_profile_rch::{CommandResultEnvelope, CommandResultStatus, MissionCommandEnvelope};
+use serde::{Serialize, Serializer};
+use std::collections::BTreeMap;
+
+/// Field 6 as `[format, bytes]`.
+pub(super) type Image = (String, Vec<u8>);
+
+/// Packs `fields` with field 6 as `MessagePack` binary. As JSON, image bytes
+/// become one array element per byte, and any image over 64 KiB exceeds the
+/// daemon's 65,536-node `ZeroMQ` decode budget, which stalls the dispatch lane.
+pub(super) fn with_image(fields: &Value, (format, bytes): &Image) -> Result<Value, ApiError> {
+    struct Bytes<'a>(&'a [u8]);
+    impl Serialize for Bytes<'_> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(self.0)
+        }
+    }
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum Field<'a> {
+        Json(&'a Value),
+        Image(&'a str, Bytes<'a>),
+    }
+    let mut map = BTreeMap::new();
+    for (key, value) in fields.as_object().into_iter().flatten() {
+        let key: i64 = key
+            .parse()
+            .map_err(|_| ApiError::Internal(format!("LXMF field key {key:?} is not numeric")))?;
+        map.insert(key, Field::Json(value));
+    }
+    map.insert(6, Field::Image(format, Bytes(bytes)));
+    let packed = rmp_serde::to_vec(&map).map_err(|error| {
+        ApiError::Internal(format!("failed to pack picture LXMF fields: {error}"))
+    })?;
+    Ok(json!({"_lxmf_fields_msgpack_b64": BASE64_STANDARD.encode(packed)}))
+}
 
 /// The transport's `_lxmf_image`: field 6 as `[format, "base64:..."]`.
-fn image_arg(args: &Value) -> Option<(String, Vec<u8>)> {
+fn image_arg(args: &Value) -> Option<Image> {
     picture::image_field(args.get("_lxmf_image")?)
 }
 
@@ -57,7 +94,7 @@ pub(super) fn stage_thumbnail(
     envelope: &ProtocolEnvelope,
     mission: &MissionCommandEnvelope,
     marker_id: &str,
-) -> Result<Option<Value>, ApiError> {
+) -> Result<Option<Image>, ApiError> {
     let args = &mission.args;
     let Some(meta) = args.get("picture").filter(|value| !value.is_null()) else {
         return Ok(None);
@@ -85,7 +122,7 @@ pub(super) fn stage_thumbnail(
         unit.stage_marker_picture(message_id, marker_id, file_id)
             .map_err(storage)?;
     }
-    Ok(image.map(|(format, bytes)| json!([format, bytes])))
+    Ok(image)
 }
 
 fn result(
@@ -109,11 +146,7 @@ fn result(
     })
 }
 
-fn rejected(
-    mission: &MissionCommandEnvelope,
-    code: &str,
-    reason: &str,
-) -> (r3akt_rch_core::MissionSyncResponse, Option<Value>) {
+fn rejected(mission: &MissionCommandEnvelope, code: &str, reason: &str) -> Answer {
     let status = if code == "unauthorized" {
         "unauthorized"
     } else {
@@ -131,11 +164,7 @@ fn rejected(
     )
 }
 
-fn completed(
-    mission: &MissionCommandEnvelope,
-    value: Value,
-    image: Option<Value>,
-) -> (r3akt_rch_core::MissionSyncResponse, Option<Value>) {
+fn completed(mission: &MissionCommandEnvelope, value: Value, image: Option<Image>) -> Answer {
     (
         result(mission, CommandResultStatus::Completed, None, None, value),
         image,
@@ -160,8 +189,8 @@ pub(super) fn handle(
         return Ok(());
     }
     let mut fields = rem_team_routing::mission_response_fields(&response, None)?;
-    if let (Some(image), Some(map)) = (image, fields.as_object_mut()) {
-        map.insert(picture::FIELD_IMAGE_KEY.into(), image);
+    if let Some(image) = &image {
+        fields = with_image(&fields, image)?;
     }
     published.push(outgoing(
         unit,
@@ -174,7 +203,7 @@ pub(super) fn handle(
     Ok(())
 }
 
-type Answer = (r3akt_rch_core::MissionSyncResponse, Option<Value>);
+type Answer = (r3akt_rch_core::MissionSyncResponse, Option<Image>);
 
 fn upload(
     unit: &RchCommandTransaction<'_>,
@@ -335,5 +364,5 @@ fn get(
         "sha256": sha256,
         "size": bytes.len(),
     });
-    Ok(completed(mission, value, Some(json!([format, bytes]))))
+    Ok(completed(mission, value, Some((format.clone(), bytes))))
 }
