@@ -1183,7 +1183,7 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 [[package]]
 name = "lxmf-propagation"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "hex",
  "hkdf",
@@ -1200,7 +1200,7 @@ dependencies = [
 [[package]]
 name = "lxmf-reference"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "serde",
 ]
@@ -1208,7 +1208,7 @@ dependencies = [
 [[package]]
 name = "lxmf-sdk"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "hex",
  "hmac",
@@ -1228,7 +1228,7 @@ dependencies = [
 [[package]]
 name = "lxmf-wire"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -1616,7 +1616,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "r3akt-event-broker"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "hex",
  "hmac",
@@ -1860,7 +1860,7 @@ dependencies = [
 [[package]]
 name = "rdo-core"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "ed25519-dalek",
  "log",
@@ -1914,7 +1914,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "reticulum-rs-core"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "aes",
  "atomicwrites",
@@ -1935,7 +1935,7 @@ dependencies = [
 [[package]]
 name = "reticulum-rs-rpc"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -1963,7 +1963,7 @@ dependencies = [
 [[package]]
 name = "reticulum-rs-transport"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2000,7 +2000,7 @@ dependencies = [
 [[package]]
 name = "reticulum-rs-zeromq"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "async-trait",
  "asynchronous-codec",
@@ -2053,7 +2053,7 @@ dependencies = [
 [[package]]
 name = "rpp-core"
 version = "0.16.2-rc.2-linux"
-source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=be08253fdc96a5f207ed5677bc17e475d3567d58#be08253fdc96a5f207ed5677bc17e475d3567d58"
+source = "git+https://github.com/FreeTAKTeam/LXMF-rs.git?rev=0940abb2ab0ea540c8c0d94283304e1c07b8e002#0940abb2ab0ea540c8c0d94283304e1c07b8e002"
 dependencies = [
  "log",
  "rand_core 0.6.4",
