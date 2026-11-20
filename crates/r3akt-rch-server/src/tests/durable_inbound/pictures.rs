@@ -249,3 +249,61 @@ fn picture_marker_with_mismatched_thumbnail_is_rejected() {
     assert!(created.iter().all(|r| r["destination"] == DRONE));
     assert_eq!(result_of(&created, DRONE)["10"]["status"], "rejected");
 }
+
+/// A full-size image must reach the daemon as one binary value: as a JSON
+/// byte array it exceeds the 65,536-node `ZeroMQ` decode budget and the daemon
+/// rejects the dispatch, holding every later outbound message.
+#[test]
+fn large_picture_answer_carries_field_6_as_binary() {
+    let state = state();
+    let large: Vec<u8> = (0..100_000_u32).map(|i| (i % 251) as u8).collect();
+    send(
+        &state,
+        PICTURE,
+        DRONE,
+        DRONE_ID,
+        "mission.marker.create",
+        create_args(&sha(THUMB)),
+        json!({"11": TEAM, "6": ["jpg", THUMB]}),
+    );
+    send(
+        &state,
+        "up-large",
+        DRONE,
+        DRONE_ID,
+        "mission.marker.picture.upload",
+        upload_args(&sha(&large)),
+        json!({"6": ["jpg", large]}),
+    );
+    let fetched = get(&state, "get-large", MATE, MATE_ID, PICTURE);
+    assert_eq!(fetched["10"]["result"]["status"], "ok");
+    assert_eq!(fetched["6"], json!(["jpg", large]));
+
+    let connection = rusqlite::Connection::open(state_db(&state)).expect("db");
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM rch_broker_dispatch WHERE state='pending' ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("answer intent");
+    let intent: Value = serde_json::from_str(&payload).expect("intent");
+    let fields = &intent["request"]["fields"];
+    let packed = BASE64_STANDARD
+        .decode(
+            fields["_lxmf_fields_msgpack_b64"]
+                .as_str()
+                .expect("packed fields"),
+        )
+        .expect("base64");
+    assert_eq!(
+        fields.as_object().map(serde_json::Map::len),
+        Some(1),
+        "{fields}"
+    );
+    assert!(
+        packed.len() < large.len() + 1_000,
+        "field 6 is binary, not one element per byte: {} bytes",
+        packed.len()
+    );
+}
