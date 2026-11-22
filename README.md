@@ -58,7 +58,7 @@ RCH is being rewritten in Rust for the 3.0 product line. The current workspace c
 The Rust edition is currently preview software. Use it for testing, integration work, and community evaluation. Review the release notes before using it for unattended or safety-critical deployments.
 
 The current testing candidate is
-[v3.0.0-preview.46](docs/release-notes-v3.0.0-preview.46.md), a Linux AMD64
+[v3.0.0-preview.47](docs/release-notes-v3.0.0-preview.47.md), a Linux AMD64
 server prerelease. It pairs Fabric (formerly LXMF-rs) SDK 0.17.0
 with a daemon built from the same immutable source revision
 `99fc770e83ed56eec81a23d8b4b864fe2cfde80e`.
