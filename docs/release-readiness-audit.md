@@ -13,6 +13,10 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.46 Fabric 0.17.0 Linux AMD64 release
+
+Preview.46 moves SDK and daemon to Fabric (formerly LXMF-rs) v0.17.0 at `99fc770e83ed56eec81a23d8b4b864fe2cfde80e` and relays LXMF events to REM as log-entry events with their telemetry position (#369). See [the preview.46 notes](release-notes-v3.0.0-preview.46.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
 ## Preview.45 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
 
 Preview.45 keeps SDK and daemon 0.16.2-rc.2-linux at `0940abb2ab0ea540c8c0d94283304e1c07b8e002` and sends picture-marker images as binary field 6 so a large picture can no longer stall outbound dispatch (#368). See [the preview.45 notes](release-notes-v3.0.0-preview.45.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
