@@ -14,6 +14,7 @@
 )]
 
 mod command_scope;
+mod log_entry_position;
 mod marker_commands;
 mod operation_rights;
 mod text;
@@ -6782,26 +6783,7 @@ impl RchCore {
             append_mecp_keywords(&mut keywords, &content);
             keywords
         };
-        let (latitude, longitude) = match (args.get("latitude"), args.get("longitude")) {
-            (None, None) => current.map_or((None, None), |entry| (entry.latitude, entry.longitude)),
-            (Some(lat), Some(lon)) => match (lat.as_f64(), lon.as_f64()) {
-                (Some(lat), Some(lon))
-                    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) =>
-                {
-                    (Some(lat), Some(lon))
-                }
-                _ => {
-                    return Err(RchCoreError::InvalidPayload(
-                        "latitude/longitude must be numbers within range".to_string(),
-                    ));
-                }
-            },
-            _ => {
-                return Err(RchCoreError::InvalidPayload(
-                    "latitude and longitude must be sent together".to_string(),
-                ));
-            }
-        };
+        let (latitude, longitude) = log_entry_position::from_args(args, current)?;
         let entry = LogEntryRecord {
             entry_uid: entry_uid.clone(),
             mission_uid: mission_uid.clone(),
