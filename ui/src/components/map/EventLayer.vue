@@ -50,8 +50,9 @@ function showPopup(event: MapLayerMouseEvent): void {
 }
 async function refresh(): Promise<void> {
   try {
-    const response = await get<{ log_entries?: unknown[] }>(endpoints.r3aktLogEntries);
-    data = eventFeatures(response.log_entries ?? []);
+    // The endpoint returns a bare array of log entries.
+    const entries = await get<unknown>(endpoints.r3aktLogEntries);
+    data = eventFeatures(Array.isArray(entries) ? entries : []);
     render();
   } catch (error) {
     console.warn("[map] event layer refresh failed", error);
