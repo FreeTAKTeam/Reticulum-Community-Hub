@@ -7,6 +7,7 @@ const { get, patch } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }));
 vi.mock("../src/api/client", () => ({ get, patch, post: vi.fn(), put: vi.fn(), del: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class { connect() {} close() {} send() {} } }));
 vi.mock("../src/components/map/SensorGeometryLayer.vue", () => ({ default: { template: "<div />" } }));
+vi.mock("../src/components/map/EventLayer.vue", () => ({ default: { template: "<div />" } }));
 vi.mock("maplibre-gl", () => ({
   setWorkerUrl: vi.fn(),
   Map: class {

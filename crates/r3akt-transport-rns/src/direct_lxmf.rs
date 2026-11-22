@@ -56,8 +56,16 @@ pub(super) fn direct_lxmf_message_payloads(
         );
     }
     // Telemetry is processed first, so a same-message collector query sees it.
+    let mut event_position = None;
     match direct_lxmf_telemetry(fields, message) {
         Ok(Some(telemetry)) => {
+            let location = &telemetry.telemetry["location"];
+            if let (Some(lat), Some(lon)) = (
+                location["latitude"].as_f64(),
+                location["longitude"].as_f64(),
+            ) {
+                event_position = Some((lat, lon));
+            }
             let topic = Topic::new("telemetry");
             decoded.envelopes.push(ProtocolEnvelope::new(
                 NodeId::new(source),
@@ -92,6 +100,7 @@ pub(super) fn direct_lxmf_message_payloads(
                     args.insert("_rem_team_uid".into(), JsonValue::String(team_uid.into()));
                 }
                 picture_args(&mut command, fields, message);
+                event_position_args(&mut command, event_position);
                 decoded.envelopes.push(ProtocolEnvelope::new(
                     NodeId::new(source),
                     Destination::Node(NodeId::new(local_source)),
@@ -130,6 +139,18 @@ pub(super) fn direct_lxmf_message_payloads(
         }
     }
     decoded
+}
+
+/// An event sent with telemetry in the same message is placed at that position.
+fn event_position_args(command: &mut r3akt_protocol::Command, position: Option<(f64, f64)>) {
+    if command.name == "mission.registry.log_entry.upsert"
+        && let Some((lat, lon)) = position
+        && let Some(args) = command.args.as_object_mut()
+        && !args.contains_key("latitude")
+    {
+        args.insert("latitude".into(), lat.into());
+        args.insert("longitude".into(), lon.into());
+    }
 }
 
 /// Picture markers (r3akt-uas #19): the hub needs the message's `FIELD_IMAGE`

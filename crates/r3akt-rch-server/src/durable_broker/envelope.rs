@@ -308,11 +308,39 @@ fn apply_envelope_payload(
                 let event_type = response
                     .event_field()
                     .and_then(|e| e["event_type"].as_str());
-                let content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
-                let relay_fields = match &relay_image {
+                let mut content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
+                let mut relay_fields = match &relay_image {
                     Some(image) => super::marker_picture::with_image(&fields, image)?,
                     None => fields.clone(),
                 };
+                // REM stores events only from the log_entry.upsert command, never from the
+                // upserted result event, so relay log entries in the REST fanout shape.
+                if matches!(
+                    event_type,
+                    Some("mission.registry.log_entry.upserted" | "mission.log_entry.upserted")
+                ) && let Some(mut log) = response
+                    .event_field()
+                    .and_then(|e| e["payload"].as_object())
+                    .cloned()
+                {
+                    if !log.get("callsign").is_some_and(Value::is_string) {
+                        let name = super::chat_presentation::relay_sender_label(
+                            unit.core_mut(),
+                            None,
+                            envelope.source.as_str(),
+                        );
+                        log.insert("callsign".into(), json!(name));
+                    }
+                    if let Some(rem_fields) = crate::rem_log_entry_command_fields(
+                        &log,
+                        "",
+                        &envelope.id.to_string(),
+                        envelope.source.as_str(),
+                    ) {
+                        relay_fields = rem_fields;
+                        content = "cmd".to_string();
+                    }
+                }
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,

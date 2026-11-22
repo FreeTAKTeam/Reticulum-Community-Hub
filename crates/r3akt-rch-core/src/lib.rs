@@ -865,6 +865,11 @@ pub struct LogEntryRecord {
     pub client_time: Option<String>,
     pub content_hashes: Vec<String>,
     pub keywords: Vec<String>,
+    /// Event position, e.g. from telemetry sent in the same LXMF message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longitude: Option<f64>,
     pub created_ts_ms: i64,
     pub updated_ts_ms: i64,
 }
@@ -6777,6 +6782,26 @@ impl RchCore {
             append_mecp_keywords(&mut keywords, &content);
             keywords
         };
+        let (latitude, longitude) = match (args.get("latitude"), args.get("longitude")) {
+            (None, None) => current.map_or((None, None), |entry| (entry.latitude, entry.longitude)),
+            (Some(lat), Some(lon)) => match (lat.as_f64(), lon.as_f64()) {
+                (Some(lat), Some(lon))
+                    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) =>
+                {
+                    (Some(lat), Some(lon))
+                }
+                _ => {
+                    return Err(RchCoreError::InvalidPayload(
+                        "latitude/longitude must be numbers within range".to_string(),
+                    ));
+                }
+            },
+            _ => {
+                return Err(RchCoreError::InvalidPayload(
+                    "latitude and longitude must be sent together".to_string(),
+                ));
+            }
+        };
         let entry = LogEntryRecord {
             entry_uid: entry_uid.clone(),
             mission_uid: mission_uid.clone(),
@@ -6789,6 +6814,8 @@ impl RchCore {
                 .or_else(|| current.and_then(|entry| entry.client_time.clone())),
             content_hashes,
             keywords,
+            latitude,
+            longitude,
             created_ts_ms: current.map_or(now, |entry| entry.created_ts_ms),
             updated_ts_ms: now,
         };
@@ -6864,6 +6891,8 @@ impl RchCore {
             "client_time": entry.client_time,
             "keywords": entry.keywords,
             "mecp": mecp_log_entry_value(&entry.content),
+            "latitude": entry.latitude,
+            "longitude": entry.longitude,
             "content_hashes": entry.content_hashes,
         });
         self.mission_changes.insert(
@@ -9365,6 +9394,8 @@ impl RchCore {
             "content_hashes": entry.content_hashes,
             "keywords": entry.keywords,
             "mecp": mecp_log_entry_value(&entry.content),
+            "latitude": entry.latitude,
+            "longitude": entry.longitude,
             "created_at": millis_to_rfc3339(entry.created_ts_ms),
             "updated_at": millis_to_rfc3339(entry.updated_ts_ms),
         })
