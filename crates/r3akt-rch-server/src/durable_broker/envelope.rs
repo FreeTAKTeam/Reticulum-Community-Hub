@@ -3,7 +3,7 @@ mod command_alias;
 mod command_claim;
 mod outgoing;
 use command_alias::command_alias;
-pub(super) use outgoing::{outgoing, reply_text};
+pub(super) use outgoing::{outgoing, rem_log_relay, reply_text};
 
 pub(super) fn apply_envelope(
     unit: &mut RchCommandTransaction<'_>,
@@ -313,6 +313,8 @@ fn apply_envelope_payload(
                     Some(image) => super::marker_picture::with_image(&fields, image)?,
                     None => fields.clone(),
                 };
+                let (content, relay_fields) = rem_log_relay(unit, envelope, response.event_field())
+                    .map_or((content, relay_fields), |rem| ("cmd".to_string(), rem));
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,

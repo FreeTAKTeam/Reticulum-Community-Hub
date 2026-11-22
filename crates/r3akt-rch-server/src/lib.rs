@@ -12411,6 +12411,8 @@ fn rem_log_entry_command_fields(
         ),
         ("content", Some(content)),
         ("callsign", Some(callsign)),
+        ("latitude", log_entry.get("latitude").cloned()),
+        ("longitude", log_entry.get("longitude").cloned()),
         (
             "source_identity",
             Some(json!(compact_rem_identifier_string(source_identity))),

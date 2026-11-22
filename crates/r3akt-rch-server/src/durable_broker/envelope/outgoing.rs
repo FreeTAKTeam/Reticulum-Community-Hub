@@ -58,3 +58,34 @@ pub(crate) fn reply_text(
     published.push(outgoing(unit, event, source, text, json!({}), created)?);
     Ok(())
 }
+
+/// REM stores events only from the `log_entry.upsert` command, never from the upserted
+/// result event, so log entries are relayed in the REST fanout command shape.
+pub(crate) fn rem_log_relay(
+    unit: &mut RchCommandTransaction<'_>,
+    envelope: &ProtocolEnvelope,
+    event: Option<&Value>,
+) -> Option<Value> {
+    let event = event?;
+    if !matches!(
+        event["event_type"].as_str(),
+        Some("mission.registry.log_entry.upserted" | "mission.log_entry.upserted")
+    ) {
+        return None;
+    }
+    let mut log = event["payload"].as_object()?.clone();
+    if !log.get("callsign").is_some_and(Value::is_string) {
+        let name = super::super::chat_presentation::relay_sender_label(
+            unit.core_mut(),
+            None,
+            envelope.source.as_str(),
+        );
+        log.insert("callsign".into(), json!(name));
+    }
+    crate::rem_log_entry_command_fields(
+        &log,
+        "",
+        &envelope.id.to_string(),
+        envelope.source.as_str(),
+    )
+}

@@ -571,18 +571,15 @@ async fn reticulumd_inbound_mission_command_replies_and_fans_out_team_event() {
         .find(|request| request["destination"] == "22222222222222222222222222222222")
         .expect("team fanout");
     let team_params = team_fanout;
-    assert_eq!(
-        team_params["content"],
-        "r3akt mission event mission.registry.log_entry.upserted"
-    );
-    assert_eq!(
-        team_params["fields"]["13"]["payload"]["entry_uid"],
-        "log-from-reticulumd"
-    );
-    assert_eq!(
-        team_params["fields"]["10"]["correlation_id"],
-        "cmd-mission-log"
-    );
+    // REM only stores events from the log_entry.upsert command, not the upserted event.
+    assert_eq!(team_params["content"], "cmd");
+    let command = &team_params["fields"]["9"][0];
+    assert_eq!(command["command_type"], "mission.registry.log_entry.upsert");
+    assert_eq!(command["args"]["entry_uid"], "log-from-reticulumd");
+    assert_eq!(command["args"]["mission_uid"], "mission-inbound");
+    assert_eq!(command["args"]["content"], "Inbound mission event");
+    assert_eq!(command["args"]["callsign"], "Alpha");
+    assert!(team_params["fields"].get("13").is_none());
 
     let restored = RchSqliteStore::open(&db_path)
         .expect("open restored")
@@ -925,4 +922,94 @@ fn plain_lxmf_time_replies_with_latest_or_named_mission_time_left() {
         contents[2].contains("unavailable") || contents[2].contains("not found"),
         "{contents:?}"
     );
+}
+
+#[tokio::test]
+async fn inbound_event_with_same_message_telemetry_is_placed_and_relayed_to_rem() {
+    let db_path = std::env::temp_dir().join(format!("r3akt-event-telemetry-{}.db", Uuid::new_v4()));
+    let mut state = crate::AppState::from_sqlite_path(&db_path)
+        .expect("state")
+        .with_api_key("secret")
+        .with_test_reticulumd_source("local-destination");
+    state.enable_durable_consumer().expect("durable consumer");
+    let app = crate::create_app_with_state(state.clone());
+    for (method, uri, body) in [
+        (
+            Method::POST,
+            "/api/r3akt/missions",
+            r#"{"uid":"mission-sigil","mission_name":"Sigil"}"#,
+        ),
+        (
+            Method::POST,
+            "/api/r3akt/teams",
+            r#"{"uid":"team-sigil","team_name":"Sigil Team"}"#,
+        ),
+        (
+            Method::PUT,
+            "/api/r3akt/teams/team-sigil/missions/mission-sigil",
+            "{}",
+        ),
+        (
+            Method::POST,
+            "/api/r3akt/team-members",
+            r#"{"uid":"member-sigil","team_uid":"team-sigil","rns_identity":"33333333333333333333333333333333","display_name":"Team Mate"}"#,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .header("X-API-Key", "secret")
+                    .method(method)
+                    .uri(uri)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .expect("setup request"),
+            )
+            .await
+            .expect("setup response");
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+    }
+
+    // Sigil shape: a regular MECP event in 0x09 and the radio's telemetry (44, -63) in 0x02.
+    apply_daemon_messages(
+        &state,
+        json!([{
+            "id": "lxmf-sigil-event-1",
+            "source": "44444444444444444444444444444444",
+            "fields": {
+                "2": "ggHOZVPxAAKXxAQCn2MAxAT8PrJAxAQAAAPoxAQAAAAAxAQAAAAAxAIB9MtB2VT8QAAAAA==",
+                "9": [{
+                    "command_id": "sigil-event-1",
+                    "command_type": "mission.registry.log_entry.upsert",
+                    "args": {"entry_uid": "sigil-entry", "mission_uid": "mission-sigil", "content": "MECP/1/S02"}
+                }]
+            }
+        }]),
+    );
+
+    let restored = RchSqliteStore::open(&db_path)
+        .expect("open restored")
+        .load_snapshot()
+        .expect("load restored")
+        .expect("snapshot");
+    let entry = restored
+        .log_entries
+        .iter()
+        .find(|entry| entry.entry_uid == "sigil-entry")
+        .expect("stored event");
+    assert_eq!(entry.content, "MECP/1/S02");
+    assert_eq!((entry.latitude, entry.longitude), (Some(44.0), Some(-63.0)));
+
+    let requests = pending_broker_requests(&state_db(&state));
+    let relay = requests
+        .iter()
+        .find(|request| request["destination"] == "33333333333333333333333333333333")
+        .expect("team relay");
+    let command = &relay["fields"]["9"][0];
+    assert_eq!(command["command_type"], "mission.registry.log_entry.upsert");
+    assert_eq!(command["args"]["content"], "MECP/1/S02");
+    assert_eq!(command["args"]["latitude"], 44.0);
+    assert_eq!(command["args"]["longitude"], -63.0);
+    std::fs::remove_file(db_path).expect("cleanup db");
 }

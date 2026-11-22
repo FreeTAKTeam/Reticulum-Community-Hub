@@ -12,6 +12,7 @@ const { get, maps } = vi.hoisted(() => ({
 vi.mock("../src/api/client", () => ({ get, patch: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class { connect() {} close() {} send() {} } }));
 vi.mock("../src/components/map/SensorGeometryLayer.vue", () => ({ default: { template: "<div />" } }));
+vi.mock("../src/components/map/EventLayer.vue", () => ({ default: { template: "<div />" } }));
 vi.mock("maplibre-gl", () => ({
   setWorkerUrl: vi.fn(),
   AJAXError: class extends Error {

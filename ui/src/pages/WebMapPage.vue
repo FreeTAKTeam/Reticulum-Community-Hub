@@ -8,6 +8,7 @@
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
         <SensorGeometryLayer :map="mapInstance" />
+        <EventLayer :map="mapInstance" />
 
         <div class="webmap-marker-overlay-layer">
           <div v-if="markerReticleStyle" class="webmap-marker-reticle" :style="markerReticleStyle" aria-hidden="true">
@@ -592,6 +593,7 @@
 
 <script setup lang="ts">
 import SensorGeometryLayer from "../components/map/SensorGeometryLayer.vue";
+import EventLayer from "../components/map/EventLayer.vue";
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
