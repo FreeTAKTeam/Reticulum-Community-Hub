@@ -2062,7 +2062,7 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
-  mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: 9 });
+  mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: focusZoom(mapInstance.value) });
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
@@ -2261,7 +2261,7 @@ const openInspector = (marker: TelemetryMarker, flyTo = false) => {
   inspectorPinned.value = false;
   if (mapInstance.value) {
     if (flyTo) {
-      mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: 9 });
+      mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: focusZoom(mapInstance.value) });
       updateInspectorPosition(marker);
       mapInstance.value.once("moveend", () => updateInspectorPosition(marker));
     } else {
@@ -2320,6 +2320,10 @@ const TELEMETRY_ICON_COLOR = MARKER_ICON_COLOR;
 const MARKER_CLUSTER_FILL_COLOR = "transparent";
 const MARKER_CLUSTER_FILL_OPACITY = 0;
 const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
+// Street level, past the clustering range, so a focused marker is drawn on its own
+// even when others are close by.
+const FOCUS_MARKER_ZOOM = 16;
+const focusZoom = (map: maplibregl.Map) => Math.max(map.getZoom(), FOCUS_MARKER_ZOOM);
 const MARKER_LABEL_COLOR = "#E7ECF5";
 const MARKER_LABEL_HALO_COLOR = "#06121E";
 const MARKER_LABEL_HALO_WIDTH = 1.2;
