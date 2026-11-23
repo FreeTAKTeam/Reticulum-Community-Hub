@@ -280,43 +280,6 @@
     inset 0 0 18px rgba(255, 120, 120, 0.25);
 }
 
-.webmap-marker-radial-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 84px;
-  height: 84px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.84);
-  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.28), rgba(2, 11, 20, 0.96));
-  color: #98f8ff;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  pointer-events: auto;
-  box-shadow:
-    0 0 18px rgba(59, 244, 255, 0.38),
-    inset 0 0 18px rgba(59, 244, 255, 0.18);
-}
-
-.webmap-marker-radial-center svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.webmap-marker-radial-center span {
-  font-size: 8px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .webmap-marker-compass {
   position: absolute;
   width: 344px;
@@ -864,11 +827,6 @@
   .webmap-marker-radial-item {
     width: 56px;
     height: 56px;
-  }
-
-  .webmap-marker-radial-center {
-    width: 74px;
-    height: 74px;
   }
 
   .webmap-marker-compass {

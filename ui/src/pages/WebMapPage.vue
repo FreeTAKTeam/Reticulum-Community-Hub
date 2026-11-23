@@ -68,6 +68,7 @@
           class="webmap-marker-radial-menu"
           :style="markerRadialMenuStyle"
           role="menu"
+          @keydown.esc.stop.prevent="handleMarkerRadialMenuEscape"
           @mousedown.stop
           @click.stop
           @contextmenu.prevent="dismissRadialMenus"
@@ -91,21 +92,6 @@
             </svg>
             <span>{{ item.label }}</span>
           </button>
-          <button
-            type="button"
-            class="webmap-marker-radial-center"
-            :title="markerRadialMenuCenterLabel"
-            @click.stop="handleMarkerRadialMenuCenter"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                v-for="(segment, segmentIndex) in markerRadialIconPaths(markerRadialMenuCenterIcon)"
-                :key="`center-${segmentIndex}`"
-                :d="segment"
-              />
-            </svg>
-            <span>{{ markerRadialMenuCenterLabel }}</span>
-          </button>
         </div>
         <div
           v-if="zoneRadialMenuStyle && zoneRadialMenuZoneId"
@@ -113,6 +99,7 @@
           class="webmap-marker-radial-menu webmap-zone-radial-menu"
           :style="zoneRadialMenuStyle"
           role="menu"
+          @keydown.esc.stop.prevent="handleZoneRadialMenuEscape"
           @mousedown.stop
           @click.stop
           @contextmenu.prevent="dismissRadialMenus"
@@ -135,21 +122,6 @@
               />
             </svg>
             <span>{{ item.label }}</span>
-          </button>
-          <button
-            type="button"
-            class="webmap-marker-radial-center"
-            title="Close"
-            @click.stop="handleZoneRadialMenuCenter"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                v-for="(segment, segmentIndex) in markerRadialIconPaths('close')"
-                :key="`zone-center-${segmentIndex}`"
-                :d="segment"
-              />
-            </svg>
-            <span>Close</span>
           </button>
         </div>
 
@@ -1087,12 +1059,6 @@ const resolveMarkerRadialMenuLevel = (
 const markerRadialMenuItems = computed(() =>
   resolveMarkerRadialMenuLevel(markerRadialMenuProfile.value, markerRadialMenuPath.value)
 );
-const markerRadialMenuCenterIcon = computed<MarkerRadialIcon>(() =>
-  markerRadialMenuPath.value.length ? "back" : "close"
-);
-const markerRadialMenuCenterLabel = computed(() =>
-  markerRadialMenuPath.value.length ? "Back" : "Close"
-);
 watch(markerRadialMenuItems, (items) => {
   if (markerRadialMenuPath.value.length && markerRadialMenuMarkerId.value && !items.length) {
     markerRadialMenuPath.value = [];
@@ -1268,13 +1234,14 @@ const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   zoneRadialMenuPoint.value = point;
   renderZones();
 };
-const handleZoneRadialMenuCenter = () => {
+// Menus close on their own (entry chosen, outside click, right-click); Escape is the keyboard way.
+const handleZoneRadialMenuEscape = () => {
   if (zoneRadialMenuZoneId.value) {
     suppressRadialHover(zoneRadialKey(zoneRadialMenuZoneId.value));
   }
   closeZoneRadialMenu();
 };
-const handleMarkerRadialMenuCenter = () => {
+const handleMarkerRadialMenuEscape = () => {
   if (!markerRadialMenuMarkerId.value) {
     return;
   }
