@@ -30,7 +30,7 @@ const showHeaderBar = computed(
     route.path !== "/files"
 );
 const isViewportLockedRoute = computed(
-  () => route.path === "/" || route.path === "/chat"
+  () => route.path === "/" || route.path === "/chat" || route.path === "/webmap"
 );
 const shellClass = computed(() =>
   isViewportLockedRoute.value ? "h-screen overflow-hidden" : "min-h-screen"
@@ -41,6 +41,9 @@ const mainClass = computed(() => {
   }
   if (route.path === "/chat") {
     return "p-4 overflow-hidden flex flex-col min-h-0";
+  }
+  if (route.path === "/webmap") {
+    return "p-6 overflow-hidden flex flex-col min-h-0";
   }
   return "p-6 overflow-y-auto";
 });

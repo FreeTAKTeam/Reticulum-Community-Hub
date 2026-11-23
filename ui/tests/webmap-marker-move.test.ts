@@ -20,6 +20,9 @@ vi.mock("maplibre-gl", () => ({
     remove() {}
     getCanvas() { return this.canvas; }
     project() { return { x: 300, y: 300 }; }
+    zoom = 5;
+    getZoom() { return this.zoom; }
+    flyTo = vi.fn();
   }
 }));
 
@@ -182,5 +185,21 @@ describe("map marker movement", () => {
     page.setupState.toggleZoneMode();
     await nextTick();
     expect(stage().classList.contains("webmap-stage--placing-marker")).toBe(false);
+  });
+
+  it("flies close enough to a marker from the list that it is not hidden in a cluster", async () => {
+    const page = await mountWithMarker();
+    const map = page.setupState.mapInstance;
+
+    page.setupState.focusOperatorMarker({ lat: 1, lon: 2 });
+    const zoom = map.flyTo.mock.calls.at(-1)[0].zoom;
+    expect(map.flyTo.mock.calls.at(-1)[0].center).toEqual([2, 1]);
+    // Markers cluster up to zoom 12, so the focused marker must land beyond that.
+    expect(zoom).toBeGreaterThan(12);
+
+    // Already closer than that: keep the operator's zoom instead of zooming out.
+    map.zoom = 18;
+    page.setupState.focusOperatorMarker({ lat: 1, lon: 2 });
+    expect(map.flyTo.mock.calls.at(-1)[0].zoom).toBe(18);
   });
 });
