@@ -7,6 +7,7 @@ const { get, patch } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }));
 vi.mock("../src/api/client", () => ({ get, patch, post: vi.fn(), put: vi.fn(), del: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class { connect() {} close() {} send() {} } }));
 vi.mock("../src/components/map/SensorGeometryLayer.vue", () => ({ default: { template: "<div />" } }));
+vi.mock("../src/components/map/EventLayer.vue", () => ({ default: { template: "<div />" } }));
 vi.mock("maplibre-gl", () => ({
   setWorkerUrl: vi.fn(),
   Map: class {
@@ -115,13 +116,26 @@ describe("map radial menus", () => {
     expect(page.setupState.markerCompassMarkerId).toBe("marker-id");
   });
 
-  it("does not reopen after closing the menu with its centre button while still on the marker", async () => {
+  it("closes with Escape and does not reopen while the pointer stays on the marker", async () => {
     const { page } = await mountMap();
     await hoverMarker(page);
-    document.querySelector<HTMLButtonElement>(".webmap-marker-radial-center")!.click();
+    radialMenu()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await nextTick();
+    expect(radialMenu()).toBeNull();
     await hoverMarker(page);
     expect(radialMenu()).toBeNull();
+    await leaveMarker(page);
+    await hoverMarker(page);
+    expect(radialMenu()).not.toBeNull();
+  });
+
+  it("closes the zone menu with Escape", async () => {
+    const { page } = await mountMap();
+    page.setupState.openHoverZoneRadialMenu("zone-id", { x: 300, y: 300 });
+    await nextTick();
+    document.querySelector(".webmap-zone-radial-menu")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await nextTick();
+    expect(document.querySelector(".webmap-zone-radial-menu")).toBeNull();
   });
 
   it("keeps the zone mission picker open after zone Assign", async () => {
@@ -155,7 +169,7 @@ describe("map radial menus", () => {
     expect(page.setupState.zonePromptOpen).toBe(true);
   });
 
-  it("shows only the Close button at the centre of an open menu, with no Command Menu bubble under it", async () => {
+  it("leaves the centre of an open menu empty: no Close button and no Command Menu bubble", async () => {
     const { page } = await mountMap();
     page.setupState.hoveredOperatorMarkerId = "marker-id";
     page.setupState.hoveredOperatorMarkerPoint = { x: 300, y: 300 };
@@ -166,6 +180,8 @@ describe("map radial menus", () => {
     expect(radialMenu()).not.toBeNull();
     expect(document.querySelector(".webmap-marker-reticle-core")).toBeNull();
     expect(document.body.textContent).not.toContain("Command Menu");
-    expect(document.querySelector(".webmap-marker-radial-center")?.textContent?.trim()).toBe("Close");
+    expect(document.querySelector(".webmap-marker-radial-center")).toBeNull();
+    expect([...document.querySelectorAll(".webmap-marker-radial-item")].map((item) => item.textContent?.trim()))
+      .not.toContain("Close");
   });
 });

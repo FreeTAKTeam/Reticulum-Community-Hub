@@ -161,6 +161,8 @@ export interface LogEntryRaw {
   client_time?: string | null;
   content_hashes?: string[] | null;
   keywords?: string[] | null;
+  latitude?: number | null;
+  longitude?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

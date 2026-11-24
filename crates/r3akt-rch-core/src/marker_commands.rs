@@ -9,6 +9,33 @@ use super::{
     optional_text, required_f64, required_text, utc_now_ms,
 };
 
+/// The validated `picture` object of a create, keyed by the LXMF message ID
+/// the transport recorded as `_lxmf_message_id` (the picture ID).
+fn picture_from_args(
+    args: &Value,
+) -> Result<Option<r3akt_map_core::marker::MarkerPicture>, RchCoreError> {
+    use r3akt_map_core::marker_picture;
+    let Some(value) = args.get("picture").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let mut picture =
+        marker_picture::MarkerPicture::parse(value).map_err(RchCoreError::InvalidPayload)?;
+    picture.message_id = optional_text(args, &["_lxmf_message_id"])
+        .map(|id| marker_picture::message_id(&id))
+        .transpose()
+        .map_err(RchCoreError::InvalidPayload)?;
+    if let Some((_, thumbnail)) = args
+        .get("_lxmf_image")
+        .and_then(marker_picture::image_field)
+        && marker_picture::sha256_hex(&thumbnail) != picture.thumbnail.sha256
+    {
+        return Err(RchCoreError::InvalidPayload(
+            "picture thumbnail does not match its sha256".to_string(),
+        ));
+    }
+    Ok(Some(picture))
+}
+
 impl RchCore {
     pub(super) fn apply_marker_command(
         &mut self,
@@ -85,17 +112,24 @@ impl RchCore {
             notes: optional_text(args, &["notes"]),
             origin_rch: normalize_hash(Some(&command.source.rns_identity)).unwrap_or_default(),
         };
+        let picture = picture_from_args(args)?;
         let local_id = Uuid::new_v4().simple().to_string();
         // A client-supplied identifier keeps one canonical ID across REM and
         // RCH replicas; repeating the same create is a replay, not a duplicate.
         let Some(raw_id) = optional_text(args, &["object_destination_hash"]) else {
+            if picture.is_some() {
+                return Err(RchCoreError::InvalidPayload(
+                    "picture markers require object_destination_hash".to_string(),
+                ));
+            }
             let marker = MarkerRecord::create(draft, local_id, utc_now_ms());
             self.markers
                 .insert(marker.object_destination_hash.clone(), marker.clone());
             return Ok(marker);
         };
         let id = marker::object_destination_hash(&raw_id)?;
-        let marker = MarkerRecord::create_with_id(draft, id.clone(), local_id, utc_now_ms());
+        let mut marker = MarkerRecord::create_with_id(draft, id.clone(), local_id, utc_now_ms());
+        marker.picture = picture;
         if let Some(existing) = self.markers.get(&id) {
             return if r3akt_map_core::idempotency::same_creation(existing, &marker) {
                 Ok(existing.clone())

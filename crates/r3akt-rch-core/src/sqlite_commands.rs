@@ -1,6 +1,11 @@
 mod sensor_telemetry;
 pub(crate) use sensor_telemetry::initialize;
 mod broker_application;
+mod library;
+pub use library::LibraryRppPackage;
+mod marker_pictures;
+pub use marker_pictures::MarkerPictureRow;
+pub(crate) use marker_pictures::NEXT_FILE_ATTACHMENT_ID_SQL;
 mod broker_delivery;
 
 use super::{

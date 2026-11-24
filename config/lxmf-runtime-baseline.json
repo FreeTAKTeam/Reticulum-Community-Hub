@@ -1,8 +1,8 @@
 {
   "repository": "FreeTAKTeam/LXMF-rs",
-  "release_tag": "v0.16.2-rc.1",
-  "source_commit": "9908a7ef8360db30bb352ca372d70b4d07fbba8b",
-  "sdk_version": "0.16.2-rc.1",
+  "release_tag": "v0.17.0",
+  "source_commit": "99fc770e83ed56eec81a23d8b4b864fe2cfde80e",
+  "sdk_version": "0.17.0",
   "daemon_tokio_version": "1.53.3",
   "daemon_package": "reticulumd",
   "daemon_features": [

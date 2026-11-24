@@ -146,6 +146,9 @@ const shouldReadMetadataKey = (key: string): boolean => {
   return IDENTITY_METADATA_KEYS.has(normalized);
 };
 
+/** Metadata keys whose values are LXMF/Reticulum identities that can be shown as names. */
+export const isIdentityMetadataKey = shouldReadMetadataKey;
+
 const collectIdentityTokens = (value: unknown, tokens: Set<string>, parentKey = "") => {
   if (typeof value === "string") {
     if (parentKey && shouldReadMetadataKey(parentKey)) {

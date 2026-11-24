@@ -24,11 +24,51 @@ fn zmq_announce_sweeps_skip_malformed_capabilities_and_replay_after_restart() {
     // Use the production handshake budget while other tests saturate SQLite/CPU.
     let state =
         fixture.state_with_timeout(&path, &dir.join("identity"), Some(Duration::from_secs(3)));
-    let cursor = Mutex::new(None);
-    assert!(announce_sync::poll(&state, &cursor).unwrap());
-    assert!(announce_sync::poll(&state, &cursor).unwrap());
-    assert!(!announce_sync::poll(&state, &cursor).unwrap());
-    assert_eq!(*cursor.lock().unwrap(), None);
+    let cursor = Mutex::new(announce_sync::AnnounceSweep::default());
+    let mut store = open(&state).unwrap();
+    assert!(announce_sync::poll(&state, &cursor, &mut store).unwrap());
+    assert!(announce_sync::poll(&state, &cursor, &mut store).unwrap());
+    assert!(!announce_sync::poll(&state, &cursor, &mut store).unwrap());
+    assert_eq!(cursor.lock().unwrap().cursor, None);
+    // #242: an unchanged second sweep imports nothing, so a removed row stays removed.
+    let peer_two = || {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM rch_identity_announces WHERE destination_hash=?1",
+            [format!("{:032x}", 2)],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    let snapshot = dir.join("rch-before-skip.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("VACUUM INTO ?1", [snapshot.to_str().unwrap()])
+        .unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "DELETE FROM rch_identity_announces WHERE destination_hash=?1",
+            [format!("{:032x}", 2)],
+        )
+        .unwrap();
+    for expected in [true, true, false] {
+        assert_eq!(
+            announce_sync::poll(&state, &cursor, &mut store).unwrap(),
+            expected
+        );
+    }
+    assert_eq!(peer_two(), 0);
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(&format!(
+            "ATTACH '{}' AS before; INSERT INTO rch_identity_announces
+             SELECT * FROM before.rch_identity_announces WHERE destination_hash='{:032x}';",
+            snapshot.display(),
+            2
+        ))
+        .unwrap();
+    assert_eq!(peer_two(), 1);
     let check = || {
         let conn = rusqlite::Connection::open(&path).unwrap();
         let count: i64 = conn
@@ -61,9 +101,13 @@ fn zmq_announce_sweeps_skip_malformed_capabilities_and_replay_after_restart() {
     drop(state);
     let restarted =
         fixture.state_with_timeout(&path, &dir.join("identity"), Some(Duration::from_secs(3)));
-    let cursor = Mutex::new(None);
+    let cursor = Mutex::new(announce_sync::AnnounceSweep::default());
+    let mut store = open(&restarted).unwrap();
     for expected in [true, true, false] {
-        assert_eq!(announce_sync::poll(&restarted, &cursor).unwrap(), expected);
+        assert_eq!(
+            announce_sync::poll(&restarted, &cursor, &mut store).unwrap(),
+            expected
+        );
     }
     check();
     plane(&restarted).unwrap().shutdown().unwrap();

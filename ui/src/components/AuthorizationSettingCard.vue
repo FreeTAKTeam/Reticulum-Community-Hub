@@ -5,7 +5,7 @@
     <p class="auth-copy">
       When on, only registered members can chat with the hub or send it commands. Members are added by an operator
       in <RouterLink to="/users">Users</RouterLink>; <span class="mono">join</span> over LXMF no longer registers
-      anyone.
+      anyone. Mission data such as files, markers and checklists still needs mission rights from Users.
     </p>
     <p class="auth-copy auth-copy--note">
       Everyone already listed in Users is a member. Review the list before turning this on.
@@ -38,6 +38,10 @@
         Chat and commands from identities that are not listed in Users will be refused, and they will not be added
         to the list automatically. A <span class="mono">join</span> sent over LXMF will no longer register anyone;
         add new members from Users.
+      </p>
+      <p class="auth-modal-copy">
+        Members can chat and use roster commands. Mission files, markers, checklists and mission changes also need
+        mission rights, so give your members a team or mission role in Users first.
       </p>
       <p class="auth-modal-copy">Everyone currently listed in Users stays a member.</p>
       <template #footer>

@@ -199,25 +199,85 @@ impl RchCommandTransaction<'_> {
             .set(self.staged_outbound_intents.get().saturating_add(1));
         Ok(())
     }
-    pub fn claim_logical_input(
+    /// The fingerprint `claim_logical_input` binds to `payload`.
+    pub fn logical_input_fingerprint(payload: &serde_json::Value) -> Result<String, RchCoreError> {
+        let encoded =
+            serde_json::to_vec(payload).map_err(|e| RchCoreError::Encode(e.to_string()))?;
+        Ok(super::super::durable_inbox::hex_digest(&encoded))
+    }
+    /// The fingerprint already committed for a logical input, if any.
+    pub fn claimed_logical_input(
         &self,
         source: &str,
         id: &str,
-        payload: &serde_json::Value,
-    ) -> Result<bool, RchCoreError> {
+    ) -> Result<Option<String>, RchCoreError> {
         let source = super::super::normalize_hash(Some(source))
             .unwrap_or_else(|| source.to_ascii_lowercase());
-        let encoded =
-            serde_json::to_vec(payload).map_err(|e| RchCoreError::Encode(e.to_string()))?;
-        let fingerprint = super::super::durable_inbox::hex_digest(&encoded);
-        let previous: Option<String> = self
+        Ok(self
             .transaction
             .query_row(
                 "SELECT fingerprint FROM rch_broker_claims WHERE source=?1 AND logical_id=?2",
                 params![source, id],
                 |r| r.get(0),
             )
-            .optional()?;
+            .optional()?)
+    }
+    /// Rebinds an existing claim written under an older fingerprint scheme to
+    /// the current fingerprint of `payload`. The caller must already have
+    /// proven that `previous` describes the same logical content.
+    pub fn rebind_logical_input(
+        &self,
+        source: &str,
+        id: &str,
+        previous: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), RchCoreError> {
+        let source = super::super::normalize_hash(Some(source))
+            .unwrap_or_else(|| source.to_ascii_lowercase());
+        let fingerprint = Self::logical_input_fingerprint(payload)?;
+        let changed = self.transaction.execute(
+            "UPDATE rch_broker_claims SET fingerprint=?4 WHERE source=?1 AND logical_id=?2 AND fingerprint=?3",
+            params![source, id, previous, fingerprint],
+        )?;
+        if changed != 1 {
+            return Err(RchCoreError::RecoveryRequired(
+                "logical input claim changed while it was being rebound".into(),
+            ));
+        }
+        Ok(())
+    }
+    /// Logical input identifiers claimed by `source` that start with
+    /// `prefix`, newest first. Used only on the rare legacy-claim path.
+    pub fn claimed_logical_inputs_with_prefix(
+        &self,
+        source: &str,
+        prefix: &str,
+    ) -> Result<Vec<String>, RchCoreError> {
+        let source = super::super::normalize_hash(Some(source))
+            .unwrap_or_else(|| source.to_ascii_lowercase());
+        // A primary-key range scan: every ID with `prefix` sorts in
+        // [prefix, prefix + U+10FFFF).
+        let upper = format!("{prefix}\u{10FFFF}");
+        let mut statement = self.transaction.prepare(
+            "SELECT logical_id FROM rch_broker_claims WHERE source=?1 AND logical_id>=?2 AND logical_id<?3 ORDER BY rowid DESC",
+        )?;
+        let ids = statement
+            .query_map(params![source, prefix, upper], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+    pub fn claim_logical_input(
+        &self,
+        source: &str,
+        id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<bool, RchCoreError> {
+        let encoded =
+            serde_json::to_vec(payload).map_err(|e| RchCoreError::Encode(e.to_string()))?;
+        let fingerprint = super::super::durable_inbox::hex_digest(&encoded);
+        let previous = self.claimed_logical_input(source, id)?;
+        let source = super::super::normalize_hash(Some(source))
+            .unwrap_or_else(|| source.to_ascii_lowercase());
         if let Some(previous) = previous {
             if previous != fingerprint {
                 return Err(RchCoreError::RecoveryRequired(
@@ -311,16 +371,20 @@ impl RchCommandTransaction<'_> {
             ));
         }
         super::super::durable_inbox::admit_effect_bytes(&self.transaction, bytes.len())?;
+        record.file_id = self.transaction.query_row(
+            super::marker_pictures::NEXT_FILE_ATTACHMENT_ID_SQL,
+            [],
+            |row| super::super::sqlite_read_u64(row, 0),
+        )?;
         self.transaction.execute(
-            "INSERT INTO rch_file_attachments(category,payload,topic_id) VALUES(?1,?2,?3)",
+            "INSERT INTO rch_file_attachments(file_id,category,payload,topic_id) VALUES(?1,?2,?3,?4)",
             params![
+                super::super::sqlite_u64(record.file_id)?,
                 record.category,
                 encode_msgpack(&record)?,
                 normalize_topic_id(record.topic_id.as_deref())
             ],
         )?;
-        record.file_id = u64::try_from(self.transaction.last_insert_rowid())
-            .map_err(|e| RchCoreError::Decode(e.to_string()))?;
         record.path = format!("rch-db:{}", record.file_id);
         self.transaction.execute(
             "UPDATE rch_file_attachments SET payload=?1 WHERE file_id=?2",

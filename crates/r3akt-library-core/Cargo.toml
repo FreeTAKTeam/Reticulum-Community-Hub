@@ -1,0 +1,15 @@
+[package]
+name = "r3akt-library-core"
+version = "0.1.0"
+description = "Shared R3AKT Library catalog: item contract, identities, filters, pagination and mission-scoped rights for RCH and REM"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

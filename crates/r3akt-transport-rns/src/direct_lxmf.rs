@@ -56,8 +56,16 @@ pub(super) fn direct_lxmf_message_payloads(
         );
     }
     // Telemetry is processed first, so a same-message collector query sees it.
+    let mut event_position = None;
     match direct_lxmf_telemetry(fields, message) {
         Ok(Some(telemetry)) => {
+            let location = &telemetry.telemetry["location"];
+            if let (Some(lat), Some(lon)) = (
+                location["latitude"].as_f64(),
+                location["longitude"].as_f64(),
+            ) {
+                event_position = Some((lat, lon));
+            }
             let topic = Topic::new("telemetry");
             decoded.envelopes.push(ProtocolEnvelope::new(
                 NodeId::new(source),
@@ -91,6 +99,8 @@ pub(super) fn direct_lxmf_message_payloads(
                 {
                     args.insert("_rem_team_uid".into(), JsonValue::String(team_uid.into()));
                 }
+                picture_args(&mut command, fields, message);
+                event_position_args(&mut command, event_position);
                 decoded.envelopes.push(ProtocolEnvelope::new(
                     NodeId::new(source),
                     Destination::Node(NodeId::new(local_source)),
@@ -129,6 +139,51 @@ pub(super) fn direct_lxmf_message_payloads(
         }
     }
     decoded
+}
+
+/// An event sent with telemetry in the same message is placed at that position.
+fn event_position_args(command: &mut r3akt_protocol::Command, position: Option<(f64, f64)>) {
+    if command.name == "mission.registry.log_entry.upsert"
+        && let Some((lat, lon)) = position
+        && let Some(args) = command.args.as_object_mut()
+        && !args.contains_key("latitude")
+    {
+        args.insert("latitude".into(), lat.into());
+        args.insert("longitude".into(), lon.into());
+    }
+}
+
+/// Picture markers (r3akt-uas #19): the hub needs the message's `FIELD_IMAGE`
+/// and its LXMF message ID (the picture ID), so both join the command args.
+fn picture_args(
+    command: &mut r3akt_protocol::Command,
+    fields: Option<&serde_json::Map<String, JsonValue>>,
+    message: &JsonValue,
+) {
+    use r3akt_map_core::marker_picture as picture;
+    if command.name != "mission.marker.create" && command.name != picture::UPLOAD_COMMAND {
+        return;
+    }
+    let Some(args) = command.args.as_object_mut() else {
+        return;
+    };
+    // Only the transport may set these, never the sender's own args.
+    args.remove("_lxmf_image");
+    args.remove("_lxmf_message_id");
+    if let Some((format, data)) = fields
+        .and_then(|f| optional_field_value(f, &[picture::FIELD_IMAGE_KEY]))
+        .and_then(picture::image_field)
+    {
+        use base64::Engine as _;
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        args.insert(
+            "_lxmf_image".into(),
+            serde_json::json!([format, format!("base64:{data}")]),
+        );
+    }
+    if let Some(id) = message.get("id").and_then(JsonValue::as_str) {
+        args.insert("_lxmf_message_id".into(), JsonValue::String(id.into()));
+    }
 }
 
 fn decode_origin_sensors(

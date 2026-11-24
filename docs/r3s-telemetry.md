@@ -78,3 +78,9 @@ cd ui && npx playwright test --config playwright.sensor.config.ts
 `cargo +1.99.1 run -p r3akt-map-core --features sqlite --example sensor_fixture` produces the checked-in native JSON fixture used by both browser tests. The browser checks exercise five sensors across controller A and drone B, visibility, style reconstruction, stale suppression and unavailable-service cleanup on one MapLibre map. They do not substitute for signed APK Binder instrumentation, real peers, LoRa, BLE or hardware calibration.
 
 Software checks on 31 October 2026: 746 workspace Rust tests passed (two existing ignored tests), strict all-target Clippy passed, 210 UI tests/typecheck/lint/build passed, and the focused Chromium sensor map test passed. New origin/expiry/receipt and transport compatibility cases were rerun after their final edits. This is development evidence; the release gates above remain open.
+
+## Map graphical requirements for RCH and REM
+
+[Normative R3S map graphics and acceptance tests](r3s-map-visual-requirements.md) define the ATAK-style origin symbol/callsign, azimuth, FOV wedge/range presentation and proposed independent SPI crosshair, association, selection, visibility and source-time/uncertainty status. Both RCH `/webmap` and REM `TelemetryMapView` must satisfy the same requirements using native map-core projections.
+
+The existing R3S pose and sector display are implemented; the new SPI protocol, UI overlay and interactions remain a proposal. Both clients require screenshot/rendered-feature validation in addition to the current tests that count source GeoJSON geometry.

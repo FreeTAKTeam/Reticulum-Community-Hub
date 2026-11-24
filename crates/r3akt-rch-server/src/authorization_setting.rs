@@ -2,7 +2,7 @@
 //!
 //! When enabled, only registered members (identities an operator added to the
 //! roster from the UI) may chat with the hub or send it commands over LXMF; see
-//! `durable_broker::registration`. The setting lives in `rch_settings` and every
+//! `durable_broker::registration`. Mission data still needs mission rights. The setting lives in `rch_settings` and every
 //! broker transaction reads it, so a change applies without a restart.
 
 use super::{

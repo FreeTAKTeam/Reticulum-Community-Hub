@@ -8,6 +8,7 @@
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
         <SensorGeometryLayer :map="mapInstance" />
+        <EventLayer :map="mapInstance" />
 
         <div class="webmap-marker-overlay-layer">
           <div v-if="markerReticleStyle" class="webmap-marker-reticle" :style="markerReticleStyle" aria-hidden="true">
@@ -67,6 +68,7 @@
           class="webmap-marker-radial-menu"
           :style="markerRadialMenuStyle"
           role="menu"
+          @keydown.esc.stop.prevent="handleMarkerRadialMenuEscape"
           @mousedown.stop
           @click.stop
           @contextmenu.prevent="dismissRadialMenus"
@@ -90,21 +92,6 @@
             </svg>
             <span>{{ item.label }}</span>
           </button>
-          <button
-            type="button"
-            class="webmap-marker-radial-center"
-            :title="markerRadialMenuCenterLabel"
-            @click.stop="handleMarkerRadialMenuCenter"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                v-for="(segment, segmentIndex) in markerRadialIconPaths(markerRadialMenuCenterIcon)"
-                :key="`center-${segmentIndex}`"
-                :d="segment"
-              />
-            </svg>
-            <span>{{ markerRadialMenuCenterLabel }}</span>
-          </button>
         </div>
         <div
           v-if="zoneRadialMenuStyle && zoneRadialMenuZoneId"
@@ -112,6 +99,7 @@
           class="webmap-marker-radial-menu webmap-zone-radial-menu"
           :style="zoneRadialMenuStyle"
           role="menu"
+          @keydown.esc.stop.prevent="handleZoneRadialMenuEscape"
           @mousedown.stop
           @click.stop
           @contextmenu.prevent="dismissRadialMenus"
@@ -134,21 +122,6 @@
               />
             </svg>
             <span>{{ item.label }}</span>
-          </button>
-          <button
-            type="button"
-            class="webmap-marker-radial-center"
-            title="Close"
-            @click.stop="handleZoneRadialMenuCenter"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                v-for="(segment, segmentIndex) in markerRadialIconPaths('close')"
-                :key="`zone-center-${segmentIndex}`"
-                :d="segment"
-              />
-            </svg>
-            <span>Close</span>
           </button>
         </div>
 
@@ -592,11 +565,14 @@
 
 <script setup lang="ts">
 import SensorGeometryLayer from "../components/map/SensorGeometryLayer.vue";
+import EventLayer from "../components/map/EventLayer.vue";
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import * as maplibregl from "maplibre-gl";
 import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+// MapLibre's own styles (attribution, controls); without them the attribution renders as raw text.
+import "maplibre-gl/dist/maplibre-gl.css";
 import defaultMapStyle from "../assets/map-style.json";
 import type * as GeoJSON from "geojson";
 import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
@@ -1085,12 +1061,6 @@ const resolveMarkerRadialMenuLevel = (
 const markerRadialMenuItems = computed(() =>
   resolveMarkerRadialMenuLevel(markerRadialMenuProfile.value, markerRadialMenuPath.value)
 );
-const markerRadialMenuCenterIcon = computed<MarkerRadialIcon>(() =>
-  markerRadialMenuPath.value.length ? "back" : "close"
-);
-const markerRadialMenuCenterLabel = computed(() =>
-  markerRadialMenuPath.value.length ? "Back" : "Close"
-);
 watch(markerRadialMenuItems, (items) => {
   if (markerRadialMenuPath.value.length && markerRadialMenuMarkerId.value && !items.length) {
     markerRadialMenuPath.value = [];
@@ -1266,13 +1236,14 @@ const openZoneRadialMenu = (zoneId: string, point: ScreenPoint) => {
   zoneRadialMenuPoint.value = point;
   renderZones();
 };
-const handleZoneRadialMenuCenter = () => {
+// Menus close on their own (entry chosen, outside click, right-click); Escape is the keyboard way.
+const handleZoneRadialMenuEscape = () => {
   if (zoneRadialMenuZoneId.value) {
     suppressRadialHover(zoneRadialKey(zoneRadialMenuZoneId.value));
   }
   closeZoneRadialMenu();
 };
-const handleMarkerRadialMenuCenter = () => {
+const handleMarkerRadialMenuEscape = () => {
   if (!markerRadialMenuMarkerId.value) {
     return;
   }
@@ -2093,7 +2064,7 @@ const focusOperatorMarker = (marker: { lat: number; lon: number }) => {
   closeMarkerCompass();
   markerMoveArmId.value = null;
   clearHoveredOperatorMarker();
-  mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: 9 });
+  mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: focusZoom(mapInstance.value) });
 };
 
 const handleMapClick = (event: maplibregl.MapMouseEvent) => {
@@ -2292,7 +2263,7 @@ const openInspector = (marker: TelemetryMarker, flyTo = false) => {
   inspectorPinned.value = false;
   if (mapInstance.value) {
     if (flyTo) {
-      mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: 9 });
+      mapInstance.value.flyTo({ center: [marker.lon, marker.lat], zoom: focusZoom(mapInstance.value) });
       updateInspectorPosition(marker);
       mapInstance.value.once("moveend", () => updateInspectorPosition(marker));
     } else {
@@ -2351,6 +2322,10 @@ const TELEMETRY_ICON_COLOR = MARKER_ICON_COLOR;
 const MARKER_CLUSTER_FILL_COLOR = "transparent";
 const MARKER_CLUSTER_FILL_OPACITY = 0;
 const TELEMETRY_CLUSTER_MAX_ZOOM = 12;
+// Street level, past the clustering range, so a focused marker is drawn on its own
+// even when others are close by.
+const FOCUS_MARKER_ZOOM = 16;
+const focusZoom = (map: maplibregl.Map) => Math.max(map.getZoom(), FOCUS_MARKER_ZOOM);
 const MARKER_LABEL_COLOR = "#E7ECF5";
 const MARKER_LABEL_HALO_COLOR = "#06121E";
 const MARKER_LABEL_HALO_WIDTH = 1.2;

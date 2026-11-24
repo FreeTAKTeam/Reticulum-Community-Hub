@@ -7,6 +7,9 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  /* The route is viewport-locked: the map and markers panel fill the window height. */
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
   gap: 14px;
   min-height: 0;
   color: #e2fcff;
@@ -19,11 +22,15 @@
 
 .webmap-main {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .webmap-stage {
   position: relative;
-  height: clamp(520px, 74vh, 860px);
+  flex: 1 1 auto;
+  min-height: 420px;
   border-radius: 18px;
   border: 1px solid rgba(59, 244, 255, 0.26);
   background: linear-gradient(160deg, rgba(5, 16, 28, 0.96), rgba(2, 8, 14, 0.98));
@@ -278,43 +285,6 @@
   box-shadow:
     0 0 20px rgba(255, 120, 120, 0.48),
     inset 0 0 18px rgba(255, 120, 120, 0.25);
-}
-
-.webmap-marker-radial-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 84px;
-  height: 84px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  border: 1px solid rgba(59, 244, 255, 0.84);
-  background: radial-gradient(circle at 35% 30%, rgba(59, 244, 255, 0.28), rgba(2, 11, 20, 0.96));
-  color: #98f8ff;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  pointer-events: auto;
-  box-shadow:
-    0 0 18px rgba(59, 244, 255, 0.38),
-    inset 0 0 18px rgba(59, 244, 255, 0.18);
-}
-
-.webmap-marker-radial-center svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.webmap-marker-radial-center span {
-  font-size: 8px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
 }
 
 .webmap-marker-compass {
@@ -831,6 +801,21 @@
     grid-template-columns: 1fr;
   }
 
+  /* Open markers panel: stacked below the map, scrolling inside the locked page.
+     Collapsed, the panel is a strip over the map and the map keeps filling the window. */
+  .webmap-cosmos:not(.webmap-cosmos--sidebar-collapsed) {
+    grid-template-rows: none;
+    /* Rows take their content height; otherwise the fixed-height scroll container
+       shrinks the map's row to make room for the panel. */
+    grid-auto-rows: max-content;
+    overflow-y: auto;
+  }
+
+  .webmap-cosmos:not(.webmap-cosmos--sidebar-collapsed) .webmap-stage {
+    flex: none;
+    height: clamp(520px, 74vh, 860px);
+  }
+
   .webmap-sidebar--collapsed {
     width: 100%;
     min-height: 54px;
@@ -866,11 +851,6 @@
     height: 56px;
   }
 
-  .webmap-marker-radial-center {
-    width: 74px;
-    height: 74px;
-  }
-
   .webmap-marker-compass {
     width: 286px;
     height: 286px;
@@ -895,4 +875,24 @@
  * marker and zone hover handlers set on the canvas. */
 .webmap-stage--placing-marker :deep(.maplibregl-canvas) {
   cursor: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Cpath d="M14 30s-9-9.4-9-16a9 9 0 0 1 18 0c0 6.6-9 16-9 16z" fill="%233bf4ff" stroke="%2302121c" stroke-width="2"/%3E%3Ccircle cx="14" cy="14" r="3.2" fill="%2302121c"/%3E%3Ccircle cx="25" cy="7" r="6" fill="%2302121c"/%3E%3Cpath d="M25 3.5v7M21.5 7h7" stroke="%233bf4ff" stroke-width="2" stroke-linecap="round"/%3E%3C/svg%3E') 14 30, crosshair !important;
+}
+
+/* MapLibre attribution in the cosmic theme, clear of the markers panel strip. */
+.webmap-stage :deep(.maplibregl-ctrl-bottom-right) {
+  right: 64px;
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib),
+.webmap-stage :deep(.maplibregl-ctrl-attrib.maplibregl-compact) {
+  background-color: rgba(7, 19, 31, 0.82);
+  color: var(--cui-color-text-muted);
+  font-family: var(--cui-font-body);
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib a) {
+  color: var(--cui-color-text-muted);
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib-button) {
+  filter: invert(1) hue-rotate(180deg);
 }

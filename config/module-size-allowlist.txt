@@ -1,5 +1,4 @@
 # Temporary shrinking ceilings for existing oversized production modules.
-crates/r3akt-profile-rch/src/lib.rs|990
 crates/r3akt-rch-bridge/src/lib.rs|782
 crates/r3akt-rch-core/src/lib.rs|16692
 crates/r3akt-rch-core/src/python_migration.rs|2490

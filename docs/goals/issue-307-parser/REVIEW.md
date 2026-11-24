@@ -10,7 +10,7 @@ The structural walker is retained to enforce RCH's explicit 16 KiB, depth-32 and
 
 ## Diagnostics semantics
 
-`rejected_total` now increments once per failed outer app-data decode call. Optional slots may contain opaque data from other clients, so an unsuccessful capability probe neither increments this counter nor logs a rejection. The outer announce still enters the directory. Replaying the same failed app-data decode can increment the counter again; it does not count distinct peers, announcements or attacks. Runtime diagnostics expose the scope as `failed_app_data_decode_calls`.
+`rejected_total` now increments once per failed outer app-data decode call. Optional slots may contain opaque data from other clients, so an unsuccessful capability probe neither increments this counter nor logs a rejection. The outer announce still enters the directory. Replaying the same failed app-data decode can increment the counter again; it does not count distinct peers, announcements or attacks. Runtime diagnostics expose the scope as `failed_app_data_decode_calls`. Since #349, app data that cannot start a capability document is counted separately as opaque, and outcomes are cached per payload digest. `rejected_distinct_total` counts distinct failed payloads.
 
 Payload-free logging now allows the first failure immediately and at most one subsequent failure log per 60 seconds of monotonic time. An atomic compare-and-exchange shares this limit between callers. A later burst is visible even after a large lifetime count or an idle period. Runtime diagnostics expose `log_interval_seconds`.
 

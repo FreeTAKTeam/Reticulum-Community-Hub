@@ -1,8 +1,9 @@
 use super::*;
 mod command_alias;
+mod command_claim;
 mod outgoing;
 use command_alias::command_alias;
-pub(super) use outgoing::outgoing;
+pub(super) use outgoing::{outgoing, rem_log_relay, reply_text};
 
 pub(super) fn apply_envelope(
     unit: &mut RchCommandTransaction<'_>,
@@ -47,14 +48,6 @@ fn apply_envelope_payload(
     unit.prepare_source(envelope.source.as_str())
         .map_err(storage)?;
     let source = normalize_identity_key(envelope.source.as_str());
-    if !bootstrap
-        && unit.core_mut().identity_states().iter().any(|s| {
-            normalize_identity_key(&s.identity) == source && (s.is_banned || s.is_blackholed)
-        })
-    {
-        unit.diagnose_rejection("inbound identity is banned or blackholed");
-        return Ok(());
-    }
     if !super::registration::admitted(unit, event, envelope, bootstrap, published)? {
         return Ok(());
     }
@@ -82,28 +75,27 @@ fn apply_envelope_payload(
             );
         }
         if command.name.eq_ignore_ascii_case("help") {
-            published.push(outgoing(
-                unit,
-                event,
-                envelope.source.as_str(),
-                &plain_lxmf_help_reply(),
-                json!({}),
-                envelope.timestamp.timestamp_millis(),
-            )?);
-            return Ok(());
+            let help = plain_lxmf_help_reply();
+            return outgoing::reply_text(unit, event, envelope, help, published);
         }
         let command = command_alias(&command);
         let mission = mission_sync_command_from_reticulumd(envelope, &command);
         let logical = format!("command:{}", mission.command_id);
-        if !unit
-            .claim_logical_input(
-                envelope.source.as_str(),
-                &logical,
-                &json!({"name":command.name,"args":command.args}),
-            )
-            .map_err(storage)?
-        {
+        if !command_claim::claim_command(unit, envelope, &logical, &command)? {
             return Ok(());
+        }
+        if command.name == "mission.time" {
+            return super::mission_time::reply(unit, event, envelope, &mission, published);
+        }
+        if command.name.starts_with("mission.library.") {
+            let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
+            return super::library::handle(unit, event, envelope, &mission, reply, published);
+        }
+        if command.name.starts_with("mission.marker.picture.") {
+            let reply = allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
+            return super::marker_picture::handle(
+                unit, event, envelope, &mission, reply, published,
+            );
         }
         unit.prepare_command(&mission).map_err(storage)?;
         if command.name.starts_with("mission.marker.")
@@ -212,6 +204,7 @@ fn apply_envelope_payload(
                 .and_then(Value::as_str)
                 == Some("rejected")
         });
+        let mut relay_image = None;
         if !rejected
             && command.name == "mission.marker.create"
             && let Some(id) = mission
@@ -225,6 +218,9 @@ fn apply_envelope_payload(
         {
             unit.record_sensor_marker_writer(id, envelope.source.as_str())
                 .map_err(storage)?;
+            let id = r3akt_map_core::marker::object_destination_hash(id)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            relay_image = super::marker_picture::stage_thumbnail(unit, envelope, &mission, &id)?;
         }
         if rejected {
             unit.restore_domain(checkpoint).map_err(storage)?;
@@ -308,13 +304,19 @@ fn apply_envelope_payload(
                     .event_field()
                     .and_then(|e| e["event_type"].as_str());
                 let content = format!("r3akt mission event {}", event_type.unwrap_or("update"));
+                let relay_fields = match &relay_image {
+                    Some(image) => super::marker_picture::with_image(&fields, image)?,
+                    None => fields.clone(),
+                };
+                let (content, relay_fields) = rem_log_relay(unit, envelope, response.event_field())
+                    .map_or((content, relay_fields), |rem| ("cmd".to_string(), rem));
                 for destination in &destinations {
                     published.push(outgoing(
                         unit,
                         event,
                         destination,
                         &content,
-                        fields.clone(),
+                        relay_fields.clone(),
                         envelope.timestamp.timestamp_millis(),
                     )?);
                 }

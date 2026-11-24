@@ -13,6 +13,34 @@ limitations, and artifact identity are tracked in
 [`stabilization-v3.0.0-preview.11.md`](stabilization-v3.0.0-preview.11.md).
 The [preview.10 report](stabilization-v3.0.0-preview.10.md) records the earlier release.
 
+## Preview.47 Fabric 0.17.0 Linux AMD64 release
+
+Preview.47 keeps SDK and daemon on Fabric (formerly LXMF-rs) v0.17.0 at `99fc770e83ed56eec81a23d8b4b864fe2cfde80e` and fixes the web map event layer, which read the log-entries response as an object and stayed empty (#372). See [the preview.47 notes](release-notes-v3.0.0-preview.47.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.46 Fabric 0.17.0 Linux AMD64 release
+
+Preview.46 moves SDK and daemon to Fabric (formerly LXMF-rs) v0.17.0 at `99fc770e83ed56eec81a23d8b4b864fe2cfde80e` and relays LXMF events to REM as log-entry events with their telemetry position (#369). See [the preview.46 notes](release-notes-v3.0.0-preview.46.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.45 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.45 keeps SDK and daemon 0.16.2-rc.2-linux at `0940abb2ab0ea540c8c0d94283304e1c07b8e002` and sends picture-marker images as binary field 6 so a large picture can no longer stall outbound dispatch (#368). See [the preview.45 notes](release-notes-v3.0.0-preview.45.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.44 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.44 moves SDK and daemon 0.16.2-rc.2-linux to `0940abb2ab0ea540c8c0d94283304e1c07b8e002` (ZeroMQ fair-queue fix, #363) and adds monotonic attachment file IDs with picture-reference cleanup (#365). See [the preview.44 notes](release-notes-v3.0.0-preview.44.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.43 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.43 keeps SDK and daemon 0.16.2-rc.2-linux at `d9595383b253b1c5022ab5abeacd39ea60b132dd` and adds the Mission Library RPP fetch fix from #361 (database-kept attachments, no inbox stall on unreadable files). See [the preview.43 notes](release-notes-v3.0.0-preview.43.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.42 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.42 pairs SDK and daemon 0.16.2-rc.2-linux at `d9595383b253b1c5022ab5abeacd39ea60b132dd` (LXMF-rs main with RPP 0.3 and RDO owner binding) and includes RCH changes merged through #359. See [the preview.42 notes](release-notes-v3.0.0-preview.42.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
+## Preview.41 LXMF-rs 0.16.2-rc.2-linux Linux AMD64 release
+
+Preview.41 pairs SDK and daemon v0.16.2-rc.2-linux at `4dc89a4afd54b8653ee9236b62d5d1f720b484bf` and includes RCH changes merged through #343. See [the preview.41 notes](release-notes-v3.0.0-preview.41.md). Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.
+
 ## Preview.38 matched daemon recovery candidate
 
 Preview.38 pairs SDK and daemon v0.16.2-rc.1 at `9908a7ef8360db30bb352ca372d70b4d07fbba8b` and includes the merged session-recovery and legacy-credential warning fixes. See [the preview.38 notes](release-notes-v3.0.0-preview.38.md). Candidate package, real preview.37 upgrade, restart and local peer delivery verification must complete before publication. Physical-radio, production, systemd PID 1 and sustained-load qualification remain separate gates.

@@ -1,6 +1,7 @@
 use super::{
     ApiError, CoreMessageRecord, DeliveryMode, DurableOutboundIntent, InboxEvent,
-    OutboundMessageRecord, RchCommandTransaction, Value, json, sha256_lower_hex, storage,
+    OutboundMessageRecord, ProtocolEnvelope, RchCommandTransaction, Value, json, sha256_lower_hex,
+    storage,
 };
 
 pub(crate) fn outgoing(
@@ -42,4 +43,49 @@ pub(crate) fn outgoing(
         error => storage(error),
     })?;
     Ok(record)
+}
+
+/// One plain-text reply to the envelope's sender (`/help`, `/time`).
+pub(crate) fn reply_text(
+    unit: &RchCommandTransaction<'_>,
+    event: &InboxEvent,
+    envelope: &ProtocolEnvelope,
+    text: &str,
+    published: &mut Vec<OutboundMessageRecord>,
+) -> Result<(), ApiError> {
+    let created = envelope.timestamp.timestamp_millis();
+    let source = envelope.source.as_str();
+    published.push(outgoing(unit, event, source, text, json!({}), created)?);
+    Ok(())
+}
+
+/// REM stores events only from the `log_entry.upsert` command, never from the upserted
+/// result event, so log entries are relayed in the REST fanout command shape.
+pub(crate) fn rem_log_relay(
+    unit: &mut RchCommandTransaction<'_>,
+    envelope: &ProtocolEnvelope,
+    event: Option<&Value>,
+) -> Option<Value> {
+    let event = event?;
+    if !matches!(
+        event["event_type"].as_str(),
+        Some("mission.registry.log_entry.upserted" | "mission.log_entry.upserted")
+    ) {
+        return None;
+    }
+    let mut log = event["payload"].as_object()?.clone();
+    if !log.get("callsign").is_some_and(Value::is_string) {
+        let name = super::super::chat_presentation::relay_sender_label(
+            unit.core_mut(),
+            None,
+            envelope.source.as_str(),
+        );
+        log.insert("callsign".into(), json!(name));
+    }
+    crate::rem_log_entry_command_fields(
+        &log,
+        "",
+        &envelope.id.to_string(),
+        envelope.source.as_str(),
+    )
 }

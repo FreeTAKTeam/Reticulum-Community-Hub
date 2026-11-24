@@ -14,6 +14,7 @@
 )]
 
 mod command_scope;
+mod log_entry_position;
 mod marker_commands;
 mod operation_rights;
 mod registration;
@@ -44,7 +45,9 @@ mod sqlite_record_updates;
 mod sqlite_roster;
 mod sqlite_settings;
 mod sqlite_values;
-pub use sqlite_commands::{CommandDelta, RchCommandTransaction};
+pub use sqlite_commands::{
+    CommandDelta, LibraryRppPackage, MarkerPictureRow, RchCommandTransaction,
+};
 pub use sqlite_marker_idempotency::MarkerCreation;
 pub use sqlite_operation_rights::OperationRightMutation;
 
@@ -433,7 +436,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "9";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "10";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -456,6 +459,10 @@ const RCH_SQLITE_DATA_TABLES: &[&str] = &[
     "r3s_sensor_origins",
     "r3s_marker_writers",
     "r3s_relay_metadata",
+    "rch_marker_pictures",
+    "rch_library_mission_files",
+    "rch_library_rpp_refs",
+    "rch_library_rpp_packages",
     "rch_markers",
     "rch_zones",
     "rch_missions",
@@ -860,6 +867,11 @@ pub struct LogEntryRecord {
     pub client_time: Option<String>,
     pub content_hashes: Vec<String>,
     pub keywords: Vec<String>,
+    /// Event position, e.g. from telemetry sent in the same LXMF message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longitude: Option<f64>,
     pub created_ts_ms: i64,
     pub updated_ts_ms: i64,
 }
@@ -1980,12 +1992,11 @@ impl RchSqliteStore {
     }
 
     pub fn next_file_attachment_id(&self) -> Result<u64, RchCoreError> {
-        let max_id = self.connection.query_row(
-            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
-            [],
-            |row| sqlite_read_u64(row, 0),
-        )?;
-        Ok(max_id.saturating_add(1))
+        Ok(self
+            .connection
+            .query_row(sqlite_commands::NEXT_FILE_ATTACHMENT_ID_SQL, [], |row| {
+                sqlite_read_u64(row, 0)
+            })?)
     }
 
     pub fn upsert_file_attachment(
@@ -2010,12 +2021,10 @@ impl RchSqliteStore {
         mut record: FileAttachmentRecord,
     ) -> Result<FileAttachmentRecord, RchCoreError> {
         let transaction = self.connection.transaction()?;
-        let max_id = transaction.query_row(
-            "SELECT COALESCE(MAX(file_id), 0) FROM rch_file_attachments",
-            [],
-            |row| sqlite_read_u64(row, 0),
-        )?;
-        record.file_id = max_id.saturating_add(1);
+        record.file_id =
+            transaction.query_row(sqlite_commands::NEXT_FILE_ATTACHMENT_ID_SQL, [], |row| {
+                sqlite_read_u64(row, 0)
+            })?;
         transaction.execute(
             "INSERT INTO rch_file_attachments (file_id, category, payload, topic_id)
              VALUES (?1, ?2, ?3, ?4)",
@@ -2805,7 +2814,8 @@ impl RchSqliteStore {
             self.migrate_command_indexes()?;
             self.migrate_identity_directory()?;
             self.migrate_broker_pending_indexes()?;
-            return self.migrate_broker_active_count_index();
+            self.migrate_broker_active_count_index()?;
+            return self.migrate_broker_inbox_status_counts();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2975,7 +2985,8 @@ impl RchSqliteStore {
         self.migrate_command_indexes()?;
         self.migrate_identity_directory()?;
         self.migrate_broker_pending_indexes()?;
-        self.migrate_broker_active_count_index()
+        self.migrate_broker_active_count_index()?;
+        self.migrate_broker_inbox_status_counts()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -4367,6 +4378,49 @@ impl RchCore {
         outcome
     }
 
+    /// The rejection `handle_mission_sync_command` would answer before applying
+    /// `command` (unknown command, TEAM scope, payload scope or capability).
+    #[must_use]
+    pub fn mission_command_rejection(
+        &self,
+        command: &MissionCommandEnvelope,
+    ) -> Option<MissionSyncResponse> {
+        if !is_supported_mission_command(command.command_type.as_str()) {
+            return Some(MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "unknown_command",
+                format!("Unsupported mission command '{}'", command.command_type),
+            )));
+        }
+        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+            return Some(rejection);
+        }
+        if let Some(reason) = self.command_scope_error(command) {
+            return Some(MissionSyncResponse::results(Self::rejected_result(
+                command,
+                "invalid_payload",
+                reason,
+            )));
+        }
+        if let Some(required_capability) = required_capability(command.command_type.as_str())
+            && self.authorization_required
+            && !self.registered_member_allows(command, required_capability)
+            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.global_operation_right_allows(command, required_capability)
+            && !self.has_mission_access_operation(command, required_capability)
+        {
+            return Some(MissionSyncResponse::results(
+                Self::rejected_result_with_capabilities(
+                    command,
+                    "unauthorized",
+                    format!("Capability '{required_capability}' is required"),
+                    vec![required_capability.to_string()],
+                ),
+            ));
+        }
+        None
+    }
+
     pub fn handle_mission_sync_command(
         &mut self,
         command: &MissionCommandEnvelope,
@@ -4374,37 +4428,8 @@ impl RchCore {
         if command.command_type.starts_with("rem.registry.") {
             return self.handle_rem_registry_sync_command(command);
         }
-        if !is_supported_mission_command(command.command_type.as_str()) {
-            return vec![MissionSyncResponse::results(Self::rejected_result(
-                command,
-                "unknown_command",
-                format!("Unsupported mission command '{}'", command.command_type),
-            ))];
-        }
-        if let Some(rejection) = self.rem_team_scope_rejection(command) {
+        if let Some(rejection) = self.mission_command_rejection(command) {
             return vec![rejection];
-        }
-        if let Some(reason) = self.command_scope_error(command) {
-            return vec![MissionSyncResponse::results(Self::rejected_result(
-                command,
-                "invalid_payload",
-                reason,
-            ))];
-        }
-        if let Some(required_capability) = required_capability(command.command_type.as_str())
-            && self.authorization_required
-            && !self.registered_member_allows(command, required_capability)
-            && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-            && !self.authorize_command_operation(command, required_capability)
-        {
-            return vec![MissionSyncResponse::results(
-                Self::rejected_result_with_capabilities(
-                    command,
-                    "unauthorized",
-                    format!("Capability '{required_capability}' is required"),
-                    vec![required_capability.to_string()],
-                ),
-            )];
         }
 
         let mut responses = vec![MissionSyncResponse::results(Self::accepted_result(command))];
@@ -4525,13 +4550,8 @@ impl RchCore {
         if let Some(required_capability) =
             checklist_required_capability(command.command_type.as_str())
             && self.authorization_required
-            && !self.registered_member_allows(command, required_capability)
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
-            && !self.authorize_identity_operation(
-                &command.source.rns_identity,
-                required_capability,
-                None,
-            )
+            && !self.global_operation_right_allows(command, required_capability)
             && !self.has_checklist_access_operation(command, required_capability)
         {
             return vec![MissionSyncResponse::results(
@@ -6767,6 +6787,7 @@ impl RchCore {
             append_mecp_keywords(&mut keywords, &content);
             keywords
         };
+        let (latitude, longitude) = log_entry_position::from_args(args, current)?;
         let entry = LogEntryRecord {
             entry_uid: entry_uid.clone(),
             mission_uid: mission_uid.clone(),
@@ -6779,6 +6800,8 @@ impl RchCore {
                 .or_else(|| current.and_then(|entry| entry.client_time.clone())),
             content_hashes,
             keywords,
+            latitude,
+            longitude,
             created_ts_ms: current.map_or(now, |entry| entry.created_ts_ms),
             updated_ts_ms: now,
         };
@@ -6854,6 +6877,8 @@ impl RchCore {
             "client_time": entry.client_time,
             "keywords": entry.keywords,
             "mecp": mecp_log_entry_value(&entry.content),
+            "latitude": entry.latitude,
+            "longitude": entry.longitude,
             "content_hashes": entry.content_hashes,
         });
         self.mission_changes.insert(
@@ -9355,6 +9380,8 @@ impl RchCore {
             "content_hashes": entry.content_hashes,
             "keywords": entry.keywords,
             "mecp": mecp_log_entry_value(&entry.content),
+            "latitude": entry.latitude,
+            "longitude": entry.longitude,
             "created_at": millis_to_rfc3339(entry.created_ts_ms),
             "updated_at": millis_to_rfc3339(entry.updated_ts_ms),
         })
@@ -9990,6 +10017,10 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
             | "mission.users"
             | "mission.events.list"
             | "mission.marker.list"
+            | "mission.library.list"
+            | "mission.library.item.get"
+            | "mission.library.item.fetch"
+            | "mission.library.item.link"
             | "mission.marker.create"
             | "mission.marker.position.patch"
             | "mission.marker.patch"
@@ -10111,8 +10142,12 @@ pub fn required_capability(command_type: &str) -> Option<&'static str> {
             Some("mission.leave")
         }
         "mission.users" | "mission.events.list" => Some("mission.audit.read"),
-        "mission.marker.list" => Some("mission.content.read"),
+        "mission.marker.list"
+        | "mission.library.list"
+        | "mission.library.item.get"
+        | "mission.library.item.fetch" => Some("mission.content.read"),
         "mission.marker.create"
+        | "mission.library.item.link"
         | "mission.marker.position.patch"
         | "mission.marker.patch"
         | "mission.marker.delete" => Some("mission.content.write"),
@@ -12929,7 +12964,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "9");
+        assert_eq!(store.schema_version().expect("schema version"), "10");
     }
 
     #[test]
@@ -13545,30 +13580,30 @@ mod tests {
         let join_rejected = core.handle_mission_sync_command(&command("mission.join", json!({})));
         core.grant_identity_capability("abcdef", "mission.join");
         let join_accepted = core.handle_mission_sync_command(&command("mission.join", json!({})));
-        // A registered member needs no per-command grant...
-        let events_accepted =
+        // A registered member runs roster commands without per-command grants...
+        let users_accepted = core.handle_mission_sync_command(&command("mission.users", json!({})));
+        // ...but mission data still needs rights...
+        let events_rejected =
             core.handle_mission_sync_command(&command("mission.events.list", json!({})));
-        // ...but an operator's explicit deny still refuses that operation.
+        // ...and an operator's explicit deny still refuses a roster command.
         core.revoke_operation_right("identity", "abcdef", "mission.leave", "global", "")
             .expect("deny leave");
         let leave_rejected = core.handle_mission_sync_command(&command("mission.leave", json!({})));
 
-        assert_eq!(
-            join_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.join"
-        );
+        let rejected_capability = |responses: &[MissionSyncResponse]| {
+            responses[0].results_field().expect("rejected")["required_capabilities"][0].clone()
+        };
+        assert_eq!(rejected_capability(&join_rejected), "mission.join");
         assert_eq!(
             join_accepted[1].results_field().expect("result")["status"],
             "result"
         );
         assert_eq!(
-            events_accepted[1].results_field().expect("result")["status"],
+            users_accepted[1].results_field().expect("result")["status"],
             "result"
         );
-        assert_eq!(
-            leave_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.leave"
-        );
+        assert_eq!(rejected_capability(&events_rejected), "mission.audit.read");
+        assert_eq!(rejected_capability(&leave_rejected), "mission.leave");
     }
 
     #[test]
@@ -16311,7 +16346,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "9");
+        assert_eq!(store.schema_version().expect("schema version"), "10");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16355,7 +16390,7 @@ mod tests {
             .compact_if_free_percent_exceeds(100.0, 100)
             .expect("no-op compaction");
 
-        assert_eq!(migration_count, 9);
+        assert_eq!(migration_count, 10);
 
         let index_exists: bool = store
             .connection
@@ -16415,7 +16450,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "9");
+        assert_eq!(store.schema_version().expect("schema version"), "10");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");

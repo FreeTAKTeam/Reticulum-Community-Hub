@@ -108,6 +108,31 @@ listeners, and verify the source destination. Run:
 The gate validates receipt, fanout, event polling, and batched ZeroMQ load. A
 configured RPC endpoint alone does not satisfy the delivery contract.
 
+### Inbound messages stop after a marker command replay
+
+If `/diagnostics/runtime` shows the durable broker lane failing with
+`logical input identifier conflicts with committed content` while the stored
+position keeps rising, see the command-claim rollout in
+[durable-broker.md](durable-broker.md#command-claims-and-replayed-commands).
+
+### Announce capability decoding warnings
+
+Announce app data belongs to the announcing application, and most of it is
+not capability metadata. RCH reads capabilities only from UTF-8 text or a
+MessagePack string, binary, array or map. App data that starts with any other
+MessagePack marker is counted as `opaque_total` and is neither parsed nor
+logged. `announce capability decoding failed` means a capability document was
+truncated, had trailing data, or exceeded the size, depth or item bounds. The
+announce is still ingested, with no capabilities taken from that payload.
+
+Outcomes are cached per payload digest, so a startup replay parses each
+distinct payload once. In `announce_capability_parser` under
+`/diagnostics/runtime`, compare these counters: `decode_calls_total` and
+`cache_hits_total`, `rejected_total` (failed calls) against
+`rejected_distinct_total` (distinct failed payloads), and `opaque_total`. The
+counters reset when the process restarts, and the warning is rate-limited to
+once per minute. Diagnostics never include payloads or peer identifiers.
+
 ### Desktop sidecar exits
 
 The Tauri shell logs stdout, stderr, termination status, startup timeout, lock
