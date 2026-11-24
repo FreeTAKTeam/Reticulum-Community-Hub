@@ -571,6 +571,8 @@ import { ref } from "vue";
 import { storeToRefs } from "pinia";
 import * as maplibregl from "maplibre-gl";
 import mapWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+// MapLibre's own styles (attribution, controls); without them the attribution renders as raw text.
+import "maplibre-gl/dist/maplibre-gl.css";
 import defaultMapStyle from "../assets/map-style.json";
 import type * as GeoJSON from "geojson";
 import type { DataDrivenPropertyValueSpecification, ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
