@@ -1,5 +1,5 @@
 use super::{
-    DEFAULT_LOG_MISSION_UID, IdentityAnnounceRecord, MissionCommandEnvelope, OptionalExtension,
+    DEFAULT_LOG_MISSION_UID, IdentityAnnounceRecord, MissionCommandEnvelope,
     RECENT_ANNOUNCE_WINDOW_MS, RchCoreError, ReadSet, canonical_team_from_team_args,
     decode_msgpack, normalize_hash, normalize_topic_id, text, utc_now_ms,
 };
@@ -15,7 +15,7 @@ impl ReadSet<'_> {
         let a = &command.args;
         let kind = command.command_type.as_str();
         let source = normalize_hash(Some(&command.source.rns_identity));
-        r.authorization = Some(r.connection.query_row("SELECT setting_value='true' FROM rch_settings WHERE setting_key='authorization_required'", [], |row|row.get(0)).optional()?.unwrap_or(false));
+        r.load_authorization()?;
         select!(
             r,
             command_results,

@@ -353,6 +353,7 @@ mod library;
 mod marker_picture;
 mod mission_time;
 mod outbound;
+mod registration;
 #[cfg(test)]
 use application::apply;
 use application::apply_with_store;
@@ -360,6 +361,8 @@ use application::apply_with_store;
 use outbound::dispatch;
 use outbound::dispatch_with_store;
 pub(super) use outbound::queue_northbound;
+#[cfg(test)]
+pub(crate) use registration::NOT_REGISTERED_REPLY;
 
 fn retry_delay(failures: u32) -> Duration {
     Duration::from_millis(500u64.saturating_mul(1u64 << failures.saturating_sub(1).min(6)))

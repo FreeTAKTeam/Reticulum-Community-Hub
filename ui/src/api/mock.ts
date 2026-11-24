@@ -10,6 +10,7 @@ const mockState = {
     reticulumIdentityCreated: true,
     completedAt: null as string | null
   },
+  authorizationRequired: false,
   topics: [
     { TopicID: "topic-1", TopicName: "Weather", TopicPath: "environment/weather", TopicDescription: "Sensor feed" },
     { TopicID: "topic-2", TopicName: "Logistics", TopicPath: "ops/logistics", TopicDescription: "Supply status" }
@@ -572,6 +573,19 @@ export const mockFetch = async (path: string, options: { method?: string; body?:
         }
       }
     });
+  }
+
+  if (pathname === "/api/r3akt/settings/authorization" && method === "GET") {
+    return jsonResponse({ authorization_required: mockState.authorizationRequired });
+  }
+
+  if (pathname === "/api/r3akt/settings/authorization" && method === "PUT") {
+    const body = (await parseBody(options.body)) as Record<string, unknown> | undefined;
+    if (typeof body?.authorization_required !== "boolean") {
+      return jsonResponse({ detail: "'authorization_required' must be provided as a boolean" }, 400);
+    }
+    mockState.authorizationRequired = body.authorization_required;
+    return jsonResponse({ authorization_required: mockState.authorizationRequired });
   }
 
   if (pathname === "/api/r3akt/kill-switch/status" && method === "GET") {

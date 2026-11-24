@@ -17,6 +17,7 @@ mod command_scope;
 mod log_entry_position;
 mod marker_commands;
 mod operation_rights;
+mod registration;
 mod text;
 
 mod sqlite_announces;
@@ -4403,7 +4404,9 @@ impl RchCore {
         }
         if let Some(required_capability) = required_capability(command.command_type.as_str())
             && self.authorization_required
+            && !self.registered_member_allows(command, required_capability)
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.global_operation_right_allows(command, required_capability)
             && !self.has_mission_access_operation(command, required_capability)
         {
             return Some(MissionSyncResponse::results(
@@ -4548,6 +4551,7 @@ impl RchCore {
             checklist_required_capability(command.command_type.as_str())
             && self.authorization_required
             && !self.has_identity_capability(&command.source.rns_identity, required_capability)
+            && !self.global_operation_right_allows(command, required_capability)
             && !self.has_checklist_access_operation(command, required_capability)
         {
             return vec![MissionSyncResponse::results(
@@ -13568,46 +13572,38 @@ mod tests {
     }
 
     #[test]
-    fn mission_join_leave_and_events_use_python_rch_capabilities() {
+    fn mission_commands_admit_capability_grants_and_registered_members() {
         let mut core = RchCore::new();
         core.set_authorization_required(true);
 
+        // Unregistered identities need a capability, as in Python RCH.
         let join_rejected = core.handle_mission_sync_command(&command("mission.join", json!({})));
         core.grant_identity_capability("abcdef", "mission.join");
         let join_accepted = core.handle_mission_sync_command(&command("mission.join", json!({})));
+        // A registered member runs roster commands without per-command grants...
+        let users_accepted = core.handle_mission_sync_command(&command("mission.users", json!({})));
+        // ...but mission data still needs rights...
         let events_rejected =
             core.handle_mission_sync_command(&command("mission.events.list", json!({})));
-        core.grant_identity_capability("abcdef", "mission.audit.read");
-        let events_accepted =
-            core.handle_mission_sync_command(&command("mission.events.list", json!({})));
+        // ...and an operator's explicit deny still refuses a roster command.
+        core.revoke_operation_right("identity", "abcdef", "mission.leave", "global", "")
+            .expect("deny leave");
         let leave_rejected = core.handle_mission_sync_command(&command("mission.leave", json!({})));
-        core.grant_identity_capability("abcdef", "mission.leave");
-        let leave_accepted = core.handle_mission_sync_command(&command("mission.leave", json!({})));
 
-        assert_eq!(
-            join_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.join"
-        );
+        let rejected_capability = |responses: &[MissionSyncResponse]| {
+            responses[0].results_field().expect("rejected")["required_capabilities"][0].clone()
+        };
+        assert_eq!(rejected_capability(&join_rejected), "mission.join");
         assert_eq!(
             join_accepted[1].results_field().expect("result")["status"],
             "result"
         );
         assert_eq!(
-            events_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.audit.read"
-        );
-        assert_eq!(
-            events_accepted[1].results_field().expect("result")["status"],
+            users_accepted[1].results_field().expect("result")["status"],
             "result"
         );
-        assert_eq!(
-            leave_rejected[0].results_field().expect("rejected")["required_capabilities"][0],
-            "mission.leave"
-        );
-        assert_eq!(
-            leave_accepted[1].results_field().expect("result")["status"],
-            "result"
-        );
+        assert_eq!(rejected_capability(&events_rejected), "mission.audit.read");
+        assert_eq!(rejected_capability(&leave_rejected), "mission.leave");
     }
 
     #[test]

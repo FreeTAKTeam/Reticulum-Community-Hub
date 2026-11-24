@@ -1,6 +1,9 @@
 use super::{RchCoreError, RchSqliteStore, params};
 use rusqlite::{OptionalExtension, TransactionBehavior};
 
+/// Setting key also read by command transactions and snapshot loads.
+const AUTHORIZATION_REQUIRED_SETTING: &str = "authorization_required";
+
 impl RchSqliteStore {
     /// Replace a related record only if the complete observed version is still current.
     pub fn compare_and_set_setting_values(
@@ -120,6 +123,29 @@ impl RchSqliteStore {
         Ok(())
     }
 
+    /// Whether only registered members may chat with the hub or send it commands.
+    /// An absent setting is the documented default (`false`); any stored value
+    /// other than `true`/`false` is reported instead of being treated as off.
+    pub fn authorization_required(&self) -> Result<bool, RchCoreError> {
+        match self
+            .setting_value(AUTHORIZATION_REQUIRED_SETTING)?
+            .as_deref()
+        {
+            None | Some("false") => Ok(false),
+            Some("true") => Ok(true),
+            Some(other) => Err(RchCoreError::InvalidPayload(format!(
+                "setting '{AUTHORIZATION_REQUIRED_SETTING}' has unexpected value '{other}'"
+            ))),
+        }
+    }
+
+    pub fn set_authorization_required(&self, required: bool) -> Result<(), RchCoreError> {
+        self.set_setting_value(
+            AUTHORIZATION_REQUIRED_SETTING,
+            if required { "true" } else { "false" },
+        )
+    }
+
     pub(super) fn settings_with_prefix(
         &self,
         prefix: &str,
@@ -134,5 +160,34 @@ impl RchSqliteStore {
             settings.push(row?);
         }
         Ok(settings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTHORIZATION_REQUIRED_SETTING, RchSqliteStore};
+
+    fn temp_store() -> (std::path::PathBuf, RchSqliteStore) {
+        let dir = std::env::temp_dir().join(format!("rch-auth-setting-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).expect("temp dir");
+        let path = dir.join("state.db");
+        let store = RchSqliteStore::open(&path).expect("store");
+        (dir, store)
+    }
+
+    #[test]
+    fn authorization_setting_defaults_off_round_trips_and_rejects_unknown_values() {
+        let (dir, store) = temp_store();
+        assert!(!store.authorization_required().expect("default"));
+        store.set_authorization_required(true).expect("enable");
+        assert!(store.authorization_required().expect("enabled"));
+        store.set_authorization_required(false).expect("disable");
+        assert!(!store.authorization_required().expect("disabled"));
+        store
+            .set_setting_value(AUTHORIZATION_REQUIRED_SETTING, "yes")
+            .expect("corrupt");
+        assert!(store.authorization_required().is_err());
+        drop(store);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

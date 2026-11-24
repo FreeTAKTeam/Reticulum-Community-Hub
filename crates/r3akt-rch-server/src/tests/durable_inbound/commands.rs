@@ -878,6 +878,78 @@ fn plain_lxmf_join_replays_recent_topic_chat_from_other_senders() {
 }
 
 #[test]
+fn authorization_admits_only_members_added_by_an_operator() {
+    let state = durable_inbound_test_state(&temp_db(), "hub-source");
+    let member = "11b2539b72259af927e48c0f90721711";
+    let stranger = "77b2539b72259af927e48c0f90721767";
+    let text = |source: &str, body: &str, dedupe: &str| {
+        let topic = r3akt_protocol::Topic::new("direct");
+        r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic,
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: body.to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        )
+        .with_dedupe_key(dedupe)
+    };
+    let sent_to = |state: &crate::AppState, destination: &str| {
+        pending_broker_requests(&state_db(state))
+            .into_iter()
+            .filter(|request| request["destination"] == destination)
+            .map(|request| request["content"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    let roster = |state: &crate::AppState| {
+        r3akt_rch_core::RchSqliteStore::open_read_only(state_db(state))
+            .expect("store")
+            .load_snapshot()
+            .expect("snapshot")
+            .expect("stored snapshot")
+            .clients
+            .into_iter()
+            .map(|client| client.identity)
+            .collect::<Vec<_>>()
+    };
+    crate::update_roster_client(&state, member, |_| {}).expect("operator adds member");
+    r3akt_rch_core::RchSqliteStore::open(state_db(&state))
+        .expect("store")
+        .set_authorization_required(true)
+        .expect("enable authorization");
+
+    apply_envelope(&state, &text(stranger, "/join", "stranger-join"));
+    apply_envelope(&state, &text(stranger, "ban notice", "stranger-chat"));
+    assert_eq!(
+        sent_to(&state, stranger),
+        [crate::durable_broker::NOT_REGISTERED_REPLY; 2]
+    );
+    assert!(
+        sent_to(&state, member).is_empty(),
+        "stranger chat must not be relayed"
+    );
+    assert_eq!(roster(&state), [member]);
+
+    apply_envelope(&state, &text(member, "/join", "member-join"));
+    apply_envelope(&state, &text(member, "/users", "member-users"));
+    let replies = sent_to(&state, member);
+    assert_eq!(replies[0], "joined");
+    assert!(replies[1].starts_with("users: "), "{replies:?}");
+
+    crate::update_roster_client(&state, stranger, |_| {}).expect("operator adds stranger");
+    apply_envelope(&state, &text(stranger, "hello team", "registered-chat"));
+    assert!(
+        sent_to(&state, member)
+            .iter()
+            .any(|content| content.contains("hello team")),
+        "a registered member's chat is relayed"
+    );
+}
+
+#[test]
 fn plain_lxmf_time_replies_with_latest_or_named_mission_time_left() {
     let state = durable_inbound_test_state(&temp_db(), "hub-source");
     let source = "77b2539b72259af927e48c0f90721767";

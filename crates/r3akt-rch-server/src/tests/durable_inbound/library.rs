@@ -100,6 +100,11 @@ fn state_for(reader: &str) -> crate::AppState {
         .expect("state")
         .with_test_reticulumd_source("local-destination");
     state.enable_durable_consumer().expect("durable consumer");
+    // With authorization on, only operator-registered members may send commands;
+    // the library still scopes each member to their mission rights.
+    for member in [reader, EDITOR, OUTSIDER] {
+        crate::update_roster_client(&state, member, |_| {}).expect("register member");
+    }
     state
 }
 
