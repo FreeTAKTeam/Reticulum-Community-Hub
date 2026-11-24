@@ -15,7 +15,7 @@
         tabindex="-1"
       >
         <header class="flex items-start justify-between gap-3">
-          <slot name="header">
+          <slot name="header" :title-id="titleId">
             <h3 :id="titleId" class="text-lg font-semibold">{{ title }}</h3>
           </slot>
           <button v-if="!hideClose" class="cui-modal-close" aria-label="Close" @click="emit('close')">X</button>

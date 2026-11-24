@@ -876,3 +876,23 @@
 .webmap-stage--placing-marker :deep(.maplibregl-canvas) {
   cursor: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Cpath d="M14 30s-9-9.4-9-16a9 9 0 0 1 18 0c0 6.6-9 16-9 16z" fill="%233bf4ff" stroke="%2302121c" stroke-width="2"/%3E%3Ccircle cx="14" cy="14" r="3.2" fill="%2302121c"/%3E%3Ccircle cx="25" cy="7" r="6" fill="%2302121c"/%3E%3Cpath d="M25 3.5v7M21.5 7h7" stroke="%233bf4ff" stroke-width="2" stroke-linecap="round"/%3E%3C/svg%3E') 14 30, crosshair !important;
 }
+
+/* MapLibre attribution in the cosmic theme, clear of the markers panel strip. */
+.webmap-stage :deep(.maplibregl-ctrl-bottom-right) {
+  right: 64px;
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib),
+.webmap-stage :deep(.maplibregl-ctrl-attrib.maplibregl-compact) {
+  background-color: rgba(7, 19, 31, 0.82);
+  color: var(--cui-color-text-muted);
+  font-family: var(--cui-font-body);
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib a) {
+  color: var(--cui-color-text-muted);
+}
+
+.webmap-stage :deep(.maplibregl-ctrl-attrib-button) {
+  filter: invert(1) hue-rotate(180deg);
+}

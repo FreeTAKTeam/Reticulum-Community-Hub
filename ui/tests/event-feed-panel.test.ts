@@ -1,11 +1,16 @@
 import { createPinia } from "pinia";
 import { createApp, h, nextTick, type App } from "vue";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import EventFeedPanel from "../src/components/dashboard/EventFeedPanel.vue";
 import type { EventEntry } from "../src/api/types";
 
 const { get } = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("../src/api/client", () => ({ get, post: vi.fn(), put: vi.fn(), del: vi.fn(), patch: vi.fn() }));
+
+// Pin the clock to midday so "Today"/"Yesterday" grouping doesn't depend on when the suite runs.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date(2026, 10, 19, 12, 0, 0));
+afterAll(() => vi.useRealTimers());
 
 const RESCUE = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 const ALPHA = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
