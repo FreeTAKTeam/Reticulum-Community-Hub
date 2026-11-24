@@ -17,6 +17,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+uas-cot = { version = "0.6.0", default-features = false }
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls-no-default", "json"] }
 
 [dev-dependencies]

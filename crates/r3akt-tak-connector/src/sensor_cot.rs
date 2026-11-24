@@ -1,13 +1,12 @@
 //! Stock ATAK single-sensor `CoT` adapter. R3S remains native; `CoT` is a boundary format.
 use super::{
     BytesStart, DateTime, EVENT_TYPE_LOCATION, Reader, TakConnector, TakConnectorError, Utc,
-    XmlEvent, escape_attr, format_cot_millis, format_float, xml_attr,
+    XmlEvent, xml_attr,
 };
 use r3akt_map_core::sensor::{
     AltitudeDatum, OriginPosition, RangeKind, SensorManifest, SensorState,
 };
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CotSensorObservation {
@@ -238,63 +237,47 @@ impl TakConnector {
         };
         let sample = date(snapshot.sensor.sample_at_ms)?;
         let stale = date(snapshot.stale_at_ms)?;
-        let mut attributes = String::new();
-        for (key, value) in [
-            ("north", snapshot.sensor.image_north_deg),
-            ("azimuth", snapshot.sensor.azimuth_deg),
-            ("fov", snapshot.sensor.horizontal_fov_deg),
-            ("vfov", snapshot.sensor.vertical_fov_deg),
-            ("roll", snapshot.sensor.roll_deg),
-            ("elevation", snapshot.sensor.elevation_deg),
-            (
-                "range",
-                if snapshot.sensor.range_kind == RangeKind::MeasuredTarget {
-                    snapshot.sensor.slant_range_m
-                } else {
-                    None
-                },
-            ),
-        ] {
-            if let Some(value) = value {
-                write!(attributes, " {key}=\"{}\"", format_float(value))
-                    .map_err(|e| invalid(&e.to_string()))?;
-            }
-        }
-        if let Some(manifest) = &snapshot.manifest {
+        let manifest = snapshot.manifest.as_ref();
+        if let Some(manifest) = manifest {
             manifest.validate().map_err(invalid)?;
-            for (key, value) in [
-                ("type", manifest.sensor_type.as_deref()),
-                ("model", manifest.model.as_deref()),
-            ] {
-                if let Some(value) = value {
-                    write!(attributes, " {key}=\"{}\"", escape_attr(value))
-                        .map_err(|e| invalid(&e.to_string()))?;
-                }
-            }
         }
-        let event_type = if snapshot.origin_kind == "uav" {
-            "a-f-A"
+        let kind = if snapshot.origin_kind == "uav" {
+            "a-f-A-M-H-Q"
         } else {
             EVENT_TYPE_LOCATION
         };
+        let time_us =
+            u64::try_from(sample.timestamp_micros()).map_err(|e| invalid(&e.to_string()))?;
+        let mut event = uas_cot::Event::new(&snapshot.origin_id, kind, time_us, 0);
+        event.stale_us =
+            u64::try_from(stale.timestamp_micros()).map_err(|e| invalid(&e.to_string()))?;
         // CoT uses 9999999 for unknown point attributes; no zero altitude is invented.
         let altitude = if snapshot.position.altitude_datum == AltitudeDatum::Hae {
-            snapshot.position.alt_m.unwrap_or(9_999_999.)
+            snapshot.position.alt_m.unwrap_or(uas_cot::UNKNOWN_ERROR)
         } else {
-            9_999_999.
+            uas_cot::UNKNOWN_ERROR
         };
-        Ok(format!(
-            "<event version=\"2.0\" uid=\"{}\" type=\"{event_type}\" how=\"m-g\" time=\"{}\" start=\"{}\" stale=\"{}\"><point lat=\"{}\" lon=\"{}\" hae=\"{}\" ce=\"{}\" le=\"9999999\"/><detail><contact callsign=\"{}\"/><sensor version=\"0.6\"{attributes}/></detail></event>",
-            escape_attr(&snapshot.origin_id),
-            format_cot_millis(sample),
-            format_cot_millis(sample),
-            format_cot_millis(stale),
-            format_float(snapshot.position.lat),
-            format_float(snapshot.position.lon),
-            format_float(altitude),
-            format_float(snapshot.position.accuracy_m.unwrap_or(9_999_999.)),
-            escape_attr(&snapshot.label)
-        ))
+        event.point = uas_cot::Point::new(snapshot.position.lat, snapshot.position.lon, altitude);
+        event.point.ce = snapshot
+            .position
+            .accuracy_m
+            .unwrap_or(uas_cot::UNKNOWN_ERROR);
+        event.callsign = Some(snapshot.label.clone());
+        let sensor = &snapshot.sensor;
+        event.sensor = Some(uas_cot::Sensor {
+            azimuth: sensor.azimuth_deg,
+            elevation: sensor.elevation_deg,
+            roll: sensor.roll_deg,
+            fov: sensor.horizontal_fov_deg,
+            vfov: sensor.vertical_fov_deg,
+            range: sensor
+                .slant_range_m
+                .filter(|_| sensor.range_kind == RangeKind::MeasuredTarget),
+            north: sensor.image_north_deg,
+            model: manifest.and_then(|m| m.model.clone()),
+            kind: manifest.and_then(|m| m.sensor_type.clone()),
+        });
+        Ok(event.to_xml())
     }
 }
 
@@ -396,7 +379,7 @@ mod tests {
         };
         let connector = TakConnector::new(TakConnectionConfig::default());
         let output = connector.build_sensor_xml(&snapshot).unwrap();
-        assert!(output.contains("type=\"a-f-A\""));
+        assert!(output.contains("type=\"a-f-A-M-H-Q\""));
         assert_eq!(
             parse_inbound_cot_event(&output)
                 .unwrap()
