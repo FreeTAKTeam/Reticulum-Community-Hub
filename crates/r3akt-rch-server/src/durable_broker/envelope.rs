@@ -371,6 +371,30 @@ fn apply_envelope_payload(
                 super::chat_presentation::stage_received_event(unit, event, envelope, &inbound)?;
             }
             published.push(inbound);
+            // Python parity: chat from a node that never joined (e.g. a transport
+            // node's ban notice, #322) is kept but not relayed; the sender gets help.
+            let joined = unit
+                .core_mut()
+                .clients()
+                .iter()
+                .any(|c| normalize_identity_key(&c.identity) == source)
+                || unit
+                    .core_mut()
+                    .subscribers(envelope.topic.as_str())
+                    .iter()
+                    .any(|s| normalize_identity_key(&s.node_id) == source);
+            if !joined {
+                if !bootstrap && allowed(unit.core_mut(), envelope.source.as_str(), allowlist) {
+                    return outgoing::reply_text(
+                        unit,
+                        event,
+                        envelope,
+                        plain_lxmf_help_reply(),
+                        published,
+                    );
+                }
+                return Ok(());
+            }
             let client =
                 super::chat_presentation::touch_client(unit, event, envelope, bootstrap, true)?;
             if !bootstrap {

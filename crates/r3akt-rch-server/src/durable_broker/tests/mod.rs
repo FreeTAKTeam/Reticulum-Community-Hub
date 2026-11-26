@@ -185,6 +185,20 @@ impl Fixture {
         }
         state.enable_durable_consumer().unwrap();
         state.register_lxmf_zmq_service_identity().unwrap();
+        // `inbound` chat comes from this joined peer; unjoined chat is not relayed.
+        crate::with_core_store_write(&state, |store| {
+            store.upsert_client(&r3akt_rch_core::ClientRecord {
+                identity: "remote-peer".into(),
+                first_seen_ts_ms: 0,
+                last_seen_ts_ms: 0,
+                nickname: None,
+                role: r3akt_rch_core::DEFAULT_ROSTER_ROLE.into(),
+                paused: false,
+                text_only: false,
+                last_chat_ts_ms: None,
+            })
+        })
+        .unwrap();
         state
     }
     fn inbound(&self, id: &str, destination: &str) {

@@ -71,9 +71,58 @@ fn inbound_plain_lxmf_chat_is_sanitized_and_capped_before_fanout() {
 }
 
 #[test]
+fn inbound_chat_from_unjoined_node_is_not_fanned_out() {
+    let state = durable_inbound_test_state(&temp_db(), "hub-source");
+    let member = "77b2539b72259af927e48c0f90721767";
+    let peer = "4bede2a6ecab26f234aac9bb894a441a";
+    let notifier = "189426a6000000000000000000000000";
+    for identity in [member, peer] {
+        seed_client(&state, identity, crate::unix_now_ms());
+    }
+    let topic = r3akt_protocol::Topic::new("direct");
+    let chat = |source: &str, body: &str| {
+        r3akt_protocol::ProtocolEnvelope::new(
+            r3akt_protocol::NodeId::new(source),
+            r3akt_protocol::Destination::Topic(topic.clone()),
+            topic.clone(),
+            r3akt_protocol::Payload::TopicMessage(r3akt_protocol::TopicMessage {
+                body: body.to_string(),
+                content_type: "text/plain".to_string(),
+                correlation_id: None,
+                attachments: Vec::new(),
+            }),
+        )
+    };
+    apply_envelope(
+        &state,
+        &chat(notifier, "Heads up, you're banned for 24 hours"),
+    );
+    apply_envelope(&state, &chat(member, "hello team"));
+
+    let sent = pending_broker_requests(&state_db(&state))
+        .iter()
+        .map(|r| {
+            (
+                r["destination"].as_str().unwrap().to_string(),
+                r["content"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(!sent.iter().any(|(_, content)| content.contains("banned")));
+    assert!(
+        sent.iter()
+            .any(|(d, c)| d == notifier && c.starts_with("RCH commands:"))
+    );
+    assert!(sent.contains(&(peer.to_string(), "77b2539b > hello team".to_string())));
+    // The notifier is not enrolled, so it does not receive later group chat.
+    assert_eq!(sent.iter().filter(|(d, _)| d == notifier).count(), 1);
+}
+
+#[test]
 fn inbound_plain_lxmf_chat_updates_last_chat_timestamp() {
     let state = durable_inbound_test_state(&temp_db(), "hub-source");
     let source = "77b2539b72259af927e48c0f90721767";
+    seed_client(&state, source, 0);
     let topic = r3akt_protocol::Topic::new("direct");
     let envelope = r3akt_protocol::ProtocolEnvelope::new(
         r3akt_protocol::NodeId::new(source),
@@ -319,6 +368,7 @@ async fn reticulumd_inbound_direct_topic_keeps_all_subscribers_independent_of_an
     let mut state = state;
 
     state.enable_durable_consumer().expect("durable consumer");
+    seed_client(&state, source, now);
     seed_client(&state, unrelated_active, now);
 
     apply_daemon_messages(
@@ -396,6 +446,7 @@ async fn reticulumd_inbound_direct_topic_preserves_subscriber_despite_stale_anno
     let mut state = state;
 
     state.enable_durable_consumer().expect("durable consumer");
+    seed_client(&state, "peer-alpha", now);
     seed_client(&state, "peer-bravo", now);
 
     apply_daemon_messages(
@@ -643,6 +694,7 @@ async fn reticulumd_inbound_worker_records_topic_envelope_event() {
         .with_test_reticulumd_source("local-destination");
     let mut state = state;
     state.enable_durable_consumer().expect("durable consumer");
+    seed_client(&state, "peer-alpha", crate::unix_now_ms());
     let app = crate::create_app_with_state(state.clone());
 
     apply_daemon_messages(
