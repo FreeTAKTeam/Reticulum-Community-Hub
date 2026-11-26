@@ -2,7 +2,7 @@
 import type { Map as MapLibreMap, GeoJSONSource, MapLayerMouseEvent } from "maplibre-gl";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { get } from "../../api/client";
+import { del, get } from "../../api/client";
 import { endpoints } from "../../api/endpoints";
 import { MISSION_DOMAIN_ROUTE_NAMES } from "../../types/missions/routes";
 import {
@@ -12,6 +12,8 @@ import {
   type MapEventSeverity,
   type MapEventView
 } from "../../utils/event-map";
+import { EVENT_ICON_PIXEL_RATIO, EVENT_SEVERITY_COLORS as SEVERITY_COLORS, drawEventIcon } from "../../utils/mecp-category-icons";
+import { useToastStore } from "../../stores/toasts";
 import MapEventModal from "./MapEventModal.vue";
 
 // Events (log entries with a position) get their own layer, apart from people and markers.
@@ -19,14 +21,6 @@ const props = defineProps<{ map: MapLibreMap | null }>();
 const SOURCE = "rch-events";
 const LAYER = "rch-events-point";
 const SELECTED_LAYER = "rch-events-selected";
-// Cosmic tones (ui/src/assets/cosmic/tokens.css); MapLibre paint needs literal colours.
-const SEVERITY_COLORS: Record<MapEventSeverity, string> = {
-  mayday: "#ff3b7a",
-  urgent: "#f59e0b",
-  safety: "#00d0b0",
-  routine: "#00b4ff",
-  none: "#8aa3ba"
-};
 // Street level, past marker clustering, so the event is shown on its own.
 const FOCUS_ZOOM = 16;
 
@@ -90,7 +84,17 @@ function keepOnTop(map: MapLibreMap): void {
   map.moveLayer(SELECTED_LAYER);
   map.moveLayer(LAYER);
 }
+// Style changes drop images, so this runs on every render; hasImage keeps it cheap.
+function addIcons(map: MapLibreMap): void {
+  for (const feature of data.features) {
+    const id = String(feature.properties?.icon ?? "");
+    if (!id || map.hasImage(id)) continue;
+    const image = drawEventIcon(id);
+    if (image) map.addImage(id, image, { pixelRatio: EVENT_ICON_PIXEL_RATIO });
+  }
+}
 function addOrUpdate(map: MapLibreMap): void {
+  addIcons(map);
   const source = map.getSource(SOURCE) as GeoJSONSource | undefined;
   if (source) {
     if (source !== lastSource || dataChanged) {
@@ -104,17 +108,16 @@ function addOrUpdate(map: MapLibreMap): void {
   map.addSource(SOURCE, { type: "geojson", data });
   // Ring drawn under the selected event.
   map.addLayer({ id: SELECTED_LAYER, source: SOURCE, type: "circle", filter: selectedFilter() as never, paint: {
-    "circle-radius": 14,
+    "circle-radius": 24,
     "circle-color": "rgba(0, 0, 0, 0)",
     "circle-stroke-color": colorExpression as never,
     "circle-stroke-width": 3,
     "circle-stroke-opacity": 0.6
   } });
-  map.addLayer({ id: LAYER, source: SOURCE, type: "circle", paint: {
-    "circle-radius": 8,
-    "circle-color": colorExpression as never,
-    "circle-stroke-color": "#07131f",
-    "circle-stroke-width": 2
+  map.addLayer({ id: LAYER, source: SOURCE, type: "symbol", layout: {
+    "icon-image": ["get", "icon"],
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true
   } });
   map.on("click", LAYER, select);
   map.on("mouseenter", LAYER, pointer);
@@ -148,9 +151,26 @@ function center(view: MapEventView): void {
   close();
   map?.flyTo({ center: [view.lon, view.lat], zoom: Math.max(map.getZoom(), FOCUS_ZOOM) });
 }
-function openMissionLog(missionUid: string): void {
+function openMissionLog(view: MapEventView): void {
   close();
-  void router?.push({ name: MISSION_DOMAIN_ROUTE_NAMES.logEntry, params: { mission_uid: missionUid } });
+  void router?.push({
+    name: MISSION_DOMAIN_ROUTE_NAMES.logEntry,
+    params: { mission_uid: view.missionUid },
+    query: { entry: view.uid }
+  });
+}
+async function deleteEvent(view: MapEventView): Promise<void> {
+  const toastStore = useToastStore();
+  if (!window.confirm(`Delete the event "${view.headline || view.categoryLabel}"? It is removed from the mission log.`)) return;
+  try {
+    await del(`${endpoints.r3aktLogEntries}/${encodeURIComponent(view.uid)}`);
+    toastStore.push("Event deleted", "warning");
+    close();
+    await refresh();
+  } catch (error) {
+    console.warn("[map] event delete failed", error);
+    toastStore.push("Unable to delete event", "danger");
+  }
 }
 let missionsRequested = false;
 async function loadMissionNames(): Promise<void> {
@@ -193,6 +213,7 @@ onMounted(() => {
   void refresh();
   timer = setInterval(() => { void refresh(); }, 10_000);
 });
+defineExpose({ refresh });
 onBeforeUnmount(() => { clearInterval(timer); props.map?.off("styledata", render); remove(props.map); });
 </script>
 
@@ -211,6 +232,7 @@ onBeforeUnmount(() => { clearInterval(timer); props.map?.off("styledata", render
     @close="close"
     @center="center"
     @open-mission-log="openMissionLog"
+    @delete="deleteEvent"
   />
 </template>
 
@@ -246,10 +268,10 @@ onBeforeUnmount(() => { clearInterval(timer); props.map?.off("styledata", render
   font-size: 0.8rem;
 }
 
+/* Square, like the event badges on the map. */
 .map-event-legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 2px solid #07131f;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
 }
 </style>

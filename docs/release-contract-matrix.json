@@ -105,6 +105,7 @@
         { "path": "/api/r3akt/events", "method": "get" },
         { "path": "/api/r3akt/log-entries", "method": "get" },
         { "path": "/api/r3akt/log-entries", "method": "post" },
+        { "path": "/api/r3akt/log-entries/{entry_uid}", "method": "delete" },
         { "path": "/api/r3akt/mission-changes", "method": "get" },
         { "path": "/api/r3akt/mission-changes", "method": "post" },
         { "path": "/api/r3akt/missions", "method": "get" },

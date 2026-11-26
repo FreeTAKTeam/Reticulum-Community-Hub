@@ -18,7 +18,7 @@ describe("EventLayer", () => {
     const addSource = vi.fn();
     const map = {
       isStyleLoaded: () => true, getSource: () => undefined, getLayer: () => undefined,
-      addSource, addLayer: vi.fn(), on: vi.fn(), off: vi.fn(), removeLayer: vi.fn(), removeSource: vi.fn()
+      addSource, addLayer: vi.fn(), hasImage: () => false, addImage: vi.fn(), on: vi.fn(), off: vi.fn(), removeLayer: vi.fn(), removeSource: vi.fn()
     } as unknown as MapLibreMap;
 
     app = createApp({ render: () => h(EventLayer, { map }) });
@@ -38,7 +38,7 @@ describe("EventLayer", () => {
     const addSource = vi.fn(() => { if (!styleReady) throw new Error("Style is not done loading."); });
     const map = {
       isStyleLoaded: () => false, getSource: () => undefined, getLayer: () => undefined, getStyle: () => ({ layers: [] }),
-      addSource, addLayer: vi.fn(), on: vi.fn(), off: vi.fn(), once: (_: string, handler: () => void) => { idle.push(handler); },
+      addSource, addLayer: vi.fn(), hasImage: () => false, addImage: vi.fn(), on: vi.fn(), off: vi.fn(), once: (_: string, handler: () => void) => { idle.push(handler); },
       removeLayer: vi.fn(), removeSource: vi.fn(), moveLayer: vi.fn()
     } as unknown as MapLibreMap;
 

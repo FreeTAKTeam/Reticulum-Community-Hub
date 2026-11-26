@@ -110,7 +110,13 @@
           </div>
 
           <div v-else class="entry-list cui-scrollbar">
-            <article v-for="entry in filteredLogEntries" :key="entry.entry_uid" class="entry-card" :class="{ 'entry-card-mecp': entry.mecp }">
+            <article
+              v-for="entry in filteredLogEntries"
+              :key="entry.entry_uid"
+              :data-entry-uid="entry.entry_uid"
+              class="entry-card"
+              :class="{ 'entry-card-mecp': entry.mecp, 'entry-card-focused': entry.entry_uid === focusedEntryUid }"
+            >
               <div class="entry-head">
                 <div>
                   <h4>{{ missionLabel(entry.mission_uid) }}</h4>
@@ -169,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, post } from "../../../api/client";
 import { endpoints } from "../../../api/endpoints";
@@ -624,6 +630,16 @@ const buildLogEntriesPath = () => {
   return `${endpoints.r3aktLogEntries}?mission_uid=${mission}`;
 };
 
+// Set by links such as the map event window's "Open in mission log" (?entry=<uid>).
+const focusedEntryUid = computed(() => queryText(route.query.entry));
+const scrollToFocusedEntry = async () => {
+  if (!focusedEntryUid.value) return;
+  await nextTick();
+  [...document.querySelectorAll<HTMLElement>("[data-entry-uid]")]
+    .find((node) => node.dataset.entryUid === focusedEntryUid.value)
+    ?.scrollIntoView({ block: "center", behavior: "smooth" });
+};
+
 const loadWorkspace = async () => {
   loading.value = true;
   try {
@@ -641,6 +657,7 @@ const loadWorkspace = async () => {
       selectedMissionUid.value = routeMissionUid;
     }
     lastRefreshedAt.value = new Date().toISOString();
+    void scrollToFocusedEntry();
     if (!editor.value.mission_uid) {
       editor.value.mission_uid = selectedMissionUid.value || "";
     }

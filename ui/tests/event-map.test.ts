@@ -40,6 +40,16 @@ describe("event map features", () => {
     expect(severities).toEqual(["mayday", "routine", "urgent", "none"]);
   });
 
+  it("picks an icon per MECP category and severity, a note for the rest", () => {
+    const at = { latitude: 1, longitude: 2 };
+    const icons = eventFeatures([
+      { entry_uid: "s", ...at, mecp: { valid: true, severity: 0, category: "S" } },
+      { entry_uid: "m", ...at, mecp: { valid: true, severity: 2, code_details: [{ code: "M01" }] } },
+      { entry_uid: "p", ...at, mecp: null }
+    ]).features.map((feature) => feature.properties?.icon);
+    expect(icons).toEqual(["rch-event-S-mayday", "rch-event-M-safety", "rch-event-note-none"]);
+  });
+
   it("presents an MECP event for the map event window", () => {
     const view = presentMapEvent({
       entry_uid: "s01", callsign: "Rescue Mobile", content: "MECP/0/S01 45.4452,-63.6160 3pax #water",

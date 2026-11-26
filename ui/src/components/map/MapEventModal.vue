@@ -32,6 +32,9 @@
             <dd>{{ event.warnings.join(" · ") }}</dd>
           </template>
         </dl>
+        <div class="map-event-actions">
+          <BaseButton variant="danger" icon-left="trash" @click="emit('delete', event)">Delete event</BaseButton>
+        </div>
       </section>
 
       <section class="map-event-card" aria-labelledby="map-event-location">
@@ -85,8 +88,8 @@
           <span v-for="keyword in event.keywords" :key="keyword" class="map-event-keyword">{{ keyword }}</span>
         </div>
         <div v-if="event.missionUid" class="map-event-actions">
-          <BaseButton variant="secondary" icon-left="list" @click="emit('open-mission-log', event.missionUid)">
-            Open mission log
+          <BaseButton variant="secondary" icon-left="list" @click="emit('open-mission-log', event)">
+            Open in mission log
           </BaseButton>
         </div>
       </section>
@@ -105,7 +108,8 @@ const props = defineProps<{ event: MapEventView; missionName?: string; now?: num
 const emit = defineEmits<{
   (event: "close"): void;
   (event: "center", value: MapEventView): void;
-  (event: "open-mission-log", missionUid: string): void;
+  (event: "open-mission-log", value: MapEventView): void;
+  (event: "delete", value: MapEventView): void;
 }>();
 
 const toastStore = useToastStore();

@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import EventLayer from "../src/components/map/EventLayer.vue";
 
-const { get } = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock("../src/api/client", () => ({ get, post: vi.fn(), put: vi.fn(), del: vi.fn(), patch: vi.fn() }));
+const { get, del } = vi.hoisted(() => ({ get: vi.fn(), del: vi.fn() }));
+vi.mock("../src/api/client", () => ({ get, post: vi.fn(), put: vi.fn(), del, patch: vi.fn() }));
 
 const MAYDAY = {
   entry_uid: "s01", callsign: "Rescue Mobile", content: "MECP/0/S01 45.4452,-63.6160 3pax #water",
@@ -35,6 +35,7 @@ const mount = async () => {
     on: (type: string, layer: string | ((event: unknown) => void), handler?: (event: unknown) => void) => {
       if (typeof layer === "string" && handler) handlers[`${type}:${layer}`] = handler;
     },
+    hasImage: () => false, addImage: vi.fn(),
     off: vi.fn(), removeLayer: vi.fn(), removeSource: vi.fn(), setFilter: vi.fn(), getCanvas: () => canvas,
     getZoom: () => 9, flyTo: vi.fn()
   };
@@ -87,11 +88,28 @@ describe("map event window", () => {
     expect(dialog()).toBeNull();
   });
 
-  it("opens the mission log", async () => {
+  it("opens the event in its mission log", async () => {
     const { router, click } = await mount();
     await click("s01");
-    button("Open mission log").click();
-    await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe("/missions/sar-1/log-entries"));
+    button("Open in mission log").click();
+    await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe("/missions/sar-1/log-entries?entry=s01"));
     expect(dialog()).toBeNull();
+  });
+
+  it("deletes the event after confirmation and reloads the layer", async () => {
+    const { click } = await mount();
+    await click("s01");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    button("Delete event").click();
+    await nextTick();
+    expect(del).not.toHaveBeenCalled();
+    expect(dialog()).not.toBeNull();
+
+    const loadsBefore = get.mock.calls.filter(([path]) => path === "/api/r3akt/log-entries").length;
+    button("Delete event").click();
+    await vi.waitFor(() => expect(dialog()).toBeNull());
+    expect(del).toHaveBeenCalledWith("/api/r3akt/log-entries/s01");
+    expect(get.mock.calls.filter(([path]) => path === "/api/r3akt/log-entries").length).toBe(loadsBefore + 1);
+    confirm.mockRestore();
   });
 });

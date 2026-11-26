@@ -2309,6 +2309,10 @@ fn create_app_router(state: AppState) -> Router {
             get(list_r3akt_log_entries).post(upsert_r3akt_log_entry),
         )
         .route(
+            "/api/r3akt/log-entries/{entry_uid}",
+            axum::routing::delete(delete_r3akt_log_entry),
+        )
+        .route(
             "/api/r3akt/teams",
             get(list_r3akt_teams).post(upsert_r3akt_team),
         )
@@ -7249,6 +7253,13 @@ fn openapi_document() -> Value {
                     "Mission log entry record."
                 )
             },
+            "/api/r3akt/log-entries/{entry_uid}": {
+                "delete": openapi_schema_response_operation(
+                    vec![openapi_path_parameter("entry_uid")],
+                    "R3aktLogEntry",
+                    "Deleted mission log entry record."
+                )
+            },
             "/api/r3akt/teams": {
                 "get": openapi_array_response_operation(
                     vec![openapi_query_parameter("mission_uid")],
@@ -9021,6 +9032,7 @@ const MISSION_SYNC_COMMANDS: &[&str] = &[
     "mission.registry.mission_change.upsert",
     "mission.registry.mission_change.list",
     "mission.registry.log_entry.upsert",
+    "mission.registry.log_entry.delete",
     "mission.registry.log_entry.list",
     "mission.registry.eam.list",
     "mission.registry.eam.upsert",
@@ -16245,6 +16257,18 @@ async fn upsert_r3akt_log_entry(
     r3akt_command(&state, "mission.registry.log_entry.upsert", payload).map(Json)
 }
 
+async fn delete_r3akt_log_entry(
+    State(state): State<AppState>,
+    Path(entry_uid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    r3akt_command(
+        &state,
+        "mission.registry.log_entry.delete",
+        json!({ "entry_uid": entry_uid }),
+    )
+    .map(Json)
+}
+
 async fn list_r3akt_mission_zones(
     State(state): State<AppState>,
     Path(mission_uid): Path<String>,
@@ -23244,6 +23268,7 @@ mod tests {
             ("/api/r3akt/events", "get"),
             ("/api/r3akt/log-entries", "get"),
             ("/api/r3akt/log-entries", "post"),
+            ("/api/r3akt/log-entries/{entry_uid}", "delete"),
             ("/api/r3akt/mission-changes", "get"),
             ("/api/r3akt/mission-changes", "post"),
             ("/api/r3akt/missions", "get"),

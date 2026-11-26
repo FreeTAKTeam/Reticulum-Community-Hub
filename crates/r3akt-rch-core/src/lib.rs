@@ -4752,6 +4752,7 @@ impl RchCore {
             "mission.registry.mission_change.upsert"
             | "mission.registry.mission_change.list"
             | "mission.registry.log_entry.upsert"
+            | "mission.registry.log_entry.delete"
             | "mission.registry.log_entry.list" => self.apply_registry_log_command(command),
             "mission.registry.eam.list"
             | "mission.registry.eam.upsert"
@@ -5295,6 +5296,17 @@ impl RchCore {
                 let entry = self.upsert_log_entry_from_args(command, &command.args)?;
                 Ok(Some(Self::event(
                     "mission.registry.log_entry.upserted",
+                    command,
+                    Self::log_entry_value(&entry),
+                )))
+            }
+            "mission.registry.log_entry.delete" => {
+                let entry_uid = required_text(&command.args, &["entry_uid"])?;
+                let entry = self.log_entries.remove(&entry_uid).ok_or_else(|| {
+                    RchCoreError::InvalidPayload(format!("Log entry '{entry_uid}' not found"))
+                })?;
+                Ok(Some(Self::event(
+                    "mission.registry.log_entry.deleted",
                     command,
                     Self::log_entry_value(&entry),
                 )))
@@ -10043,6 +10055,7 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
             | "mission.registry.mission_change.upsert"
             | "mission.registry.mission_change.list"
             | "mission.registry.log_entry.upsert"
+            | "mission.registry.log_entry.delete"
             | "mission.registry.log_entry.list"
             | "mission.registry.eam.list"
             | "mission.registry.eam.upsert"
@@ -10168,9 +10181,9 @@ pub fn required_capability(command_type: &str) -> Option<&'static str> {
         "mission.registry.mission.get" | "mission.registry.mission.list" => {
             Some("mission.registry.mission.read")
         }
-        "mission.registry.mission_change.upsert" | "mission.registry.log_entry.upsert" => {
-            Some("mission.registry.log.write")
-        }
+        "mission.registry.mission_change.upsert"
+        | "mission.registry.log_entry.upsert"
+        | "mission.registry.log_entry.delete" => Some("mission.registry.log.write"),
         "mission.registry.mission_change.list" | "mission.registry.log_entry.list" => {
             Some("mission.registry.log.read")
         }
@@ -16679,6 +16692,7 @@ mod tests {
 
     include!("topic_subscription_corrections_tests.rs");
     include!("sqlite_scoped_tests.rs");
+    include!("log_entry_delete_tests.rs");
 }
 
 mod durable_inbox;
