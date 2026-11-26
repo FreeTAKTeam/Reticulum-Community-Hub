@@ -36,7 +36,7 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -125,6 +125,7 @@ pub struct ZmqRuntimeInfo {
 struct ZmqDataPlaneMetrics {
     runtime_info: Mutex<Option<ZmqRuntimeInfo>>,
     queued_at: Mutex<VecDeque<Instant>>,
+    stopping: AtomicBool,
     queue_depth: AtomicUsize,
     send_queue_depth: AtomicUsize,
     control_queue_depth: AtomicUsize,
@@ -1555,24 +1556,44 @@ impl ZmqDataPlane {
         }
     }
 
+    /// Stops admission, returns queued work unsent (`NotSubmitted`, so durable
+    /// jobs stay queued for retry), and joins the actor. The wait is bounded by
+    /// one in-flight operation's response budget; on timeout the actor thread
+    /// is left detached and an error is returned.
     pub fn shutdown(&self) -> Result<(), TransportError> {
-        let response = self.request(ZmqSdkActorPayload::Shutdown)?;
-        if !matches!(response, ZmqSdkActorResponse::Shutdown) {
-            return Err(TransportError::Receive(
-                "LXMF-rs ZeroMQ data plane returned non-shutdown response".to_string(),
-            ));
+        self.metrics.stopping.store(true, Ordering::Release);
+        let (response, _receiver) = mpsc::channel();
+        // A full control lane still wakes the actor, which then drains everything.
+        if let Err(mpsc::TrySendError::Full(_)) = self.control_sender.try_send(ZmqSdkActorRequest {
+            payload: ZmqSdkActorPayload::Shutdown,
+            response,
+            queued_at: Instant::now(),
+        }) {
+            eprintln!("ZeroMQ control queue full during shutdown; actor drains on wake");
         }
         let actor = self
             .actor
             .lock()
             .map_err(|error| TransportError::Send(format!("ZeroMQ actor handle: {error}")))?
             .take();
-        if let Some(actor) = actor {
-            actor.join().map_err(|_| {
-                TransportError::Send("LXMF-rs ZeroMQ data-plane actor panicked".to_string())
-            })?;
+        let Some(actor) = actor else {
+            return Err(TransportError::NotSubmitted(
+                "LXMF-rs ZeroMQ data-plane actor already stopped".to_string(),
+            ));
+        };
+        let deadline = Instant::now() + actor_response_wait_timeout(&self.config, 3);
+        while !actor.is_finished() {
+            if Instant::now() >= deadline {
+                return Err(TransportError::Send(
+                    "LXMF-rs ZeroMQ data-plane actor did not stop before the shutdown deadline"
+                        .to_string(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        Ok(())
+        actor.join().map_err(|_| {
+            TransportError::Send("LXMF-rs ZeroMQ data-plane actor panicked".to_string())
+        })
     }
 
     fn request(&self, payload: ZmqSdkActorPayload) -> Result<ZmqSdkActorResponse, TransportError> {
@@ -1596,6 +1617,11 @@ impl ZmqDataPlane {
         payload: ZmqSdkActorPayload,
         response: mpsc::Sender<Result<ZmqSdkActorResponse, TransportError>>,
     ) -> Result<(), TransportError> {
+        if self.metrics.stopping.load(Ordering::Acquire) {
+            return Err(TransportError::NotSubmitted(
+                "LXMF-rs ZeroMQ data plane is shutting down".to_string(),
+            ));
+        }
         let batch_size = payload.batch_size();
         let is_send_lane = payload.is_send_lane();
         let queued_at = Instant::now();
@@ -1635,7 +1661,8 @@ impl Drop for ZmqDataPlane {
     fn drop(&mut self) {
         let (response, receiver) = mpsc::channel();
         drop(receiver);
-        if let Err(error) = self.send_sender.try_send(ZmqSdkActorRequest {
+        self.metrics.stopping.store(true, Ordering::Release);
+        if let Err(error) = self.control_sender.try_send(ZmqSdkActorRequest {
             payload: ZmqSdkActorPayload::Shutdown,
             response,
             queued_at: Instant::now(),
@@ -1909,6 +1936,10 @@ fn run_zmq_data_plane_actor(
         recv_prioritized_actor_request(send_receiver, control_receiver, &mut send_burst)
     {
         metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
+        if metrics.stopping.load(Ordering::Acquire) {
+            reject_queued_on_shutdown(request, send_receiver, control_receiver, metrics);
+            break;
+        }
         if !matches!(request.payload, ZmqSdkActorPayload::Shutdown)
             && actor_request_expired(request.queued_at, config.request_timeout)
         {
@@ -1995,6 +2026,28 @@ fn run_zmq_data_plane_actor(
         if shutting_down {
             break;
         }
+    }
+}
+
+fn reject_queued_on_shutdown(
+    first: ZmqSdkActorRequest,
+    send_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    control_receiver: &mpsc::Receiver<ZmqSdkActorRequest>,
+    metrics: &ZmqDataPlaneMetrics,
+) {
+    let rest = send_receiver.try_iter().chain(control_receiver.try_iter());
+    for (index, request) in std::iter::once(first).chain(rest).enumerate() {
+        if index > 0 {
+            metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
+        }
+        let result = if matches!(request.payload, ZmqSdkActorPayload::Shutdown) {
+            Ok(ZmqSdkActorResponse::Shutdown)
+        } else {
+            Err(TransportError::NotSubmitted(
+                "LXMF-rs ZeroMQ data plane shut down before this request ran".to_string(),
+            ))
+        };
+        send_actor_response(&request.response, result, "shutdown drain");
     }
 }
 
