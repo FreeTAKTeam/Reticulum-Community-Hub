@@ -1,10 +1,16 @@
 use super::*;
 
 fn seed_chat_recipients(store: &mut RchSqliteStore, count: usize) {
+    seed_chat_clients(store, (1..=count).map(|index| format!("{index:032x}")));
+}
+
+// Includes the default envelope sender: only joined clients' chat is relayed.
+fn seed_chat_clients(store: &mut RchSqliteStore, identities: impl IntoIterator<Item = String>) {
     let mut unit = store.begin_r3akt_command().unwrap();
-    for index in 1..=count {
+    let sender = "00112233445566778899aabbccddeeff".to_string();
+    for identity in identities.into_iter().chain([sender]) {
         unit.stage_client(&r3akt_rch_core::ClientRecord {
-            identity: format!("{index:032x}"),
+            identity,
             first_seen_ts_ms: 100_000,
             last_seen_ts_ms: 100_000,
             nickname: None,
@@ -136,7 +142,7 @@ fn chat_fanout_rejects_257_recipients_without_blocking_next_input() {
     assert!(!payload.is_empty(), "retain the original rejected input");
     assert_eq!(
         store.load_r3akt_read_snapshot().unwrap().clients.len(),
-        257,
+        258,
         "rejected sender presence must roll back"
     );
     let event = store.next_inbox_event("rch").unwrap().unwrap();
@@ -172,6 +178,7 @@ fn overflowing_chat_rolls_back_its_copies_and_keeps_independent_envelopes() {
     let path = dir.join("rch.db");
     let mut store = RchSqliteStore::open(&path).unwrap();
     seed_chat_recipients(&mut store, 256);
+    seed_chat_clients(&mut store, ["f".repeat(32)]);
     store.store_inbox_batch(&batch()).unwrap();
     let event = store.next_inbox_event("rch").unwrap().unwrap();
     let mut unit = store.begin_inbox_application("rch", &event, false).unwrap();
@@ -254,11 +261,12 @@ fn overflowing_chat_rolls_back_its_copies_and_keeps_independent_envelopes() {
     );
     assert!(snapshot.topics.iter().any(|r| r.topic_id == "before"));
     assert!(snapshot.topics.iter().any(|r| r.topic_id == "after"));
+    // The rejected chat's roster touch is rolled back with it.
     assert!(
-        !snapshot
+        snapshot
             .clients
             .iter()
-            .any(|r| r.identity == rejected.source.as_str())
+            .any(|r| r.identity == rejected.source.as_str() && r.last_seen_ts_ms == 100_000)
     );
     assert_eq!(store.durable_broker_diagnostics().unwrap()["rejected"], 1);
     assert_eq!(store.inbox_checkpoint("rch").unwrap().applied, 1);

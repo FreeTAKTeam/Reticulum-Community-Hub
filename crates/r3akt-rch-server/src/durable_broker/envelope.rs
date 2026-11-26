@@ -371,6 +371,10 @@ fn apply_envelope_payload(
                 super::chat_presentation::stage_received_event(unit, event, envelope, &inbound)?;
             }
             published.push(inbound);
+            let reply = !bootstrap && allowed(unit.core_mut(), envelope.source.as_str(), allowlist);
+            if super::chat_presentation::unjoined(unit, event, envelope, reply, published)? {
+                return Ok(());
+            }
             let client =
                 super::chat_presentation::touch_client(unit, event, envelope, bootstrap, true)?;
             if !bootstrap {

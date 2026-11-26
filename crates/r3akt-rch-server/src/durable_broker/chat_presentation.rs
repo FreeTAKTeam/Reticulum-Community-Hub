@@ -219,6 +219,40 @@ pub(super) fn touch_client(
     Ok(client)
 }
 
+/// Python parity (#322): chat from a node that never joined (e.g. a transport
+/// node's ban notice) is kept but not relayed; the sender gets help instead.
+pub(super) fn unjoined(
+    unit: &mut RchCommandTransaction<'_>,
+    event: &InboxEvent,
+    envelope: &ProtocolEnvelope,
+    reply: bool,
+    published: &mut Vec<OutboundMessageRecord>,
+) -> Result<bool, ApiError> {
+    let source = normalize_identity_key(envelope.source.as_str());
+    let core = unit.core_mut();
+    if core
+        .clients()
+        .iter()
+        .any(|c| normalize_identity_key(&c.identity) == source)
+        || core
+            .subscribers(envelope.topic.as_str())
+            .iter()
+            .any(|s| normalize_identity_key(&s.node_id) == source)
+    {
+        return Ok(false);
+    }
+    if reply {
+        super::envelope::reply_text(
+            unit,
+            event,
+            envelope,
+            super::plain_lxmf_help_reply(),
+            published,
+        )?;
+    }
+    Ok(true)
+}
+
 /// Python RCH logs `message_received` for every inbound chat message.
 pub(super) fn stage_received_event(
     unit: &mut RchCommandTransaction<'_>,
