@@ -101,7 +101,7 @@ impl ZmqSdkActorPayload {
     pub(super) fn is_send_lane(&self) -> bool {
         matches!(
             self,
-            Self::Single(_) | Self::Batch(_) | Self::BrokerAdmit(_) | Self::Shutdown
+            Self::Single(_) | Self::Batch(_) | Self::BrokerAdmit(_)
         )
     }
 }
