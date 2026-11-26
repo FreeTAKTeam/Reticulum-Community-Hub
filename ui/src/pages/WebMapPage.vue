@@ -8,7 +8,8 @@
         <LoadingSkeleton v-if="telemetry.loading && !mapReady" class="webmap-loader" />
         <div ref="mapContainer" class="webmap-canvas"></div>
         <SensorGeometryLayer :map="mapInstance" />
-        <EventLayer :map="mapInstance" />
+        <EventLayer ref="eventLayer" :map="mapInstance" />
+        <MapSelection :map="mapInstance" @deleted="handleSelectionDeleted" />
 
         <div class="webmap-marker-overlay-layer">
           <div v-if="markerReticleStyle" class="webmap-marker-reticle" :style="markerReticleStyle" aria-hidden="true">
@@ -566,6 +567,7 @@
 <script setup lang="ts">
 import SensorGeometryLayer from "../components/map/SensorGeometryLayer.vue";
 import EventLayer from "../components/map/EventLayer.vue";
+import MapSelection from "../components/map/MapSelection.vue";
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from "vue";
 import { ref } from "vue";
 import { storeToRefs } from "pinia";
@@ -3583,6 +3585,12 @@ const renderOperatorMarkers = () => {
     });
     markerInteractionReady = true;
   }
+};
+
+const eventLayer = ref<InstanceType<typeof EventLayer> | null>(null);
+const handleSelectionDeleted = ({ markers, events }: { markers: number; events: number }) => {
+  if (markers) renderOperatorMarkers();
+  if (events) void eventLayer.value?.refresh();
 };
 
 const renderMarkers = () => {

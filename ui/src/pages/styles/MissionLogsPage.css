@@ -155,6 +155,12 @@
     rgba(7, 18, 28, 0.78);
 }
 
+/* The entry a link pointed at (?entry=<uid>), e.g. from the map event window. */
+.entry-card.entry-card-focused {
+  border-color: #37f2ff;
+  box-shadow: 0 0 0 2px rgba(55, 242, 255, 0.45), 0 0 18px rgba(55, 242, 255, 0.25);
+}
+
 .entry-head {
   display: flex;
   justify-content: space-between;

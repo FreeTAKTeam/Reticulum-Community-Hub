@@ -1,4 +1,5 @@
 import type { Feature, FeatureCollection, Point } from "geojson";
+import { eventIconId } from "./mecp-category-icons";
 
 const readObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -26,6 +27,13 @@ const severityOf = (mecp: Record<string, unknown> | null): MapEventSeverity => {
   return SEVERITY_BY_STATUS[readText(mecp.severity_status)] ?? "none";
 };
 
+/** MECP category letter ("S"), from the decoded category or the first event code. */
+const categoryOf = (mecp: Record<string, unknown> | null): string => {
+  if (!mecp || mecp.valid !== true) return "";
+  const first = Array.isArray(mecp.code_details) ? readText(readObject(mecp.code_details[0])?.code) : "";
+  return (readText(mecp.category) || first).slice(0, 1).toUpperCase();
+};
+
 const positionOf = (entry: Record<string, unknown> | null, mecp: Record<string, unknown> | null) => {
   const coordinates = mecp?.valid === true ? readObject(readObject(mecp.extras)?.coordinates) : null;
   const hasOwn = typeof entry?.latitude === "number" && typeof entry?.longitude === "number";
@@ -47,6 +55,7 @@ export function eventFeatures(entries: unknown[]): FeatureCollection<Point> {
     const mecp = readObject(entry?.mecp);
     const position = positionOf(entry, mecp);
     if (!position) continue;
+    const severity = severityOf(mecp);
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [position.lon, position.lat] },
@@ -55,7 +64,8 @@ export function eventFeatures(entries: unknown[]): FeatureCollection<Point> {
         callsign: typeof entry?.callsign === "string" ? entry.callsign : "",
         content: typeof entry?.content === "string" ? entry.content : "",
         category: typeof mecp?.category_label === "string" ? mecp.category_label : "Event",
-        severity: severityOf(mecp),
+        severity,
+        icon: eventIconId(categoryOf(mecp), severity),
         updated: typeof entry?.updated_at === "string" ? entry.updated_at : ""
       }
     });

@@ -4752,6 +4752,7 @@ impl RchCore {
             "mission.registry.mission_change.upsert"
             | "mission.registry.mission_change.list"
             | "mission.registry.log_entry.upsert"
+            | "mission.registry.log_entry.delete"
             | "mission.registry.log_entry.list" => self.apply_registry_log_command(command),
             "mission.registry.eam.list"
             | "mission.registry.eam.upsert"
@@ -5295,6 +5296,17 @@ impl RchCore {
                 let entry = self.upsert_log_entry_from_args(command, &command.args)?;
                 Ok(Some(Self::event(
                     "mission.registry.log_entry.upserted",
+                    command,
+                    Self::log_entry_value(&entry),
+                )))
+            }
+            "mission.registry.log_entry.delete" => {
+                let entry_uid = required_text(&command.args, &["entry_uid"])?;
+                let entry = self.log_entries.remove(&entry_uid).ok_or_else(|| {
+                    RchCoreError::InvalidPayload(format!("Log entry '{entry_uid}' not found"))
+                })?;
+                Ok(Some(Self::event(
+                    "mission.registry.log_entry.deleted",
                     command,
                     Self::log_entry_value(&entry),
                 )))
@@ -10043,6 +10055,7 @@ pub fn is_supported_mission_command(command_type: &str) -> bool {
             | "mission.registry.mission_change.upsert"
             | "mission.registry.mission_change.list"
             | "mission.registry.log_entry.upsert"
+            | "mission.registry.log_entry.delete"
             | "mission.registry.log_entry.list"
             | "mission.registry.eam.list"
             | "mission.registry.eam.upsert"
@@ -10168,9 +10181,9 @@ pub fn required_capability(command_type: &str) -> Option<&'static str> {
         "mission.registry.mission.get" | "mission.registry.mission.list" => {
             Some("mission.registry.mission.read")
         }
-        "mission.registry.mission_change.upsert" | "mission.registry.log_entry.upsert" => {
-            Some("mission.registry.log.write")
-        }
+        "mission.registry.mission_change.upsert"
+        | "mission.registry.log_entry.upsert"
+        | "mission.registry.log_entry.delete" => Some("mission.registry.log.write"),
         "mission.registry.mission_change.list" | "mission.registry.log_entry.list" => {
             Some("mission.registry.log.read")
         }
@@ -14280,6 +14293,29 @@ mod tests {
             read_accepted[1].results_field().expect("result")["status"],
             "result"
         );
+    }
+
+    #[test]
+    fn registry_log_entry_delete_removes_entry_and_rejects_unknown_uid() {
+        let mut core = RchCore::new();
+        core.handle_command(&command(
+            "mission.registry.log_entry.upsert",
+            json!({ "entry_uid": "log-del", "content": "Log event" }),
+        ));
+        let deleted = core.handle_command(&command(
+            "mission.registry.log_entry.delete",
+            json!({ "entry_uid": "log-del" }),
+        ));
+        assert_eq!(deleted.result.status, CommandResultStatus::Accepted);
+        assert_eq!(deleted.result.result["entry_uid"], "log-del");
+        assert!(core.log_entries().is_empty());
+        let mut retry = command(
+            "mission.registry.log_entry.delete",
+            json!({ "entry_uid": "log-del" }),
+        );
+        retry.command_id = "cmd-delete-again".to_string();
+        let again = core.handle_command(&retry);
+        assert_ne!(again.result.status, CommandResultStatus::Accepted);
     }
 
     #[test]
