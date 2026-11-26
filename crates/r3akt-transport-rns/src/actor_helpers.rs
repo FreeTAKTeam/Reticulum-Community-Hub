@@ -3,8 +3,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use super::{
-    TransportError, ZmqPipelineBackendConfig, ZmqSdkActorPayload, ZmqSdkActorRequest,
-    ZmqSdkActorResponse, actor_response_wait_timeout,
+    LXMF_ZMQ_SEND_QUEUE_MAX_BYTES, TransportError, ZmqDataPlaneMetrics, ZmqPipelineBackendConfig,
+    ZmqSdkActorPayload, ZmqSdkActorRequest, ZmqSdkActorResponse, actor_response_wait_timeout,
 };
 
 pub(super) fn atomic_max_usize(target: &AtomicUsize, candidate: usize) {
@@ -76,6 +76,28 @@ impl ZmqSdkActorPayload {
         actor_response_wait_timeout(config, operation_rpcs)
     }
 
+    /// Estimated retained bytes; only send-lane payloads count toward the byte budget.
+    pub(super) fn retained_bytes(&self) -> usize {
+        // An unserializable value cannot be encoded for the wire either, so it never fits.
+        fn json_len(value: &impl serde::Serialize) -> usize {
+            serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
+        }
+        fn message(title: &str, content: &str, fields: &serde_json::Value) -> usize {
+            title
+                .len()
+                .saturating_add(content.len())
+                .saturating_add(json_len(fields))
+        }
+        match self {
+            Self::Single(m) => message(&m.title, &m.content, &m.fields),
+            Self::Batch(batch) => batch.messages.iter().fold(0, |total, m| {
+                total.saturating_add(message(&m.title, &m.content, &m.fields))
+            }),
+            Self::BrokerAdmit(request) => json_len(request),
+            _ => 0,
+        }
+    }
+
     pub(super) fn batch_size(&self) -> usize {
         match self {
             Self::Single(_) => 1,
@@ -103,5 +125,29 @@ impl ZmqSdkActorPayload {
             self,
             Self::Single(_) | Self::Batch(_) | Self::BrokerAdmit(_)
         )
+    }
+}
+
+impl ZmqDataPlaneMetrics {
+    #[allow(deprecated, reason = "`try_update` needs Rust 1.95; the MSRV is 1.89")]
+    pub(super) fn reserve_send_bytes(&self, bytes: usize) -> bool {
+        self.send_queue_bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+                queued
+                    .checked_add(bytes)
+                    .filter(|total| *total <= LXMF_ZMQ_SEND_QUEUE_MAX_BYTES)
+            })
+            .is_ok()
+    }
+
+    #[allow(deprecated, reason = "`try_update` needs Rust 1.95; the MSRV is 1.89")]
+    pub(super) fn release_send_bytes(&self, bytes: usize) {
+        match self
+            .send_queue_bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+                Some(queued.saturating_sub(bytes))
+            }) {
+            Ok(_) | Err(_) => {}
+        }
     }
 }

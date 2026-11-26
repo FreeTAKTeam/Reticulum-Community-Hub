@@ -87,12 +87,16 @@ const RETICULUMD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 // Bound one SDK request; a missing admission response is reconciled by stable ID.
 const LXMF_ZMQ_SEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const LXMF_ZMQ_SEND_QUEUE_CAPACITY: usize = 20_000;
+// Four maximum-size SDK envelopes (16 MiB frames); the item count alone does not bound memory.
+const LXMF_ZMQ_SEND_QUEUE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const LXMF_ZMQ_CONTROL_QUEUE_CAPACITY: usize = 1_024;
 const LXMF_ZMQ_ACTOR_QUEUE_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct ZmqDataPlaneStats {
     pub send_queue_capacity: usize,
+    pub send_queue_max_bytes: usize,
+    pub send_queue_bytes: usize,
     pub control_queue_capacity: usize,
     pub queue_depth: usize,
     pub send_queue_depth: usize,
@@ -130,6 +134,7 @@ struct ZmqDataPlaneMetrics {
     stopping: AtomicBool,
     queue_depth: AtomicUsize,
     send_queue_depth: AtomicUsize,
+    send_queue_bytes: AtomicUsize,
     control_queue_depth: AtomicUsize,
     queue_max_depth: AtomicUsize,
     enqueued_total: AtomicU64,
@@ -275,6 +280,8 @@ impl ZmqDataPlaneMetrics {
         };
         ZmqDataPlaneStats {
             send_queue_capacity: LXMF_ZMQ_SEND_QUEUE_CAPACITY,
+            send_queue_max_bytes: LXMF_ZMQ_SEND_QUEUE_MAX_BYTES,
+            send_queue_bytes: self.send_queue_bytes.load(Ordering::Relaxed),
             control_queue_capacity: LXMF_ZMQ_CONTROL_QUEUE_CAPACITY,
             queue_depth: self.queue_depth.load(Ordering::Relaxed),
             send_queue_depth: self.send_queue_depth.load(Ordering::Relaxed),
@@ -1586,6 +1593,14 @@ impl ZmqDataPlane {
         }
         let batch_size = payload.batch_size();
         let is_send_lane = payload.is_send_lane();
+        let bytes = payload.retained_bytes();
+        if !self.metrics.reserve_send_bytes(bytes) {
+            self.metrics.record_backpressure();
+            return Err(TransportError::Backpressure(format!(
+                "LXMF-rs ZeroMQ send queue byte budget ({LXMF_ZMQ_SEND_QUEUE_MAX_BYTES} bytes) \
+                 cannot admit a {bytes}-byte request"
+            )));
+        }
         let queued_at = Instant::now();
         let request = ZmqSdkActorRequest {
             payload,
@@ -1603,6 +1618,7 @@ impl ZmqDataPlane {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(_)) => {
                 self.metrics.rollback_enqueued(queued_at, is_send_lane);
+                self.metrics.release_send_bytes(bytes);
                 self.metrics.record_backpressure();
                 Err(TransportError::Backpressure(format!(
                     "LXMF-rs ZeroMQ {} queue is full",
@@ -1611,6 +1627,7 @@ impl ZmqDataPlane {
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 self.metrics.rollback_enqueued(queued_at, is_send_lane);
+                self.metrics.release_send_bytes(bytes);
                 Err(TransportError::NotSubmitted(
                     "LXMF-rs ZeroMQ data-plane actor stopped".to_string(),
                 ))
@@ -1883,6 +1900,7 @@ fn run_zmq_data_plane_actor(
         recv_prioritized_actor_request(send_receiver, control_receiver, &mut send_burst)
     {
         metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
+        metrics.release_send_bytes(request.payload.retained_bytes());
         if metrics.stopping.load(Ordering::Acquire) {
             reject_queued_on_shutdown(request, send_receiver, control_receiver, metrics);
             break;

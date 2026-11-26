@@ -71,3 +71,41 @@ fn zmq_data_plane_shutdown_joins_actor_within_deadline_while_work_is_queued() {
         Err(TransportError::NotSubmitted(_))
     ));
 }
+
+#[test]
+fn zmq_data_plane_rejects_payload_over_send_queue_byte_budget() {
+    let plane = ZmqDataPlane::new_with_timeout(
+        "tcp://127.0.0.1:1",
+        "tcp://127.0.0.1:2",
+        Duration::from_millis(50),
+    )
+    .expect("data plane");
+    let message = |content: String| LxmfSdkOutboundMessage {
+        source: "source".to_string(),
+        destination: "destination".to_string(),
+        title: "RCH".to_string(),
+        content,
+        fields: serde_json::json!({}),
+        delivery_method: Some("direct".to_string()),
+        stamp_cost: None,
+        include_ticket: None,
+        try_propagation_on_fail: false,
+        correlation_id: "budget".to_string(),
+    };
+    let error = plane
+        .send_message(message("x".repeat(LXMF_ZMQ_SEND_QUEUE_MAX_BYTES)))
+        .expect_err("over-budget payload is not admitted");
+    assert!(
+        matches!(error, TransportError::Backpressure(ref text) if text.contains("byte budget"))
+    );
+    let stats = plane.stats();
+    assert_eq!(stats.backpressure_total, 1);
+    assert_eq!(stats.enqueued_total, 0);
+    assert_eq!(stats.send_queue_bytes, 0);
+    // An admitted payload releases its reservation once the actor dequeues it.
+    plane
+        .send_message(message("small".to_string()))
+        .expect_err("no daemon");
+    assert_eq!(plane.stats().send_queue_bytes, 0);
+    plane.shutdown().expect("shutdown");
+}
