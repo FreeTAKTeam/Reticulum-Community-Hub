@@ -74,6 +74,7 @@ pub(super) fn reject_queued_on_shutdown(
     for (index, request) in std::iter::once(first).chain(rest).enumerate() {
         if index > 0 {
             metrics.record_dequeued(request.queued_at, request.payload.is_send_lane());
+            metrics.release_send_bytes(request.payload.retained_bytes());
         }
         let result = if matches!(request.payload, ZmqSdkActorPayload::Shutdown) {
             Ok(ZmqSdkActorResponse::Shutdown)

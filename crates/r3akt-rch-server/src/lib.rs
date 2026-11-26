@@ -8069,6 +8069,8 @@ fn lxmf_sdk_diagnostics_payload(
         "actor": {
             "lifecycle_managed": data_plane.is_some(),
             "send_queue_capacity": data_plane.map(|stats| stats.send_queue_capacity),
+            "send_queue_max_bytes": data_plane.map(|stats| stats.send_queue_max_bytes),
+            "send_queue_bytes": data_plane.map(|stats| stats.send_queue_bytes),
             "control_queue_capacity": data_plane.map(|stats| stats.control_queue_capacity),
             "queue_depth": data_plane.map(|stats| stats.queue_depth),
             "send_queue_depth": data_plane.map(|stats| stats.send_queue_depth),
