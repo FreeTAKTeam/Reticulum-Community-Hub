@@ -242,22 +242,29 @@ pub(super) fn detach_topic_attachments(
     transaction: &Transaction<'_>,
     topic_id: &str,
 ) -> Result<(), RchCoreError> {
-    let records = {
-        let mut statement = transaction.prepare(
-            "SELECT payload FROM rch_file_attachments WHERE topic_id=?1 ORDER BY file_id",
-        )?;
-        let rows = statement.query_map([topic_id], |row| row.get::<_, Vec<u8>>(0))?;
-        rows.map(|row| decode_msgpack::<FileAttachmentRecord>(&row?))
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    for mut record in records {
-        if normalize_topic_id(record.topic_id.as_deref()).as_deref() == Some(topic_id) {
+    let mut after = -1_i64;
+    loop {
+        let records = {
+            let mut statement = transaction.prepare(
+                "SELECT file_id,payload FROM rch_file_attachments WHERE topic_id=?1 AND file_id>?2 ORDER BY file_id LIMIT 256",
+            )?;
+            let rows = statement.query_map(params![topic_id, after], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        if records.is_empty() {
+            break;
+        }
+        for (id, payload) in records {
+            let mut record: FileAttachmentRecord = decode_msgpack(&payload)?;
             record.topic_id = None;
             record.updated_ts_ms = utc_now_ms();
             transaction.execute(
-                "UPDATE rch_file_attachments SET payload = ?1, topic_id=NULL WHERE file_id = ?2",
-                params![encode_msgpack(&record)?, super::sqlite_u64(record.file_id)?],
+                "UPDATE rch_file_attachments SET payload=?1,topic_id=NULL WHERE file_id=?2",
+                params![encode_msgpack(&record)?, id],
             )?;
+            after = id;
         }
     }
     Ok(())

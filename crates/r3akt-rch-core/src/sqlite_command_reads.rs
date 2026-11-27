@@ -52,7 +52,14 @@ impl<'a> ReadSet<'a> {
         let sql = if column.is_empty() {
             format!("SELECT payload FROM {table}")
         } else {
-            format!("SELECT payload FROM {table} WHERE {column}=?1")
+            format!(
+                "SELECT payload FROM {table} WHERE {column}=?1{}",
+                if table == "rch_messages" && column == "message_id" {
+                    " COLLATE NOCASE"
+                } else {
+                    ""
+                }
+            )
         };
         let mut statement = self.connection.prepare(&sql)?;
         let mut rows = if let Some(key) = key {

@@ -272,6 +272,7 @@ export interface ChatAttachment {
 }
 
 export interface ChatMessage {
+  sdk_terminal?: boolean;
   message_id?: string;
   direction?: string;
   scope?: string;

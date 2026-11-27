@@ -311,7 +311,7 @@ impl RchCommandTransaction<'_> {
         let payload: Option<Vec<u8>> = self
             .transaction
             .query_row(
-                "SELECT payload FROM rch_messages WHERE message_id=?1",
+                "SELECT payload FROM rch_messages WHERE message_id=?1 COLLATE NOCASE",
                 [id],
                 |r| r.get(0),
             )
@@ -319,7 +319,7 @@ impl RchCommandTransaction<'_> {
         payload.as_deref().map(decode_msgpack).transpose()
     }
     pub fn receipt_message(&self, id: &str) -> Result<Option<MessageRecord>, RchCoreError> {
-        let payload:Option<Vec<u8>>=self.transaction.query_row("SELECT m.payload FROM rch_broker_dispatch d JOIN rch_messages m ON m.message_id=d.message_id WHERE d.daemon_message_id=?1",[id],|r|r.get(0)).optional()?;
+        let payload:Option<Vec<u8>>=self.transaction.query_row("SELECT m.payload FROM rch_broker_dispatch d JOIN rch_messages m ON m.message_id=d.message_id COLLATE NOCASE WHERE d.daemon_message_id=?1",[id],|r|r.get(0)).optional()?;
         payload.as_deref().map(decode_msgpack).transpose()
     }
     /// Latest persisted collector candidates in timestamp order. Fail explicitly

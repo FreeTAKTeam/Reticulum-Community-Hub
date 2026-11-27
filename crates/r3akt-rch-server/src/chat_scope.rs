@@ -1,23 +1,14 @@
-use super::{DeliveryMode, OutboundMessageRecord, message_direction};
+#[cfg(test)]
+use super::DeliveryMode;
+use super::OutboundMessageRecord;
 
 pub(super) fn message_scope(message: &OutboundMessageRecord) -> &'static str {
-    // Old inbound rows used Targeted for group traffic; wire delivery is not chat scope.
-    if message_direction(message) == "inbound"
-        && message.delivery_metadata["reticulumd_inbound"].as_bool() == Some(true)
-        && message.destination.is_none()
-        && let Some(topic) = message.topic_id.as_deref()
-    {
-        return if topic == "direct" {
-            "broadcast"
-        } else {
-            "topic"
-        };
-    }
-    match message.delivery_mode {
-        DeliveryMode::Targeted => "dm",
-        DeliveryMode::Fanout => "topic",
-        DeliveryMode::Broadcast => "broadcast",
-    }
+    r3akt_rch_core::chat_message_scope(
+        &message.delivery_mode,
+        &message.delivery_metadata,
+        message.destination.as_deref(),
+        message.topic_id.as_deref(),
+    )
 }
 
 #[cfg(test)]

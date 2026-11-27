@@ -27,10 +27,15 @@ pub use sqlite_identity_directory::{
     IdentityDirectoryClientOverlay, IdentityDirectoryEntry, IdentityDirectoryPage,
     IdentityDirectoryQuery,
 };
+mod sqlite_chat_pages;
 mod sqlite_command_projections;
 mod sqlite_command_reads;
 mod sqlite_commands;
 mod sqlite_message_history;
+mod sqlite_message_indexes;
+pub use sqlite_chat_pages::{
+    ChatConversationFilter, ChatCursor, ChatHistoryPage, chat_message_scope,
+};
 pub use sqlite_message_history::{
     ChatHistoryFilter, MessageTrafficBucket, RECENT_MESSAGE_BYTES, RECENT_MESSAGE_COUNT,
     RECENT_MESSAGE_IDLE_MS, json_resident_bytes,
@@ -436,7 +441,7 @@ const RCH_SQLITE_MIGRATION_3_SQL: &str =
     include_str!("../migrations/0003_topic_subscription_corrections.sql");
 const RCH_SQLITE_MIGRATION_4_SQL: &str =
     include_str!("../migrations/0004_identity_announce_projections.sql");
-const RCH_SQLITE_SCHEMA_VERSION: &str = "10";
+const RCH_SQLITE_SCHEMA_VERSION: &str = "11";
 const RCH_SQLITE_READ_BUSY_TIMEOUT_MS: u64 = 250;
 const RCH_SQLITE_WRITE_BUSY_TIMEOUT_MS: u64 = 1_000;
 const RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -2815,7 +2820,8 @@ impl RchSqliteStore {
             self.migrate_identity_directory()?;
             self.migrate_broker_pending_indexes()?;
             self.migrate_broker_active_count_index()?;
-            return self.migrate_broker_inbox_status_counts();
+            self.migrate_broker_inbox_status_counts()?;
+            return self.migrate_message_indexes();
         }
         if has_existing_schema {
             self.integrity_check()?;
@@ -2986,7 +2992,8 @@ impl RchSqliteStore {
         self.migrate_identity_directory()?;
         self.migrate_broker_pending_indexes()?;
         self.migrate_broker_active_count_index()?;
-        self.migrate_broker_inbox_status_counts()
+        self.migrate_broker_inbox_status_counts()?;
+        self.migrate_message_indexes()
     }
 
     fn backup_before_migration(&self, version: u32) -> Result<(), RchCoreError> {
@@ -12977,7 +12984,7 @@ mod tests {
                 .expect("setting lookup"),
             None
         );
-        assert_eq!(store.schema_version().expect("schema version"), "10");
+        assert_eq!(store.schema_version().expect("schema version"), "11");
     }
 
     #[test]
@@ -16359,7 +16366,7 @@ mod tests {
 
         let mut store = RchSqliteStore::in_memory().expect("sqlite");
         core.save_to_sqlite(&mut store).expect("save");
-        assert_eq!(store.schema_version().expect("schema version"), "10");
+        assert_eq!(store.schema_version().expect("schema version"), "11");
         assert_sqlite_snapshot_counts(&store);
 
         let mut restored = RchCore::load_from_sqlite(&store)
@@ -16387,38 +16394,6 @@ mod tests {
             busy_timeout_ms,
             i64::try_from(RCH_SQLITE_ADMIN_BUSY_TIMEOUT_MS).expect("busy timeout fits in i64")
         );
-    }
-
-    #[test]
-    fn sqlite_store_records_ordered_migrations_and_safe_compaction_state() {
-        let store = RchSqliteStore::in_memory().expect("sqlite");
-        let migration_count: i64 = store
-            .connection
-            .query_row("SELECT COUNT(*) FROM rch_schema_migrations", [], |row| {
-                row.get(0)
-            })
-            .expect("migration count");
-        let stats = store.storage_stats().expect("storage stats");
-        let report = store
-            .compact_if_free_percent_exceeds(100.0, 100)
-            .expect("no-op compaction");
-
-        assert_eq!(migration_count, 10);
-
-        let index_exists: bool = store
-            .connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_rch_subscribers_topic_node')",
-                [],
-                |row| row.get(0),
-            )
-            .expect("subscriber topic index");
-        assert!(index_exists);
-
-        drop(store);
-        assert!(stats.page_count > 0);
-        assert!(!report.compacted);
-        assert!(!report.requires_incremental_mode_conversion);
     }
 
     #[test]
@@ -16463,7 +16438,7 @@ mod tests {
         }
 
         let store = RchSqliteStore::open(&db_path).expect("migrated store");
-        assert_eq!(store.schema_version().expect("schema version"), "10");
+        assert_eq!(store.schema_version().expect("schema version"), "11");
         drop(store);
 
         let connection = Connection::open(&db_path).expect("sqlite");
@@ -16693,6 +16668,7 @@ mod tests {
     include!("topic_subscription_corrections_tests.rs");
     include!("sqlite_scoped_tests.rs");
     include!("log_entry_delete_tests.rs");
+    include!("sqlite_migration_count_tests.rs");
 }
 
 mod durable_inbox;
