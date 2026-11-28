@@ -1,5 +1,6 @@
 <template>
-  <div ref="scroller" class="message-scroller" tabindex="0" aria-label="Conversation messages" @scroll="onScroll">
+  <div ref="scroller" class="message-scroller" tabindex="0" aria-label="Conversation messages" @scroll="onScroll"
+    @keydown.home.exact.prevent="scrollToStart" @keydown.end.exact.prevent="scrollToLatest">
     <div v-if="!messages.length" class="panel-empty">{{ loading ? 'Loading messages...' : 'No messages yet. Start a conversation.' }}</div>
     <div class="message-stack" :style="{ height: `${totalHeight}px` }">
       <article v-for="row in visible" :key="row.message.message_id" :ref="(element) => observeRow(element, row.message.message_id)"

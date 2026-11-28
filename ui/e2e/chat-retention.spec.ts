@@ -52,9 +52,12 @@ test("sustained chat stream plateaus and history scrolling bounds rendered rows"
   await expect(page.getByText("Conversation: Topic 0")).toBeVisible();
   const cdp = await page.context().newCDPSession(page);
   const samples: { events: number; usedHeap: number; diagnostics: Diagnostics; domRows: number }[] = [];
+  // shortcut: 2000 frames per batch, because Playwright's routeWebSocket slows as total frames grow
+  // (page CPU stays flat). Raise it only if the mocked socket is replaced with a real fixture server.
+  const perBatch = 2000;
   for (let batch = 0; batch < 6; batch++) {
-    for (let i = 0; i < 4000; i++) {
-      const id = 1000 + batch * 4000 + i;
+    for (let i = 0; i < perBatch; i++) {
+      const id = 1000 + batch * perBatch + i;
       stream?.send(JSON.stringify({ type: "message.receive", ts: timestamp, data: { entry: row(id, `t${i % 10}`) } }));
     }
     await expect.poll(async () => (await diagnostics(page)).tombstones, { timeout: 20000 }).toBeGreaterThan(0);
@@ -64,7 +67,7 @@ test("sustained chat stream plateaus and history scrolling bounds rendered rows"
       const app = Reflect.get(root, "__vue_app__");
       const pinia = Object.getOwnPropertySymbols(app._context.provides).map((key) => app._context.provides[key]).find((value) => value?._s instanceof Map);
       return pinia?._s.get("chat").messages.some((message: { message_id?: string }) => message.message_id === `fixture-${id}`);
-    }, 1000 + (batch + 1) * 4000 - 1), { timeout: 20000 }).toBe(true);
+    }, 1000 + (batch + 1) * perBatch - 1), { timeout: 20000 }).toBe(true);
     await cdp.send("HeapProfiler.collectGarbage");
     const heap = await cdp.send("Runtime.getHeapUsage");
     const snapshot = await diagnostics(page);
@@ -73,7 +76,7 @@ test("sustained chat stream plateaus and history scrolling bounds rendered rows"
     expect(snapshot.estimatedBytes).toBeLessThanOrEqual(snapshot.limits.globalBytes);
     expect(snapshot.tombstones).toBeLessThanOrEqual(snapshot.limits.tombstones);
     const domRows = await page.locator(".message-card").count(); expect(domRows).toBeGreaterThan(0); expect(domRows).toBeLessThan(40);
-    samples.push({ events: (batch + 1) * 4000, usedHeap: heap.usedSize, diagnostics: snapshot, domRows });
+    samples.push({ events: (batch + 1) * perBatch, usedHeap: heap.usedSize, diagnostics: snapshot, domRows });
   }
   const warm = samples.slice(2).map((sample) => sample.usedHeap);
   expect(Math.max(...warm) - Math.min(...warm)).toBeLessThan(8 * 1024 * 1024);

@@ -160,3 +160,13 @@ UI: typecheck, lint, build and 308 tests in 62 files passed. The duplicate scan 
 uses one `GROUP BY` pass instead of a per-row subquery. The browser e2e suite, the
 SQLite probe measurements and workspace-wide clippy (OpenSSL headers are missing
 locally) were not re-run.
+
+## CI e2e fix (2026-11-28)
+
+The browser table above was recorded with 6 × 4,000 events. The test now sends 6 × 2,000
+(12,000 events, still 6× the global message cap). Playwright's mocked WebSocket gets slower
+as the total number of frames grows: page CPU per batch stayed flat in profiles while idle time grew
+roughly sixfold. That pushed the CI runner past the 120 s budget. Home and End in the message list
+now jump straight to the first or last message. Chromium's native smooth scroll stopped short
+(about 1,700 px from the top) while row measurements changed the list height mid-animation.
+The test passed 8 of 8 runs locally, and the full suite passed 3 of 3 runs pinned to 2 CPU cores.
