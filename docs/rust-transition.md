@@ -360,3 +360,44 @@ browser residency; the server's existing startup identity-state mirror remains.
 The Python 2.9.x directory has no matching search/page capability. The shared UI
 reports that directory view as unsupported when capability is absent rather than
 crawling a legacy response. Ordinary client, topic and chat pages remain supported.
+
+## Conversation history and message identity indexes
+
+Issues #253 and #256 add SQLite schema 11. Message IDs use an ASCII `NOCASE`
+unique index; keyed `ON CONFLICT` updates preserve the existing integer row ID
+and payload format. Point reads and dispatch joins use the same collation.
+Scoped history uses partial indexes matching broadcast, topic and inbound/outbound
+direct queries. Missing owned indexes fail explicitly instead of scanning global
+history. The backend remains the owner of message lifecycle and conversation scope.
+History projections derive scope with the same rule as the live chat views
+(`chat_message_scope`, including the #293 inbound group-traffic correction) and
+incoming source from stored metadata/sender; they never infer lifecycle from presentation timestamps.
+
+`GET /Chat/History` requires `scope=broadcast`, `scope=topic&topic_id=...`, or
+`scope=dm&peer=...`. It returns `{ "Messages": [...], "NextCursor": null | "..." }`
+under the same authentication boundary as existing chat routes. Direct history
+selects inbound source and outbound destination for the chosen peer. Pages use
+`created_ts_ms DESC, id ASC` ordering and a timestamp/integer-ID cursor. Newer
+inserts and keyed delivery updates do not shift an older-page boundary. Missing
+SQLite state returns an explicit unavailable response. `/Chat/Messages` keeps
+its existing array and filter contract.
+
+Migration creates a `.pre-migration-v11.bak`, detects case-insensitive duplicates,
+streams projection backfill one payload at a time, and commits uniqueness,
+conversation indexes and version together. Payload decode failure rolls back.
+When message IDs differ only by case, the earliest row (lowest integer ID) is
+kept and the others move, with their raw payloads, to
+`rch_messages_identity_archive`; the schema 11 migration record names the
+archived row count. No payload is discarded. Fresh and upgraded databases receive the same message indexes.
+
+Topic attachment detachment uses the existing topic index and bounded batches of
+256 matching rows, without decoding unrelated attachments. Record writers keep
+payloads and projections aligned in their existing transaction. There is no
+mission field in the attachment record to project. Older payload-only writers
+and downgrades are unsupported.
+
+The shared UI's retention, age, page, suppression and overscan settings live in
+[chat configuration](../ui/README.md#chat-retention-configuration). Completed
+history remains durable, while the browser owns a bounded presentation window
+and measured-height viewport. See [validation evidence](goals/chat-indexes/EVIDENCE.md)
+for local browser and database measurements and their scope.

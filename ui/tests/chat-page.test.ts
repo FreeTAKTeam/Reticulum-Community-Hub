@@ -2,13 +2,15 @@ import { createPinia, setActivePinia } from "pinia";
 import { createApp, nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WsHandler } from "../src/api/ws";
+import { conversationKey, conversationOf, decodeChatMessage, type Conversation } from "../src/api/chat";
 import ChatPage from "../src/pages/ChatPage.vue";
+import { useConnectionStore } from "../src/stores/connection";
 import { useChatStore } from "../src/stores/chat";
 
-const { getMock, connect, close, send, streamHandlers } = vi.hoisted(() => ({
-  getMock: vi.fn(), connect: vi.fn(), close: vi.fn(), send: vi.fn(), streamHandlers: [] as WsHandler[]
+const { getMock, postMock, connect, close, send, streamHandlers } = vi.hoisted(() => ({
+  getMock: vi.fn(), postMock: vi.fn(), connect: vi.fn(), close: vi.fn(), send: vi.fn(), streamHandlers: [] as WsHandler[]
 }));
-vi.mock("../src/api/client", () => ({ get: getMock, post: vi.fn(), getBlob: vi.fn() }));
+vi.mock("../src/api/client", () => ({ get: getMock, post: postMock, getBlob: vi.fn() }));
 vi.mock("../src/api/ws", () => ({ WsClient: class {
   constructor(_path: string, handler: WsHandler) { streamHandlers.push(handler); }
   connect = connect; close = close; send = send;
@@ -18,12 +20,12 @@ const settle = async () => { await nextTick(); await new Promise((resolve) => se
 const received = { MessageID: "received-test", Content: "Test1234", Direction: "inbound", Scope: "broadcast", State: "received" };
 
 describe("independent chat initialization", () => {
-  afterEach(() => { vi.clearAllMocks(); document.body.innerHTML = ""; });
+  afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = ""; });
   it("opens the stream immediately, displays received history and survives a roster failure without rendering errors", async () => {
     setActivePinia(createPinia());
     getMock.mockImplementation((path: string) => {
       if (path.startsWith("/Client")) { return Promise.reject(new Error("Response exceeds the 8 MiB download limit.")); }
-      if (path.startsWith("/Chat/Messages")) { return Promise.resolve([received]); }
+      if (path.startsWith("/Chat/History")) { return Promise.resolve({ Messages: [received], NextCursor: null }); }
       if (path === "/Topic") { return Promise.resolve([]); }
       return Promise.reject(new Error(`Unexpected GET ${path}`));
     });
@@ -43,8 +45,8 @@ describe("independent chat initialization", () => {
 
   it("renders cached messages when returning to Chat without an undefined-length crash", async () => {
     const pinia = createPinia(); setActivePinia(pinia);
-    useChatStore().upsertMessage({ message_id: "cached", scope: "broadcast", content: "Cached receipt" });
-    getMock.mockImplementation((path: string) => Promise.resolve(path.startsWith("/Chat/Messages") ? [received] : []));
+    useChatStore().upsertMessage({ message_id: "cached", created_at: new Date().toISOString(), scope: "broadcast", content: "Cached receipt" });
+    getMock.mockImplementation((path: string) => Promise.resolve(path.startsWith("/Chat/History") ? { Messages: [received], NextCursor: null } : []));
     const errors: unknown[] = [];
     const root = document.createElement("div"); document.body.append(root);
     const app = createApp(ChatPage).use(pinia);
@@ -57,15 +59,36 @@ describe("independent chat initialization", () => {
 
   it("retains live messages arriving while chat history is pending", async () => {
     setActivePinia(createPinia());
-    let resolve!: (messages: unknown[]) => void;
+    let resolve!: (messages: unknown) => void;
     getMock.mockImplementation(() => new Promise((done) => { resolve = done; }));
     const store = useChatStore();
     const pending = store.fetchMessages();
-    store.upsertMessage({ message_id: "live", content: "Live receipt", scope: "broadcast" });
-    resolve([received]);
+    store.upsertMessage({ message_id: "live", created_at: new Date().toISOString(), content: "Live receipt", scope: "broadcast" });
+    resolve({ Messages: [received], NextCursor: null });
     await pending;
     expect(store.messages.map((entry) => entry.content)).toEqual(["Test1234", "Live receipt"]);
   });
+  it("cancels a hashing continuation on logout and releases the page Send button", async () => {
+    const pinia = createPinia(); setActivePinia(pinia);
+    const connection = useConnectionStore(); connection.markAuthenticated();
+    getMock.mockImplementation((path: string) => Promise.resolve(path.startsWith("/Chat/History") ? { Messages: [], NextCursor: null } : []));
+    let finishDigest!: (buffer: ArrayBuffer) => void;
+    const digest = vi.fn(() => new Promise<ArrayBuffer>((resolve) => { finishDigest = resolve; }));
+    vi.stubGlobal("crypto", { subtle: { digest } });
+    const root = document.createElement("div"); document.body.append(root);
+    const app = createApp(ChatPage).use(pinia); app.mount(root); await settle();
+    const input = root.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [{ name: "attachment.txt", type: "text/plain", size: 3, arrayBuffer: () => Promise.resolve(new ArrayBuffer(3)) }] });
+    input.dispatchEvent(new Event("change", { bubbles: true })); await settle();
+    const button = [...root.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Send")!;
+    button.click(); await settle(); expect(digest).toHaveBeenCalled(); expect(button.disabled).toBe(true);
+    connection.setAuthStatus("unauthenticated"); await settle(); expect(button.disabled).toBe(false);
+    connection.markAuthenticated(); await settle();
+    finishDigest(new ArrayBuffer(32)); await settle();
+    expect(postMock).not.toHaveBeenCalled(); expect(button.disabled).toBe(false);
+    app.unmount();
+  });
+
 });
 it("enriches visible canonical/destination labels without treating discovery as online and refreshes moderation", async () => {
   const now = new Date().toISOString(); let banned = false;
@@ -103,7 +126,12 @@ describe("server-projected hub broadcasts", () => {
       { ...received, MessageID: "topic", Content: "Topic chat", Scope: "topic", Source: source, Destination: null, TopicID: "field", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } }
     ];
     getMock.mockImplementation((path: string) => {
-      if (path.startsWith("/Chat/Messages")) { return Promise.resolve(history); }
+      if (path.startsWith("/Chat/History")) {
+        // Answer like the server: only the requested conversation, newest first.
+        const query = new URLSearchParams(path.split("?")[1]);
+        const wanted = conversationKey({ scope: query.get("scope") as Conversation["scope"], target: query.get("peer") ?? query.get("topic_id") ?? undefined });
+        return Promise.resolve({ Messages: history.filter((entry) => conversationKey(conversationOf(decodeChatMessage(entry))) === wanted), NextCursor: null });
+      }
       if (path.startsWith("/Client")) { return Promise.resolve([{ identity: source, display_name: "Pixel" }]); }
       if (path === "/Topic") { return Promise.resolve([{ TopicID: "field", TopicName: "Field channel" }]); }
       return Promise.resolve([]);
@@ -119,7 +147,7 @@ describe("server-projected hub broadcasts", () => {
     };
     expect(bodies()).toEqual(["Columba hub chat"]);
     expect(root.querySelector(".message-source")?.textContent).toBe("Pixel");
-    const live = { ...received, MessageID: "ratspeak", Content: "Ratspeak hub chat", Source: "ratspeak-windows", Destination: null, TopicID: "direct", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } };
+    const live = { ...received, MessageID: "ratspeak", CreatedAt: new Date().toISOString(), Content: "Ratspeak hub chat", Source: "ratspeak-windows", Destination: null, TopicID: "direct", DeliveryMetadata: { direction: "inbound", reticulumd_inbound: true } };
     const emit = (entry: typeof live) => streamHandlers.at(-1)!({ type: "message.receive", ts: "2026-11-06T12:00:00Z", data: { entry } });
     emit(live); emit(live); await settle();
     expect(bodies()).toEqual(["Columba hub chat", "Ratspeak hub chat"]);
